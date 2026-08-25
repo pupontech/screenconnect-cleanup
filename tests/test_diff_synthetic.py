@@ -5,9 +5,9 @@ Removed/Added/Changed paths get exercised end-to-end via pwsh.
 Runs locally and in CI. On Windows CI the temp dir is %RUNNER_TEMP%
 (passed via SCC_TEST_TMP); default /tmp keeps local Linux behavior.
 """
-import json, copy, os, subprocess, sys
+import json, copy, os, subprocess, sys, tempfile
 
-tmp = os.environ.get('SCC_TEST_TMP', '/tmp')
+tmp = os.environ.get('SCC_TEST_TMP') or tempfile.gettempdir()
 pwsh = 'powershell.exe' if os.name == 'nt' else 'pwsh'
 
 def load(p):
