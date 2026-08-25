@@ -1,7 +1,9 @@
 # START HERE — ScreenConnect Cleanup Tool handoff
 
-You are picking up a Windows tool that is **partly built**. This folder is the complete
-context transfer. Read this file first, then the numbered files in order.
+You are picking up a Windows tool that is **built through the removal stage (Stage 4),
+but not yet validated on live Windows** — everything below that is flag-labelled. This
+folder is the complete context transfer. Read this file first, then the numbered files
+in order.
 
 ---
 
@@ -78,17 +80,25 @@ Removal is last, on top of machinery already proven in the field.
 
 ## Files in the project
 
-```
+```text
 screenconnect-cleanup/
+  sc-cleanup.ps1                  Top-level staged runner (wires Stages 0-8). BUILT.
+  preflight.ps1                   Stage 0 preflight. BUILT (Linux-verified).
+  collect-snapshot.ps1            Stage 1/7 snapshot collector. BUILT.
   detect-remote-access.ps1        Stage 2 detector. BUILT, TESTED, read-only.
+  Invoke-ReviewAndRemove.ps1      Stage 3 review gate -> Stage 4. BUILT.
+  remove-screenconnect.ps1        Stage 4 removal/containment. BUILT, dry-run default.
+  diff-snapshots.ps1              Stage 7 before/after diff. BUILT.
+  New-InvestigationReport.ps1     Stage 8 report. BUILT (XSS + empty-case verified).
+  scanners/                       Stage 5 adapters (Defender/KVRT/ESET). BUILT.
   targets.json                    What to look for. 15 products, toggleable.
-  Run-DetectRemoteAccess.bat      Double-click launcher.
-  README.md                       User-facing readme.
+  START-HERE.bat                  Guided 9-step launcher (Step 7 Tikun = opt-in destructive).
+  RUN-REMOVAL-TEST.bat            Lab-only -ExecuteRemoval test launcher.
+  Run-DetectRemoteAccess.bat      Double-click detection launcher.
+  make-deploy-bundle.sh           Builds the field-deploy zip.
+  tests/, .github/workflows/       CI: parse/ASCII/BOM/diff/XSS + Windows VM matrix.
   docs/                           <- you are here
-  scanners/                       Stage 5 adapters        (agent was building)
-  tools/                          Sysinternals pack       (agent was building)
-  collect-snapshot.ps1            Stage 1/7               (agent was building)
-  New-InvestigationReport.ps1     Stage 8                 (agent was building)
+  tools/                          Sysinternals/AV staging (downloaders NOT yet in repo).
 ```
 
 ---

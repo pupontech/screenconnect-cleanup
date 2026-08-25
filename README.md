@@ -192,6 +192,13 @@ intended **only** for a disposable, snapshotted VM. Never run it on a client mac
 Nothing gets deleted. Artifacts are moved to a quarantine folder with their original path
 and hash recorded. It costs nothing and covers the one time we are wrong.
 
+> **Exception — Tikun (opt-in, destructive).** `START-HERE.bat` Step 7 is an optional
+> "Tikun" step that *does* delete (rather than quarantine) files/folders/registry Run-keys
+> system-wide, including removable drives, and installs a scheduled task that re-runs itself.
+> It is disabled by default (`[y/N]`), is clearly labelled, and the `.bat` warns about its
+> behavior before running. It is deliberately excluded from the "quarantine, never delete"
+> rule but is never run implicitly.
+
 ### Uninstall before surgery
 
 Always run the vendor's own uninstaller (from the registry `UninstallString`) before

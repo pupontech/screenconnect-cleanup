@@ -64,6 +64,28 @@ $ErrorActionPreference = 'Stop'
 $ScriptVersion = '1.0.0'
 $ScriptName = 'remove-screenconnect.ps1'
 
+# We need the helper in scope before the elevation gate below runs.
+function Test-IsAdmin {
+    try {
+        $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $pr = New-Object Security.Principal.WindowsPrincipal($id)
+        return $pr.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch { return $false }
+}
+
+# FIX (safety): destructive mode MUST run elevated. A non-elevated -Execute can
+# silently produce partial mutations (service stop denied, reg delete denied,
+# MoveFileEx deferred incorrectly) while exit codes mislead the technician into
+# believing removal succeeded. Fail-closed before touching anything.
+if ($Execute) {
+    if (-not (Test-IsAdmin)) {
+        Write-Host "ERROR: -Execute requires an elevated (Administrator) shell." -ForegroundColor Red
+        Write-Host "       Right-click the launcher and choose 'Run as administrator', or run" -ForegroundColor Red
+        Write-Host "       'Start-Process powershell -Verb RunAs' and re-invoke. Aborting." -ForegroundColor Red
+        exit 2
+    }
+}
+
 # -----------------------------------------------------------------------------
 # Logging
 # -----------------------------------------------------------------------------
@@ -118,14 +140,6 @@ function Add-ManifestEntry {
 # -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
-function Test-IsAdmin {
-    try {
-        $id = [Security.Principal.WindowsIdentity]::GetCurrent()
-        $pr = New-Object Security.Principal.WindowsPrincipal($id)
-        return $pr.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    } catch { return $false }
-}
-
 function Get-Sha256File {
     param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { return $null }
@@ -596,7 +610,15 @@ if ($Execute -and -not $NoRestorePoint -and -not $Resume) {
         Checkpoint-Computer -Description "ScreenConnect Removal - $(Get-Date).ToString('yyyy-MM-dd HH:mm:ss')" -RestorePointType 'MODIFY_SETTINGS' -ErrorAction Stop
         Write-Log "System Restore point created"
     } catch {
-        Write-Log "System Restore point creation failed: $($_.Exception.Message)" 'Warn'
+        # FIX (safety): the restore point is the rollback safety net for a
+        # destructive stage. If it cannot be created, fail-closed rather than
+        # proceeding unprotected -- unless the operator explicitly opted out
+        # with -NoRestorePoint. This prevents silent unprotected removal.
+        Write-Log "System Restore point creation failed: $($_.Exception.Message)" 'Error'
+        Write-Host "ERROR: Could not create a System Restore point, and removal is destructive." -ForegroundColor Red
+        Write-Host "       Aborting to avoid unprotected removal. Re-run with -NoRestorePoint to" -ForegroundColor Red
+        Write-Host "       proceed anyway (NOT recommended), or fix System Restore and retry." -ForegroundColor Red
+        exit 3
     }
 }
 
@@ -810,7 +832,7 @@ function Delete-ServiceRegistration {
 # Uninstaller execution
 # -----------------------------------------------------------------------------
 function Run-VendorUninstaller {
-    param($UninstallEntry, [string]$InstanceId)
+    param($UninstallEntry, [string]$InstanceId, [string]$InstallDir)
     if (-not $UninstallEntry) {
         Write-Log "  No uninstall registry entry provided"
         Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target 'Registry' -Result 'Skipped' -Details 'No uninstall entry'
@@ -878,17 +900,60 @@ function Run-VendorUninstaller {
 
     Write-Log "  Uninstall command: $finalCmd"
 
+    # FIX (safety): never feed a verbatim registry UninstallString or
+    # QuietUninstallString to `cmd.exe /c`. That string is attacker-influenced:
+    # cmd.exe re-parses '%VAR%', '&', '|', '^' and quotes with the technician's
+    # elevated token, so a tampered registration becomes arbitrary command
+    # execution. Instead we run the vendor's own executable DIRECTLY with a
+    # curated argument list built from validated parts -- no cmd.exe, no shell
+    # metacharacter interpretation.
     if ($Execute) {
-        try {
-            $psi = New-Object System.Diagnostics.ProcessStartInfo
-            $psi.FileName = 'cmd.exe'
-            $psi.Arguments = '/c ' + $finalCmd
-            $psi.UseShellExecute = $false
-            $psi.RedirectStandardOutput = $true
-            $psi.RedirectStandardError = $true
-            $psi.CreateNoWindow = $true
-            $psi.Verb = 'runas'
+        # --- Curated, no-shell uninstall paths ---
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.CreateNoWindow = $true
 
+        $runDirect = $false
+        if ($isMsi) {
+            # MSI: run msiexec.exe directly with the validated ProductCode.
+            # /qn /norestart are fixed flags we control, not registry text.
+            $psi.FileName = "$env:SystemRoot\System32\msiexec.exe"
+            $psi.Arguments = '/x ' + $productCode + ' /qn /norestart'
+            $runDirect = $true
+        } else {
+            # Non-MSI: only run if the executable leaf is an allowlisted,
+            # ScreenConnect-family uninstaller AND it sits under the verified
+            # install directory. Extract the bare executable with no arguments.
+            $bareExe = $null
+            $mm = [regex]::Match($cmd, '^\s*"([^"]+\.exe)"')
+            if ($mm.Success) { $bareExe = $mm.Groups[1].Value }
+            else {
+                $mm2 = [regex]::Match($cmd, '^\s*([A-Za-z]:\\[^"\s]+\.exe)')
+                if ($mm2.Success) { $bareExe = $mm2.Groups[1].Value }
+            }
+            $leaf = ''
+            if ($bareExe) { $leaf = [System.IO.Path]::GetFileName($bareExe) }
+            $leafOk = ($leaf -match '^(?i)(ScreenConnect|App_)') -or ($leaf -match '^(?i)unins[0-9]*\.exe$')
+            $underInstall = $false
+            if ($installDir) { $underInstall = ($bareExe -and $bareExe.StartsWith($installDir, [System.StringComparison]::OrdinalIgnoreCase)) }
+            if ($leafOk -and $underInstall -and (Test-Path -LiteralPath $bareExe)) {
+                $psi.FileName = $bareExe
+                $psi.Arguments = ''   # ScreenConnect uninstallers take no args / aren't trusted from registry
+                $runDirect = $true
+                Write-Log "  Running vendor uninstaller directly (no shell): $bareExe"
+            } else {
+                # Fail-closed: a string we cannot validate is never executed by
+                # shell. Record it and fall back to manual surgery + quarantine.
+                $psi = $null
+                Write-Log "  REFUSING to run unvalidated UninstallString via cmd.exe (not an allowlisted ScreenConnect/MSI uninstaller). Manual surgery will handle this instance." 'Warn'
+                Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target $displayName -Result 'Failed' -Details "UninstallString not validated (not MSI / not an allowlisted executable under the verified install dir); manual surgery fallback. Raw string (logged, NOT executed): $finalCmd"
+                return $false
+            }
+        }
+
+        try {
             $proc = [System.Diagnostics.Process]::Start($psi)
             $stdout = $proc.StandardOutput.ReadToEnd()
             $stderr = $proc.StandardError.ReadToEnd()
@@ -942,9 +1007,15 @@ function Move-ToQuarantine {
     $hashNote = ''
     $sha256 = ''
     if ($isDirectory) {
+        # FIX (safety): never blindly recurse through reparse points (junctions /
+        # symlinks) inside the install tree. A junction pointing at C:\Windows
+        # (planted by an attacker, or left by a benign misinstall) would otherwise
+        # be walked, hashed, and on Move-Item -Force potentially followed/copied.
+        # Detect reparse points and hash only legitimate non-reparse children.
         $hashCsv = Join-Path $WorkDir ('quarantine-hashes-' + $InstanceId + '.csv')
         $rows = New-Object System.Collections.ArrayList
-        foreach ($f in @(Get-ChildItem -LiteralPath $SourcePath -File -Recurse -Force -ErrorAction SilentlyContinue)) {
+        $reparseSkipped = @()
+        foreach ($f in @(Get-ChildItem -LiteralPath $SourcePath -File -Recurse -Force -Attributes !ReparsePoint -ErrorAction SilentlyContinue)) {
             $h = Get-Sha256File $f.FullName
             [void]$rows.Add([PSCustomObject]@{
                 Path   = $f.FullName
@@ -952,9 +1023,17 @@ function Move-ToQuarantine {
                 SHA256 = $h
             })
         }
+        # Record any reparse points we declined to follow, so the forensic record
+        # notes them rather than silently omitting them.
+        $reparseItems = @(Get-ChildItem -LiteralPath $SourcePath -Recurse -Force -Attributes ReparsePoint -ErrorAction SilentlyContinue)
+        foreach ($rp in $reparseItems) {
+            $reparseSkipped += $rp.FullName
+            Add-ManifestEntry -InstanceId $InstanceId -Action 'Quarantine' -Target $rp.FullName -Result 'Skipped' -Details 'Reparse point (junction/symlink) not followed or moved'
+        }
         try {
             $rows | Export-Csv -LiteralPath $hashCsv -NoTypeInformation -Encoding UTF8 -ErrorAction Stop
             $hashNote = "directory, " + $rows.Count + " file(s) hashed -> " + $hashCsv
+            if ($reparseSkipped.Count -gt 0) { $hashNote += "; " + $reparseSkipped.Count + " reparse point(s) skipped" }
         } catch {
             $hashNote = "directory, " + $rows.Count + " file(s); hash CSV failed: " + $_.Exception.Message
         }
@@ -968,6 +1047,20 @@ function Move-ToQuarantine {
     # cannot be found that accepts argument ...", which aborted manual surgery
     # before anything was ever quarantined. Nest the calls instead.
     $destPath = Join-Path (Join-Path $quarantineDir "$InstanceId") "$destName"
+
+    # FIX (safety): make the quarantine destination collision-safe. Move-Item
+    # -Force on a directory-vs-directory collision MERGES the sources on top of
+    # each other and can overwrite same-named files, silently corrupting the
+    # forensic record (SHA256 no longer matches what lands on disk). If the
+    # destination already exists (resume, or two installs sharing a leaf name),
+    # derive a unique name from a hash of the full source path instead of
+    # blindly overwriting.
+    if (Test-Path -LiteralPath $destPath) {
+        $unique = (Get-Sha256Hex -Text $SourcePath)
+        if ($unique) { $unique = $unique.Substring(0, 8) } else { $unique = [Guid]::NewGuid().ToString('N').Substring(0, 8) }
+        $destPath = Join-Path (Join-Path $quarantineDir "$InstanceId") ($unique + '-' + $destName)
+        Write-Log "  Quarantine destination already exists; using unique path: $destPath"
+    }
 
     # Ensure quarantine subdirectory exists
     $qSubDir = Split-Path -Parent $destPath
@@ -1050,6 +1143,7 @@ function Set-RunOnceResume {
 function Clean-Persistence {
     param([string]$InstallDir, [string]$InstanceId)
     $cleaned = 0
+    $failed = $false
 
     # 1. Scheduled Tasks referencing the install directory
     try {
@@ -1077,7 +1171,11 @@ function Clean-Persistence {
                             }
                         }
                     }
-                } catch { }
+                } catch {
+                    $failed = $true
+                    Write-Log ("  Failed to delete scheduled task: " + $_.Exception.Message) 'Error'
+                    Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteScheduledTask' -Target 'N/A' -Result 'Failed' -Details $_.Exception.Message
+                }
             }
         }
     } catch { Write-Log "  Scheduled task enumeration failed: $($_.Exception.Message)" 'Warn' }
@@ -1114,7 +1212,11 @@ function Clean-Persistence {
                     }
                 }
             }
-        } catch { }
+        } catch {
+            $failed = $true
+            Write-Log ("  Failed to delete Run key value: " + $_.Exception.Message) 'Error'
+            Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteRunKey' -Target 'N/A' -Result 'Failed' -Details $_.Exception.Message
+        }
     }
 
     # 3. WMI Event Subscriptions (FilterToConsumerBinding)
@@ -1139,7 +1241,11 @@ function Clean-Persistence {
                         $cleaned++
                     }
                 }
-            } catch { }
+            } catch {
+                $failed = $true
+                Write-Log ("  Failed to delete WMI subscription: " + $_.Exception.Message) 'Error'
+                Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteWmiSubscription' -Target 'N/A' -Result 'Failed' -Details $_.Exception.Message
+            }
         }
     } catch { Write-Log "  WMI subscription enumeration failed: $($_.Exception.Message)" 'Warn' }
 
@@ -1147,7 +1253,7 @@ function Clean-Persistence {
         Write-Log "  No persistence artifacts found referencing $InstallDir"
         Add-ManifestEntry -InstanceId $InstanceId -Action 'CleanPersistence' -Target $InstallDir -Result 'Skipped' -Details 'No artifacts found'
     }
-    return $true
+    return (-not $failed)
 }
 
 # -----------------------------------------------------------------------------
@@ -1188,6 +1294,13 @@ foreach ($inst in $scInstancesArray) {
         }
         Write-Log "  Product verification passed"
         Add-ManifestEntry -InstanceId $instanceId -Action 'ProductVerification' -Target 'N/A' -Result 'Passed' -Details 'Entry identity confirmed against ScreenConnect patterns'
+        # FIX (transparency): this confirmation is NAME-BASED identity (directory
+        # segment + binary name + service name). It does NOT check an
+        # Authenticode signature or a ConnectWise certificate. A technician must
+        # eyeball the entry, because a look-alike folder/binary named
+        # "ScreenConnect..." would pass these gates. See docs/03 (key map is
+        # UNVERIFIED against a live install).
+        Write-Log "  NOTE: identity is name-based, not signature-verified. Review the instance before removal." 'Warn'
 
         $serviceName = Get-EntryPropertySafe -Instance $inst -PropertyName 'ServiceName'
         $installDir = Get-EntryPropertySafe -Instance $inst -PropertyName 'InstallDir'
@@ -1211,19 +1324,22 @@ foreach ($inst in $scInstancesArray) {
         }
 
         # 1. Stop service + kill processes
+        # FIX (reliability): capture each sub-action result so a half-failure is
+        # surfaced and the instance is NOT marked 'Completed'.
+        $instanceFailed = $false
         if ($serviceName) {
-            Stop-ServiceSafe -ServiceName $serviceName -InstanceId $instanceId
+            if (-not (Stop-ServiceSafe -ServiceName $serviceName -InstanceId $instanceId)) { $instanceFailed = $true }
         }
         if ($installDir) {
-            Kill-ProcessesForInstance -InstallDir $installDir -ServiceName $serviceName -InstanceId $instanceId
+            if (-not (Kill-ProcessesForInstance -InstallDir $installDir -ServiceName $serviceName -InstanceId $instanceId)) { $instanceFailed = $true }
         } else {
-            Kill-ProcessesForInstance -InstallDir '' -ServiceName $serviceName -InstanceId $instanceId
+            if (-not (Kill-ProcessesForInstance -InstallDir '' -ServiceName $serviceName -InstanceId $instanceId)) { $instanceFailed = $true }
         }
 
         # 2. Run vendor uninstaller
         $uninstallSuccess = $false
         if ($uninstallEntry) {
-            $uninstallSuccess = Run-VendorUninstaller -UninstallEntry $uninstallEntry -InstanceId $instanceId
+            $uninstallSuccess = Run-VendorUninstaller -UninstallEntry $uninstallEntry -InstanceId $instanceId -InstallDir $installDir
             if ($uninstallSuccess) {
                 Write-Log "  Vendor uninstaller reported success"
                 Add-ManifestEntry -InstanceId $instanceId -Action 'Uninstall' -Target ($uninstallEntry.UninstallString) -Result 'Success'
@@ -1241,11 +1357,11 @@ foreach ($inst in $scInstancesArray) {
             Write-Log "  Proceeding with manual surgery for: $installDir"
 
             # Quarantine the entire install directory
-            Move-ToQuarantine -SourcePath $installDir -InstanceId $instanceId -Description 'Install directory'
+            if (-not (Move-ToQuarantine -SourcePath $installDir -InstanceId $instanceId -Description 'Install directory')) { $instanceFailed = $true }
 
             # Delete service registration
             if ($serviceName) {
-                Delete-ServiceRegistration -ServiceName $serviceName -InstanceId $instanceId
+                if (-not (Delete-ServiceRegistration -ServiceName $serviceName -InstanceId $instanceId)) { $instanceFailed = $true }
             }
 
             # Remove the now-orphaned Uninstall registry entry. When the vendor
@@ -1263,18 +1379,32 @@ foreach ($inst in $scInstancesArray) {
                     $backup = Join-Path $WorkDir ('uninstall-key-' + $instanceId + '.reg')
                     if ($Execute) {
                         try {
-                            & reg.exe export $regPath $backup /y 2>$null | Out-Null
-                            & reg.exe delete $regPath /f 2>$null | Out-Null
-                            if ($LASTEXITCODE -eq 0) {
-                                Write-Log "  Removed orphaned uninstall entry: $regPath"
-                                Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'Success' -Details "Orphaned after manual surgery; exported to $backup"
+                            # Export FIRST and verify the backup landed before
+                            # deleting. reg.exe export writes a .reg file; if it
+                            # failed (unwritable path, bad quoting), the delete
+                            # must NOT proceed or we lose the only reversal.
+                            & reg.exe export "$regPath" "$backup" /y 2>$null | Out-Null
+                            $exportCode = $LASTEXITCODE
+                            if ($exportCode -ne 0 -or -not (Test-Path -LiteralPath $backup)) {
+                                Write-Log "  Export of $regPath backup failed (exit $exportCode); NOT deleting the orphan key" 'Error'
+                                Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'Failed' -Details "Backup export failed (exit $exportCode); key left in place for safety"
+                                $instanceFailed = $true
                             } else {
-                                Write-Log "  Could not delete orphaned uninstall entry: $regPath" 'Warn'
-                                Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'Failed' -Details "reg delete exit $LASTEXITCODE"
+                                & reg.exe delete "$regPath" /f 2>$null | Out-Null
+                                $delCode = $LASTEXITCODE
+                                if ($delCode -eq 0) {
+                                    Write-Log "  Removed orphaned uninstall entry: $regPath"
+                                    Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'Success' -Details "Orphaned after manual surgery; exported to $backup"
+                                } else {
+                                    Write-Log "  Could not delete orphaned uninstall entry: $regPath" 'Warn'
+                                    Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'Failed' -Details "reg delete exit $delCode"
+                                    $instanceFailed = $true
+                                }
                             }
                         } catch {
-                            Write-Log ("  Could not delete orphaned uninstall entry: " + $_.Exception.Message) 'Warn'
+                            Write-Log (  "Could not delete orphaned uninstall entry: " + $_.Exception.Message) 'Warn'
                             Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'Failed' -Details $_.Exception.Message
+                            $instanceFailed = $true
                         }
                     } else {
                         Write-Log "  [DRY-RUN] Would remove orphaned uninstall entry: $regPath"
@@ -1285,13 +1415,13 @@ foreach ($inst in $scInstancesArray) {
         } else {
             Write-Log "  Install directory not found or empty: $installDir" 'Warn'
             if ($serviceName) {
-                Delete-ServiceRegistration -ServiceName $serviceName -InstanceId $instanceId
+                if (-not (Delete-ServiceRegistration -ServiceName $serviceName -InstanceId $instanceId)) { $instanceFailed = $true }
             }
         }
 
         # 4. Clean persistence (always attempt, even if uninstall succeeded)
         if ($installDir) {
-            Clean-Persistence -InstallDir $installDir -InstanceId $instanceId
+            if (-not (Clean-Persistence -InstallDir $installDir -InstanceId $instanceId)) { $instanceFailed = $true }
         }
 
         # Also clean persistence for any service executable paths.
@@ -1318,11 +1448,19 @@ foreach ($inst in $scInstancesArray) {
         if ($svcExe) {
             $svcDir = Split-Path -Parent $svcExe
             if ($svcDir -and $svcDir -ne $installDir) {
-                Clean-Persistence -InstallDir $svcDir -InstanceId $instanceId
+                if (-not (Clean-Persistence -InstallDir $svcDir -InstanceId $instanceId)) { $instanceFailed = $true }
             }
         }
 
-        Update-ResumeStatus -InstanceId $instanceId -Status 'Completed'
+        # FIX (reliability): don't mark 'Completed' when a sub-action failed.
+        # Otherwise -Resume skips an actually-half-cleaned instance forever.
+        if ($instanceFailed) {
+            Update-ResumeStatus -InstanceId $instanceId -Status 'Failed'
+            Write-Log "  Instance had one or more failed actions; marked Failed (will be re-attempted on -Resume)" 'Error'
+            $overallSuccess = $false
+        } else {
+            Update-ResumeStatus -InstanceId $instanceId -Status 'Completed'
+        }
     } catch {
         # FIX 3: one malformed/failed entry must not abort the remaining work
         $msg = $_.Exception.Message
