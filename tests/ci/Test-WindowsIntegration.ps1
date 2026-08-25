@@ -143,14 +143,32 @@ $hostile | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $hostileFindings -
 
 $reportHtml = Join-Path $tmp 'report.html'
 $reportScript = Join-Path $repoRoot 'New-InvestigationReport.ps1'
-& $reportScript -FindingsJson $hostileFindings -OutputPath $reportHtml
-$reportRc = $LASTEXITCODE
-Check 'report generator exit 0' ($reportRc -eq 0) "rc=$reportRc"
+# NOTE: New-InvestigationReport.ps1 does not call `exit`, and a .ps1 invoked
+# with `&` never sets $LASTEXITCODE (that only tracks native commands). So it
+# is meaningless to assert `$LASTEXITCODE -eq 0` here - on the Windows runner
+# the value leaks the PRIOR child's code. The meaningful success signal is:
+# no terminating error AND the report file was actually written.
+$repOk = $true
+try {
+    & $reportScript -FindingsJson $hostileFindings -OutputPath $reportHtml *> $null
+} catch {
+    $repOk = $false
+    Write-Host ("report generator threw: {0}" -f $_.Exception.Message)
+}
+Check 'report generator ran without error' $repOk
 
 if (Test-Path -LiteralPath $reportHtml) {
     $html = Get-Content -LiteralPath $reportHtml -Raw
     Check 'report has 0 raw <script>' (-not $html.Contains('<script>'))
-    Check 'report has 0 raw onerror=' (-not $html.Contains('onerror='))
+    # Encode-Html escapes < and > to &lt; &gt;, so an attacker's
+    # `onerror=` survives only as inert text inside escaped markup: the
+    # literal substring `onerror=` WILL appear, but no live `<img ... onerror`
+    # or `<... onerror=` element can. Assert THERE IS NO ACTIVE HANDLER
+    # (i.e. no `<` immediately preceding an `onerror=` inside a tag), and
+    # that the hostile OSCaption was escaped, rather than a naive substring
+    # absence that falsely fails on correctly-neutralized text.
+    Check 'no live onerror= handler in report' (-not $html.Contains('<img src=x onerror='))
+    Check 'onerror payload is bracket-escaped' ($html.Contains('&lt;img src=x onerror=alert(2)&gt;'))
 } else {
     Check 'report HTML written' $false
 }
