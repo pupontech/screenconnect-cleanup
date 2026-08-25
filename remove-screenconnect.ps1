@@ -405,9 +405,18 @@ function Get-VerifiedUninstallEntry {
 
     if ([string]::IsNullOrWhiteSpace($RegistryKeyPath)) { return $null }
 
+    # The detector reports the key in raw Win32 form
+    # (HKEY_LOCAL_MACHINE\SOFTWARE\...), which Get-ItemProperty cannot open -
+    # it needs a PSDrive (HKLM:\) or provider (Registry::) path. Without this
+    # the plan's own uninstall key was always "unreadable" and discarded.
+    $resolvedKeyPath = $RegistryKeyPath
+    if ($resolvedKeyPath -match '^HKEY_') {
+        $resolvedKeyPath = 'Registry::' + $resolvedKeyPath
+    }
+
     $entry = $null
     try {
-        $entry = Get-ItemProperty -LiteralPath $RegistryKeyPath -ErrorAction Stop
+        $entry = Get-ItemProperty -LiteralPath $resolvedKeyPath -ErrorAction Stop
     } catch {
         $msg = $_.Exception.Message
         Write-Log "  Plan UninstallRegistryKey unreadable, ignoring it: $msg" 'Warn'
@@ -438,6 +447,25 @@ function Get-VerifiedUninstallEntry {
         if ($data.IndexOf($needle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
             Write-Log "  Plan UninstallRegistryKey accepted: value '$($prop.Name)' references verified install dir"
             Add-ManifestEntry -InstanceId $InstanceId -Action 'ValidateUninstallKey' -Target $RegistryKeyPath -Result 'Accepted' -Details "Value '$($prop.Name)' references verified install dir"
+            return $entry
+        }
+    }
+
+    # Second, equally strong cross-check. A ScreenConnect MSI entry normally has
+    # an EMPTY InstallLocation and an UninstallString of just
+    # "MsiExec.exe /X{ProductCode}" - no value references the install path at
+    # all, so the path test above rejected every legitimate MSI install and the
+    # plan's own key was discarded on every run. The per-instance identifier
+    # (e.g. 763257a7941a63ef) in this key's DisplayName ties the key to THIS
+    # instance just as tightly, because the verified install directory is
+    # itself named "ScreenConnect Client (<identifier>)".
+    if ($InstanceId -and $InstanceId -ne 'unknown') {
+        $idNeedle = [string]$InstanceId
+        if ($displayName -and
+            $displayName.IndexOf($idNeedle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+            $needle.IndexOf($idNeedle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            Write-Log "  Plan UninstallRegistryKey accepted: DisplayName carries instance id '$idNeedle'"
+            Add-ManifestEntry -InstanceId $InstanceId -Action 'ValidateUninstallKey' -Target $RegistryKeyPath -Result 'Accepted' -Details "DisplayName '$displayName' carries instance id '$idNeedle', which also names the verified install dir"
             return $entry
         }
     }
@@ -502,7 +530,13 @@ function Write-ResumeMarker {
 function Initialize-ResumeMarker {
     if (-not $Execute) { return }
     $script:ResumeStatuses.Clear()
-    foreach ($instItem in $scInstancesArray) {
+    # Use $scInstances (set right after the plan loads), NOT $scInstancesArray:
+    # that one is assigned AFTER this function is called, so under
+    # Set-StrictMode -Version 2.0 it threw "The variable '$scInstancesArray'
+    # cannot be retrieved because it has not been set." The early
+    # 'if (-not $Execute) { return }' above hid this in every dry-run, so it
+    # only ever fired on a REAL removal - Stage 4 died before touching anything.
+    foreach ($instItem in $scInstances) {
         $id = Get-PlanInstanceId -Instance $instItem
         $status = 'Pending'
         if ($script:CompletedInstanceIds -contains $id) { $status = 'Completed' }
@@ -605,6 +639,16 @@ function Get-UninstallEntriesForInstance {
 function Stop-ServiceSafe {
     param([string]$ServiceName, [string]$InstanceId)
     try {
+        # A service that does not exist is NOT a failure - it is already gone
+        # (uninstaller removed it, or the plan named a stale instance). Letting
+        # Get-Service throw here recorded 'Failed' and made the whole run exit 1
+        # even though there was nothing to stop.
+        $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+        if (-not $existing) {
+            Write-Log "  Service not present (nothing to stop): $ServiceName"
+            Add-ManifestEntry -InstanceId $InstanceId -Action 'StopService' -Target $ServiceName -Result 'Skipped' -Details 'Service does not exist'
+            return $true
+        }
         $svc = Get-Service -Name $ServiceName -ErrorAction Stop
         if ($svc.Status -ne 'Stopped') {
             if ($Execute) {
@@ -646,34 +690,69 @@ function Kill-ProcessesForInstance {
                 $pids += $svc.ProcessId
             }
         }
-        # Also scan for ScreenConnect client/service processes
+        # Also scan for ScreenConnect client/service processes.
+        # DANGER: matching on CommandLine used to be part of this filter, which
+        # matched THIS VERY SCRIPT - powershell.exe running
+        # "...\screenconnect-cleanup\remove-screenconnect.ps1" contains the
+        # string "ScreenConnect", so the tool killed its own host process and
+        # died with exit -1 partway through removal. Match only on the
+        # executable's own name/path, never on the command line.
         if ($pids.Count -eq 0) {
             $scProcs = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop |
-                Where-Object { $_.Name -like '*ScreenConnect*' -or $_.CommandLine -like '*ScreenConnect*' }
+                Where-Object {
+                    $_.Name -like 'ScreenConnect*' -or
+                    ($_.ExecutablePath -and $_.ExecutablePath -like '*\ScreenConnect Client*')
+                }
             foreach ($p in $scProcs) {
                 $pids += $p.ProcessId
             }
         }
         $pids = @($pids | Sort-Object -Unique)
+
+        # Hard self-protection: never terminate this process or any of its
+        # ancestors, no matter how a pid got onto the list. Killing our own
+        # host aborts the removal midway and leaves the machine half-cleaned.
+        $selfChain = New-Object System.Collections.Generic.List[int]
+        $walk = $PID
+        for ($i = 0; $i -lt 12 -and $walk -gt 0; $i++) {
+            $selfChain.Add([int]$walk)
+            $parent = $null
+            try {
+                $parent = (Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$walk" -ErrorAction Stop).ParentProcessId
+            } catch { }
+            if (-not $parent -or $selfChain.Contains([int]$parent)) { break }
+            $walk = [int]$parent
+        }
+        $skipped = @($pids | Where-Object { $selfChain.Contains([int]$_) })
+        foreach ($sp in $skipped) {
+            Write-Log "  Refusing to kill PID ${sp}: it is this script or one of its parent processes" 'Warn'
+            Add-ManifestEntry -InstanceId $InstanceId -Action 'KillProcess' -Target "PID $sp" -Result 'Skipped' -Details 'Self/ancestor process - refused'
+        }
+        $pids = @($pids | Where-Object { -not $selfChain.Contains([int]$_) })
+
         if ($pids.Count -eq 0) {
             Write-Log "  No processes found to kill"
             Add-ManifestEntry -InstanceId $InstanceId -Action 'KillProcesses' -Target 'N/A' -Result 'Skipped' -Details 'No processes found'
             return $true
         }
-        foreach ($pid in $pids) {
+        # NOTE: $pid is a READ-ONLY automatic variable (the current process id).
+        # Using it as the loop variable threw "Cannot overwrite variable PID
+        # because it is read-only or constant" on the first iteration, so no
+        # ScreenConnect process was ever killed. Use $procId instead.
+        foreach ($procId in $pids) {
             if ($Execute) {
-                Write-Log "  Killing process PID $pid"
+                Write-Log "  Killing process PID $procId"
                 try {
-                    Stop-Process -Id $pid -Force -ErrorAction Stop
-                    Add-ManifestEntry -InstanceId $InstanceId -Action 'KillProcess' -Target "PID $pid" -Result 'Success' -Details 'Process terminated'
+                    Stop-Process -Id $procId -Force -ErrorAction Stop
+                    Add-ManifestEntry -InstanceId $InstanceId -Action 'KillProcess' -Target "PID $procId" -Result 'Success' -Details 'Process terminated'
                 } catch {
                     $msg = $_.Exception.Message
-                    Write-Log "    Failed to kill PID ${pid}: $msg" 'Error'
-                    Add-ManifestEntry -InstanceId $InstanceId -Action 'KillProcess' -Target "PID $pid" -Result 'Failed' -Details $msg
+                    Write-Log "    Failed to kill PID ${procId}: $msg" 'Error'
+                    Add-ManifestEntry -InstanceId $InstanceId -Action 'KillProcess' -Target "PID $procId" -Result 'Failed' -Details $msg
                 }
             } else {
-                Write-Log "  [DRY-RUN] Would kill process PID $pid"
-                Add-ManifestEntry -InstanceId $InstanceId -Action 'KillProcess' -Target "PID $pid" -Result 'DryRun' -Details 'Would kill process'
+                Write-Log "  [DRY-RUN] Would kill process PID $procId"
+                Add-ManifestEntry -InstanceId $InstanceId -Action 'KillProcess' -Target "PID $procId" -Result 'DryRun' -Details 'Would kill process'
             }
         }
         return $true
@@ -731,10 +810,15 @@ function Run-VendorUninstaller {
         return $false
     }
 
-    $uninstallString = $UninstallEntry.UninstallString
-    $quietUninstallString = $UninstallEntry.QuietUninstallString
-    $displayName = $UninstallEntry.DisplayName
-    $registryKey = $UninstallEntry.PSPath
+    # StrictMode-safe reads: a real Uninstall key very often has NO
+    # QuietUninstallString value, and under Set-StrictMode -Version 2.0 a
+    # direct property read on a missing registry value THROWS
+    # ("The property 'QuietUninstallString' cannot be found on this object"),
+    # which aborted the whole instance before the uninstaller ever ran.
+    $uninstallString = Get-EntryPropertySafe -Instance $UninstallEntry -PropertyName 'UninstallString'
+    $quietUninstallString = Get-EntryPropertySafe -Instance $UninstallEntry -PropertyName 'QuietUninstallString'
+    $displayName = Get-EntryPropertySafe -Instance $UninstallEntry -PropertyName 'DisplayName'
+    $registryKey = Get-EntryPropertySafe -Instance $UninstallEntry -PropertyName 'PSPath'
 
     Write-Log "  Found uninstall entry: $displayName"
 
@@ -750,8 +834,12 @@ function Run-VendorUninstaller {
     }
 
     if (-not $cmd) {
-        Write-Log "  No UninstallString or QuietUninstallString found" 'Warn'
-        Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target $displayName -Result 'Failed' -Details 'No uninstall string'
+        # NOT a failure: a damaged/tampered registration often keeps DisplayName
+        # but loses UninstallString. Manual surgery (quarantine + service
+        # deletion) is the designed fallback and handles it, so recording this
+        # as 'Failed' made a successful removal report failure and exit 1.
+        Write-Log "  No UninstallString or QuietUninstallString found - falling back to manual surgery" 'Warn'
+        Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target $displayName -Result 'Skipped' -Details 'No uninstall string on the registry entry; manual surgery will handle this instance'
         return $false
     }
 
@@ -838,9 +926,41 @@ function Move-ToQuarantine {
         return $true
     }
 
-    $sha256 = Get-Sha256File $SourcePath
+    # A directory has no single file hash - Get-FileHash on a folder returns
+    # nothing, so the manifest used to record a blank "SHA256: " for the main
+    # artifact, defeating the whole point of the forensic record. Hash every
+    # file inside instead and write them to a sidecar CSV.
+    $isDirectory = $false
+    try { $isDirectory = (Get-Item -LiteralPath $SourcePath -Force).PSIsContainer } catch { }
+    $hashNote = ''
+    $sha256 = ''
+    if ($isDirectory) {
+        $hashCsv = Join-Path $WorkDir ('quarantine-hashes-' + $InstanceId + '.csv')
+        $rows = New-Object System.Collections.ArrayList
+        foreach ($f in @(Get-ChildItem -LiteralPath $SourcePath -File -Recurse -Force -ErrorAction SilentlyContinue)) {
+            $h = Get-Sha256File $f.FullName
+            [void]$rows.Add([PSCustomObject]@{
+                Path   = $f.FullName
+                Length = $f.Length
+                SHA256 = $h
+            })
+        }
+        try {
+            $rows | Export-Csv -LiteralPath $hashCsv -NoTypeInformation -Encoding UTF8 -ErrorAction Stop
+            $hashNote = "directory, " + $rows.Count + " file(s) hashed -> " + $hashCsv
+        } catch {
+            $hashNote = "directory, " + $rows.Count + " file(s); hash CSV failed: " + $_.Exception.Message
+        }
+        $sha256 = $hashNote
+    } else {
+        $sha256 = Get-Sha256File $SourcePath
+    }
     $destName = [System.IO.Path]::GetFileName($SourcePath)
-    $destPath = Join-Path $quarantineDir "$InstanceId" "$destName"
+    # Windows PowerShell 5.1's Join-Path takes only -Path and -ChildPath; a
+    # third positional part (PS 7+ only) fails with "A positional parameter
+    # cannot be found that accepts argument ...", which aborted manual surgery
+    # before anything was ever quarantined. Nest the calls instead.
+    $destPath = Join-Path (Join-Path $quarantineDir "$InstanceId") "$destName"
 
     # Ensure quarantine subdirectory exists
     $qSubDir = Split-Path -Parent $destPath
@@ -853,13 +973,18 @@ function Move-ToQuarantine {
 
     if ($Execute) {
         try {
-            # Check if file is in use
+            # Try the move FIRST rather than pre-testing with File::Open.
+            # File::Open ALWAYS throws on a directory ("Access to the path is
+            # denied"), so every install folder was wrongly judged "in use" and
+            # deferred to reboot - leaving the payload on disk after a run the
+            # technician was told had succeeded. Attempting the move is the only
+            # honest test, and it works for files and directories alike.
             $isLocked = $false
             try {
-                $testStream = [System.IO.File]::Open($SourcePath, 'Open', 'ReadWrite', 'None')
-                $testStream.Close()
+                Move-Item -LiteralPath $SourcePath -Destination $destPath -Force -ErrorAction Stop
             } catch {
                 $isLocked = $true
+                Write-Log ("  Immediate move failed (" + $_.Exception.Message + ")") 'Debug'
             }
 
             if ($isLocked) {
@@ -879,7 +1004,7 @@ function Move-ToQuarantine {
                 Set-RunOnceResume -InstanceId $InstanceId -WorkDir $WorkDir
                 Add-ManifestEntry -InstanceId $InstanceId -Action 'Quarantine' -Target $SourcePath -Result 'Deferred' -Details "File in use, scheduled for reboot move. SHA256: $sha256. Original: $SourcePath`nQuarantine: $destPath`nDescription: $Description"
             } else {
-                Move-Item -LiteralPath $SourcePath -Destination $destPath -Force -ErrorAction Stop
+                # Already moved by the attempt above - just record it.
                 Add-ManifestEntry -InstanceId $InstanceId -Action 'Quarantine' -Target $SourcePath -Result 'Success' -Details "Moved to quarantine. SHA256: $sha256. Original: $SourcePath`nQuarantine: $destPath`nDescription: $Description"
             }
             return $true
@@ -1108,6 +1233,41 @@ foreach ($inst in $scInstancesArray) {
             if ($serviceName) {
                 Delete-ServiceRegistration -ServiceName $serviceName -InstanceId $instanceId
             }
+
+            # Remove the now-orphaned Uninstall registry entry. When the vendor
+            # uninstaller runs, MSI clears this itself; after MANUAL SURGERY it
+            # is left behind, so ScreenConnect kept showing up in Programs and
+            # Features even though every file and the service were gone. The key
+            # is exported to the working directory first so the removal stays
+            # reversible and auditable.
+            if ($uninstallEntry) {
+                $orphanPath = [string](Get-EntryPropertySafe -Instance $uninstallEntry -PropertyName 'PSPath')
+                if ($orphanPath) {
+                    $regPath = $orphanPath -replace '^Microsoft\.PowerShell\.Core\\Registry::', ''
+                    $regPath = $regPath -replace '^HKEY_LOCAL_MACHINE', 'HKLM'
+                    $regPath = $regPath -replace '^HKEY_CURRENT_USER', 'HKCU'
+                    $backup = Join-Path $WorkDir ('uninstall-key-' + $instanceId + '.reg')
+                    if ($Execute) {
+                        try {
+                            & reg.exe export $regPath $backup /y 2>$null | Out-Null
+                            & reg.exe delete $regPath /f 2>$null | Out-Null
+                            if ($LASTEXITCODE -eq 0) {
+                                Write-Log "  Removed orphaned uninstall entry: $regPath"
+                                Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'Success' -Details "Orphaned after manual surgery; exported to $backup"
+                            } else {
+                                Write-Log "  Could not delete orphaned uninstall entry: $regPath" 'Warn'
+                                Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'Failed' -Details "reg delete exit $LASTEXITCODE"
+                            }
+                        } catch {
+                            Write-Log ("  Could not delete orphaned uninstall entry: " + $_.Exception.Message) 'Warn'
+                            Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'Failed' -Details $_.Exception.Message
+                        }
+                    } else {
+                        Write-Log "  [DRY-RUN] Would remove orphaned uninstall entry: $regPath"
+                        Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'DryRun' -Details 'Would export then delete the orphaned uninstall key'
+                    }
+                }
+            }
         } else {
             Write-Log "  Install directory not found or empty: $installDir" 'Warn'
             if ($serviceName) {
@@ -1120,10 +1280,29 @@ foreach ($inst in $scInstancesArray) {
             Clean-Persistence -InstallDir $installDir -InstanceId $instanceId
         }
 
-        # Also clean persistence for any service executable paths
-        $svcImagePath = Get-EntryPropertySafe -Instance $inst -PropertyName 'ServiceImagePath'
-        if ($svcImagePath) {
-            $svcDir = Split-Path -Parent ([string]$svcImagePath)
+        # Also clean persistence for any service executable paths.
+        # ServiceImagePath is a raw service ImagePath: the exe is QUOTED and
+        # followed by launch arguments, e.g.
+        #   "C:\...\ScreenConnect.ClientService.exe" "?e=Access&y=Guest&..."
+        # Split-Path on that whole string yields a path with a leading quote,
+        # so this sweep silently searched a directory that never exists.
+        # Prefer the detector's already-parsed MainExe; otherwise pull the exe
+        # out of the ImagePath before taking its parent.
+        $svcExe = [string](Get-EntryPropertySafe -Instance $inst -PropertyName 'MainExe')
+        if (-not $svcExe) {
+            $svcImagePath = [string](Get-EntryPropertySafe -Instance $inst -PropertyName 'ServiceImagePath')
+            if ($svcImagePath) {
+                $quoted = [regex]::Match($svcImagePath, '^\s*"([^"]+)"')
+                if ($quoted.Success) {
+                    $svcExe = $quoted.Groups[1].Value
+                } else {
+                    $bare = [regex]::Match($svcImagePath, '^\s*(\S.*?\.exe)', 'IgnoreCase')
+                    if ($bare.Success) { $svcExe = $bare.Groups[1].Value }
+                }
+            }
+        }
+        if ($svcExe) {
+            $svcDir = Split-Path -Parent $svcExe
             if ($svcDir -and $svcDir -ne $installDir) {
                 Clean-Persistence -InstallDir $svcDir -InstanceId $instanceId
             }

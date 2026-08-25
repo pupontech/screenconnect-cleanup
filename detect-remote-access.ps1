@@ -715,6 +715,7 @@ function Invoke-GenericModule {
 $transcriptPath = "$env:USERPROFILE\Desktop\detect-remote-access_$(Get-Date -Format 'yyyy-MM-dd_HHmmss').log"
 try { Start-Transcript -Path $transcriptPath -Force | Out-Null } catch { }
 
+$script:RunExitCode = 0
 try {
     Clear-Host
     Write-Host "===============================================================" -ForegroundColor Cyan
@@ -1023,6 +1024,7 @@ try {
     Write-Host ""
     Write-Host "FAILED: $($_.Exception.Message)" -ForegroundColor Red
     Write-Host $_.ScriptStackTrace -ForegroundColor DarkGray
+    $script:RunExitCode = 1
 } finally {
     try { Stop-Transcript | Out-Null } catch { }
     if (-not $NoPause) {
@@ -1030,3 +1032,7 @@ try {
         Read-Host "Press Enter to close"
     }
 }
+
+# Surface failure to the caller (sc-cleanup.ps1 checks the exit code). Without
+# this the catch above swallowed the error and the script always returned 0.
+exit $script:RunExitCode

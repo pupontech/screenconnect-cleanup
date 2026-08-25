@@ -13,6 +13,9 @@
   Stage 8: Report
 
   Nothing destructive is reachable without explicit flags and the review gate.
+  -ExecuteRemoval pre-authorizes Stage 4 for lab/VM testing: every detected
+  ScreenConnect instance defaults to REMOVE and the typed confirmation is
+  waived. It still honors -sr. Do not use it on a client machine.
   PowerShell 5.1 compatible. Pure ASCII, no BOM.
 #>
 
@@ -26,6 +29,7 @@ param(
     [switch]$force,       # override server-OS refusal
     [switch]$safemode,    # relaunch in safe mode with networking
     [switch]$resume,      # internal: used by reboot RunOnce
+    [switch]$ExecuteRemoval, # TEST MODE: pre-authorize removal (no typed confirmation)
 
     # Configuration
     [string]$IncidentDate,   # incident window anchor (yyyy-MM-dd)
@@ -101,6 +105,17 @@ function Test-IsAdmin {
     }
 }
 
+function Test-UacEnabled {
+    # HKLM\...\Policies\System!EnableLUA. Absent key = UAC on (pre-Vista-style
+    # machines do not exist anymore); 0 = disabled; anything else = enabled.
+    try {
+        $val = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name 'EnableLUA' -ErrorAction Stop
+        return ($val.EnableLUA -ne 0)
+    } catch {
+        return $true
+    }
+}
+
 function Test-IsServerOS {
     try {
         $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
@@ -140,11 +155,14 @@ function Prompt-IfMissing {
 }
 
 function Get-JsonItems {
+    # The unary comma is required: 'return @()' hands back $null once PowerShell
+    # unrolls the empty array, and under Set-StrictMode 2.0 the caller's
+    # $result.Count then blows up with "property 'Count' cannot be found".
     param($Value)
-    if ($null -eq $Value) { return @() }
-    if ($Value -is [System.Array]) { return @($Value) }
-    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) { return @($Value) }
-    return @($Value)
+    if ($null -eq $Value) { return , @() }
+    if ($Value -is [System.Array]) { return , @($Value) }
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) { return , @($Value) }
+    return , @($Value)
 }
 
 function Get-PropertyValue {
@@ -179,7 +197,7 @@ function Invoke-ChildScript {
         return 1
     }
     $psi.FileName = $runner.Source
-    $psi.Arguments = '-NoProfile -NonInteractive -File "' + $ScriptPath + '"'
+    $psi.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $ScriptPath + '"'
     foreach ($a in $ArgumentList) {
         if ($null -eq $a) { $a = '' }
         # Quote arguments that contain spaces or special chars.
@@ -201,8 +219,11 @@ function Invoke-ChildScript {
         return 1
     }
 
+    # Read stderr asynchronously. Draining both pipes synchronously deadlocks
+    # when the child fills one buffer while we are blocked on the other.
+    $stderrTask = $proc.StandardError.ReadToEndAsync()
     $stdout = $proc.StandardOutput.ReadToEnd()
-    $stderr = $proc.StandardError.ReadToEnd()
+    $stderr = $stderrTask.Result
     $proc.WaitForExit()
     $exitCode = $proc.ExitCode
 
@@ -298,6 +319,12 @@ Write-Host "  ScreenConnect Cleanup Tool  v$ScriptVersion" -ForegroundColor Cyan
 Write-Host "  Pipeline: $($PipelineStages.Count) stages" -ForegroundColor Cyan
 Write-Host "======================================================================" -ForegroundColor Cyan
 Write-Host "Host: $hostName  |  OS: $osCaption  |  PS: $psVersion  |  Admin: $isAdmin  |  Server: $isServer"
+if ($ExecuteRemoval -and -not $sr) {
+    Write-Host ""
+    Write-Host "  *** -ExecuteRemoval: REMOVAL IS PRE-AUTHORIZED. THIS RUN WILL ACTUALLY" -ForegroundColor Red
+    Write-Host "  *** STOP SERVICES, RUN UNINSTALLERS AND QUARANTINE FILES. LAB USE ONLY." -ForegroundColor Red
+    Write-Host ""
+}
 
 # Resolve output root
 if (-not $OutRoot) { $OutRoot = 'C:\RIT-SCC' }
@@ -321,9 +348,9 @@ $null = New-Item -ItemType Directory -Path $WorkDir -Force
 $MasterLogPath = Join-Path $WorkDir 'master.log'
 Write-StageLog "Master log: $MasterLogPath"
 Add-Content -Path $MasterLogPath -Value "sc-cleanup.ps1 v$ScriptVersion - Master Log" -Encoding UTF8
-Add-Content -Path $MasterLogPath -Value "Started: $(Get-Date).ToString('yyyy-MM-dd HH:mm:ss')" -Encoding UTF8
+Add-Content -Path $MasterLogPath -Value "Started: $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))" -Encoding UTF8
 Add-Content -Path $MasterLogPath -Value "Host: $hostName  OS: $osCaption  PS: $psVersion  Admin: $isAdmin  Server: $isServer" -Encoding UTF8
-Add-Content -Path $MasterLogPath -Value "Flags: sa=$sa sr=$sr np=$np offline=$offline procmon=$procmon force=$force safemode=$safemode resume=$resume" -Encoding UTF8
+Add-Content -Path $MasterLogPath -Value "Flags: sa=$sa sr=$sr np=$np offline=$offline procmon=$procmon force=$force safemode=$safemode resume=$resume ExecuteRemoval=$ExecuteRemoval" -Encoding UTF8
 Add-Content -Path $MasterLogPath -Value "IncidentDate: $IncidentDate" -Encoding UTF8
 
 # Resolve tool directory
@@ -352,6 +379,15 @@ if (-not $isAdmin) {
 
 if ($isServer -and -not $force) {
     throw "Server OS detected. Use -force to override (not recommended for production servers)."
+}
+
+$uacEnabled = Test-UacEnabled
+if (-not $uacEnabled -and -not $force) {
+    throw "UAC (User Account Control) is DISABLED on this machine. This is itself a security finding worth investigating before touching anything else. Use -force to proceed anyway."
+} elseif (-not $uacEnabled) {
+    Write-StageLog "UAC is DISABLED on this machine (-force set, continuing). Record this as a finding." 'Warn'
+} else {
+    Write-StageLog "UAC check: enabled."
 }
 
 if ($safemode) {
@@ -386,7 +422,7 @@ $stage0Result = Invoke-Stage -StageId 0 -StageName 'Preflight' -SkipFlag '' -Sta
     if (-not $np) {
         Write-StageLog "Creating System Restore point..."
         try {
-            Checkpoint-Computer -Description "ScreenConnect Cleanup - $(Get-Date).ToString('yyyy-MM-dd HH:mm:ss')" -RestorePointType 'MODIFY_SETTINGS' -ErrorAction Stop
+            Checkpoint-Computer -Description "ScreenConnect Cleanup - $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))" -RestorePointType 'MODIFY_SETTINGS' -ErrorAction Stop
             Write-StageLog "System Restore point created"
             Add-Content -Path $MasterLogPath -Value "Restore point: Created" -Encoding UTF8
         } catch {
@@ -402,12 +438,17 @@ $stage0Result = Invoke-Stage -StageId 0 -StageName 'Preflight' -SkipFlag '' -Sta
     $hiveExportDir = Join-Path $WorkDir 'registry_hives'
     $null = New-Item -ItemType Directory -Path $hiveExportDir -Force
     Write-StageLog "Exporting registry hives to $hiveExportDir..."
-    $hives = @('HKLM:\SOFTWARE', 'HKLM:\SYSTEM', 'HKCU:\SOFTWARE')
+    # reg.exe takes HKLM\SOFTWARE, NOT the PowerShell PSDrive form HKLM:\SOFTWARE
+    # ("ERROR: Invalid key name"), which silently skipped every hive export.
+    $hives = @('HKLM\SOFTWARE', 'HKLM\SYSTEM', 'HKCU\SOFTWARE')
     foreach ($hive in $hives) {
-        $hiveName = ($hive -replace '\\', '_' -replace ':', '').Trim('_')
+        $hiveName = ($hive -replace '\\', '_').Trim('_')
         $exportPath = Join-Path $hiveExportDir "$hiveName.reg"
         try {
-            reg export $hive $exportPath /y 2>&1 | Out-Null
+            $regOutput = & reg.exe export $hive $exportPath /y 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                throw (($regOutput | Out-String).Trim())
+            }
             Write-StageLog "  Exported $hive -> $exportPath"
         } catch {
             Write-StageLog ("  Failed to export " + $hive + ": " + $_.Exception.Message) 'Warn'
@@ -418,18 +459,45 @@ $stage0Result = Invoke-Stage -StageId 0 -StageName 'Preflight' -SkipFlag '' -Sta
     Write-StageLog "Verifying tool pack at $ToolDir..."
     $getToolPack = Join-Path $ScriptRoot 'tools/Get-ToolPack.ps1'
     if (Test-Path $getToolPack) {
+        # Get-ToolPack.ps1 signals failure with 'exit 1', which does NOT throw
+        # into this scope - PASSED used to be logged unconditionally.
+        $global:LASTEXITCODE = 0
         if (-not $offline) {
             Write-StageLog "Downloading/updating tool pack..."
-            & $getToolPack -ToolDir $ToolDir -Quiet -ErrorAction Stop
+            & $getToolPack -ToolDir $ToolDir -Quiet
         } else {
             Write-StageLog "Offline mode: verifying existing tool pack..."
-            & $getToolPack -ToolDir $ToolDir -Verify -Quiet -ErrorAction Stop
+            & $getToolPack -ToolDir $ToolDir -Verify -Quiet
         }
-        Write-StageLog "Tool pack verification: PASSED"
-        Add-Content -Path $MasterLogPath -Value "Tool pack: VERIFIED" -Encoding UTF8
+        if ($LASTEXITCODE -ne 0) {
+            Write-StageLog ("Tool pack verification: FAILED (Get-ToolPack.ps1 exit code " + $LASTEXITCODE + "). Procmon/Autoruns stages will be unavailable.") 'Warn'
+            Add-Content -Path $MasterLogPath -Value ("Tool pack: FAILED (exit " + $LASTEXITCODE + ")") -Encoding UTF8
+        } else {
+            Write-StageLog "Tool pack verification: PASSED"
+            Add-Content -Path $MasterLogPath -Value "Tool pack: VERIFIED" -Encoding UTF8
+        }
     } else {
         Write-StageLog "Get-ToolPack.ps1 not found at $getToolPack" 'Warn'
         Add-Content -Path $MasterLogPath -Value "Tool pack: Get-ToolPack.ps1 NOT FOUND" -Encoding UTF8
+    }
+
+    # AV scanner staging (KVRT / ESET Online Scanner / Malwarebytes) - separate
+    # from the Sysinternals pack above. Never fatal: Stage 5 already treats a
+    # missing scanner binary as NotInstalled, not a pipeline failure.
+    $getAvTools = Join-Path $ScriptRoot 'tools/Get-AVTools.ps1'
+    if ((Test-Path $getAvTools) -and -not $offline) {
+        Write-StageLog "Staging AV scanners (KVRT / ESET Online Scanner / Malwarebytes)..."
+        $global:LASTEXITCODE = 0
+        & $getAvTools -ToolDir (Join-Path $ToolDir 'AV') -Quiet
+        if ($LASTEXITCODE -ne 0) {
+            Write-StageLog "AV scanner staging: some tools unavailable (see above)." 'Warn'
+        } else {
+            Write-StageLog "AV scanner staging: done."
+        }
+    } elseif ($offline) {
+        Write-StageLog "Offline mode: skipping AV scanner staging (KVRT needs internet; ESET/Malwarebytes need the internal share)."
+    } else {
+        Write-StageLog "tools/Get-AVTools.ps1 not found - skipping AV scanner staging." 'Warn'
     }
 
     return @{
@@ -460,9 +528,8 @@ $stage1Result = Invoke-Stage -StageId 1 -StageName 'Snapshot (Before)' -SkipFlag
     }
 
     Write-StageLog ("Running collect-snapshot.ps1 -Label before -OutFile " + $beforeSnapshot)
-    $args = @('-Label', 'before', '-IncidentWindowDays', [string]$incidentDaysInt, '-OutFile', $beforeSnapshot)
-    if ($VerboseLog) { $args += '-Verbose' }
-    $rc = Invoke-ChildScript -ScriptPath $collectSnapshot -ArgumentList $args -LogTag 'Snapshot(before)'
+    $snapArgs = @('-Label', 'before', '-IncidentWindowDays', [string]$incidentDaysInt, '-OutFile', $beforeSnapshot)
+    $rc = Invoke-ChildScript -ScriptPath $collectSnapshot -ArgumentList $snapArgs -LogTag 'Snapshot(before)'
     if ($rc -ne 0) { throw ("collect-snapshot.ps1 exited with code " + $rc) }
     Write-StageLog ("Snapshot saved: " + $beforeSnapshot)
 
@@ -482,16 +549,19 @@ $stage2Result = Invoke-Stage -StageId 2 -StageName 'Detect' -SkipFlag '' -StageB
     $null = New-Item -ItemType Directory -Path $detectOutRoot -Force
 
     Write-StageLog ("Running detect-remote-access.ps1 -OutRoot " + $detectOutRoot)
-    $args = @('-OutRoot', $detectOutRoot, '-NoPause', '-NoZip')
-    if ($VerboseLog) { $args += '-Verbose' }
-    $rc = Invoke-ChildScript -ScriptPath $detectScript -ArgumentList $args -LogTag 'Detect'
+    $detectArgs = @('-OutRoot', $detectOutRoot, '-NoPause', '-NoZip')
+    $rc = Invoke-ChildScript -ScriptPath $detectScript -ArgumentList $detectArgs -LogTag 'Detect'
     if ($rc -ne 0) { throw ("detect-remote-access.ps1 exited with code " + $rc) }
     Write-StageLog ("Detection complete. Output in " + $detectOutRoot)
 
-    $findingsJson = Join-Path $detectOutRoot 'findings.json'
-    if (-not (Test-Path $findingsJson)) {
-        throw "findings.json not produced by detect-remote-access.ps1"
+    # detect-remote-access.ps1 creates <OutRoot>\<COMPUTERNAME>_<stamp>\findings.json,
+    # so resolve the newest one under the tree rather than assuming a flat path.
+    $findingsItem = Get-ChildItem -Path $detectOutRoot -Filter 'findings.json' -Recurse -ErrorAction SilentlyContinue |
+                    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if (-not $findingsItem) {
+        throw "findings.json not produced by detect-remote-access.ps1 (searched $detectOutRoot recursively)"
     }
+    $findingsJson = $findingsItem.FullName
 
     return @{ FindingsJson = $findingsJson; DetectDir = $detectOutRoot }
 }
@@ -505,6 +575,12 @@ $stage3Result = Invoke-Stage -StageId 3 -StageName 'Review Gate' -SkipFlag '' -S
     $findings = Get-Content -LiteralPath $findingsJson -Raw | ConvertFrom-Json
     $screenConnect = Get-PropertyValue $findings 'ScreenConnect'
     $instances = @()
+    # NOTE: do NOT wrap this call in an outer @(). Get-JsonItems already
+    # comma-protects its return value so an empty result stays Count=0; an
+    # outer @() re-enumerates that single protected pipeline object and
+    # turns a genuinely EMPTY array into a phantom 1-element array (whose
+    # element is the empty array itself) - "Found 1 instance" with no real
+    # data, which is why nothing was ever found to remove.
     if ($screenConnect) { $instances = Get-JsonItems (Get-PropertyValue $screenConnect 'Instances') }
     $removeInstances = New-Object System.Collections.ArrayList
     Write-StageLog ("Found " + $instances.Count + " ScreenConnect instance(s).")
@@ -520,11 +596,21 @@ $stage3Result = Invoke-Stage -StageId 3 -StageName 'Review Gate' -SkipFlag '' -S
         Write-Host ("ScreenConnect instance " + $instanceNumber + "/" + $instances.Count + ": " + $identifier)
         if ($installDir) { Write-Host ("  Install directory: " + $installDir) }
         Write-Host "  Owner policy: ScreenConnect is eligible for removal; other products are detect-only."
-        do {
-            $decision = Read-Host 'Decision [KEEP/REMOVE] (default KEEP)'
-            if ([string]::IsNullOrWhiteSpace($decision)) { $decision = 'KEEP' }
-            $decision = $decision.Trim().ToUpperInvariant()
-        } while ($decision -ne 'KEEP' -and $decision -ne 'REMOVE')
+        if ($ExecuteRemoval) {
+            $decision = 'REMOVE'
+            Write-Host "  -ExecuteRemoval: auto-selecting REMOVE (test mode)." -ForegroundColor Yellow
+        } else {
+            # Removing is the DEFAULT: this tool is run precisely because
+            # ScreenConnect should not be on the machine. Plain y/n, Enter =
+            # remove. Matches Invoke-ReviewAndRemove.ps1 so both entry points
+            # behave identically.
+            do {
+                $answer = Read-Host 'Remove this instance? [Y/n]'
+                if ([string]::IsNullOrWhiteSpace($answer)) { $answer = 'Y' }
+                $answer = $answer.Trim().Substring(0,1).ToUpperInvariant()
+            } while ($answer -ne 'Y' -and $answer -ne 'N')
+            if ($answer -eq 'Y') { $decision = 'REMOVE' } else { $decision = 'KEEP' }
+        }
         if ($decision -eq 'REMOVE') {
             [void]$removeInstances.Add($instance)
             Write-StageLog ("Marked for removal: " + $identifier)
@@ -535,12 +621,21 @@ $stage3Result = Invoke-Stage -StageId 3 -StageName 'Review Gate' -SkipFlag '' -S
     if ($removeInstances.Count -gt 0 -and -not $sr) {
         Write-Host ""
         Write-Host ($removeInstances.Count.ToString() + " ScreenConnect instance(s) marked REMOVE.")
-        Write-Host "This confirmation authorizes containment and removal. Type exactly: REMOVE SCREENCONNECT"
-        $confirmation = Read-Host 'Confirmation'
-        if ($confirmation -ceq 'REMOVE SCREENCONNECT') {
+        if ($ExecuteRemoval) {
             $removalConfirmed = $true
-            Write-StageLog "Explicit removal confirmation accepted."
-        } else { Write-StageLog "Removal confirmation not accepted; Stage 4 will remain a dry-run." 'Warn' }
+            Write-StageLog "-ExecuteRemoval: removal pre-authorized, typed confirmation waived (TEST MODE)." 'Warn'
+        } else {
+            Write-Host "Files are quarantined, never deleted. Enter = proceed."
+            do {
+                $confirmation = Read-Host 'Proceed with removal? [Y/n]'
+                if ([string]::IsNullOrWhiteSpace($confirmation)) { $confirmation = 'Y' }
+                $confirmation = $confirmation.Trim().Substring(0,1).ToUpperInvariant()
+            } while ($confirmation -ne 'Y' -and $confirmation -ne 'N')
+            if ($confirmation -eq 'Y') {
+                $removalConfirmed = $true
+                Write-StageLog "Removal confirmed."
+            } else { Write-StageLog "Removal declined; Stage 4 will remain a dry-run." 'Warn' }
+        }
     } elseif ($removeInstances.Count -gt 0 -and $sr) {
         Write-StageLog "-sr set: removal decisions recorded but removal is disabled." 'Warn'
     }
@@ -576,16 +671,25 @@ $stage4Result = Invoke-Stage -StageId 4 -StageName 'Contain + Remove' -SkipFlag 
     $planJson = $stage3Result.Result.PlanJson
     $removeScript = Join-Path $ScriptRoot 'remove-screenconnect.ps1'
     if (-not (Test-Path $removeScript)) { throw "remove-screenconnect.ps1 not found at $removeScript" }
-    $args = @('-PlanJson', $planJson, '-WorkDir', $WorkDir, '-NoRestorePoint')
+    # A run that actually acts should get a real rollback point unless -np asked
+    # otherwise; -NoRestorePoint used to be hardcoded here.
+    $removeArgs = @('-PlanJson', $planJson, '-WorkDir', $WorkDir)
+    if ($np) { $removeArgs += '-NoRestorePoint' }
     $confirmed = [bool]$stage3Result.Result.RemovalConfirmed
-    if ($confirmed -and -not $sr) { $args += '-Execute' }
-    if ($VerboseLog) { $args += '-VerboseLog' }
+    if ($confirmed -and -not $sr) { $removeArgs += '-Execute' }
+    if ($VerboseLog) { $removeArgs += '-VerboseLog' }
     if ($confirmed -and -not $sr) { Write-StageLog "Running approved ScreenConnect removal with -Execute." }
     else { Write-StageLog "Running removal helper in dry-run mode (no explicit authorization)." }
-    $rc = Invoke-ChildScript -ScriptPath $removeScript -ArgumentList $args -LogTag 'Remove'
-    if ($rc -ne 0) { throw ("remove-screenconnect.ps1 exited with code " + $rc) }
+    $rc = Invoke-ChildScript -ScriptPath $removeScript -ArgumentList $removeArgs -LogTag 'Remove'
+    # A partial/failed removal exits 1. That is precisely when the after-snapshot,
+    # diff and report matter most, so record it and carry on rather than aborting
+    # the pipeline before any of that is produced.
+    if ($rc -ne 0) {
+        Write-StageLog ("remove-screenconnect.ps1 exited with code " + $rc + " - removal incomplete. Continuing so the manifest, diff and report are still produced.") 'Warn'
+        Add-Content -Path $MasterLogPath -Value ("Removal: INCOMPLETE (exit " + $rc + ")") -Encoding UTF8
+    }
     $manifest = Join-Path $WorkDir 'removal-manifest.json'
-    return @{ Skipped = $false; ManifestPath = $manifest; Executed = ($confirmed -and -not $sr) }
+    return @{ Skipped = $false; ManifestPath = $manifest; Executed = ($confirmed -and -not $sr); ExitCode = $rc }
 }
 
 # -----------------------------------------------------------------------------
@@ -602,23 +706,34 @@ $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 'sa' -St
     $logsDir = Join-Path $WorkDir 'logs'
     $null = New-Item -ItemType Directory -Path $logsDir -Force
 
-    # Microsoft Defender adapter (only one implemented so far)
-    $defenderScript = Join-Path $scannersDir 'Invoke-DefenderScan.ps1'
-    if (Test-Path $defenderScript) {
-        Write-StageLog "Running Microsoft Defender scan..."
-        $defenderLogDir = Join-Path $logsDir 'MicrosoftDefender'
-        $null = New-Item -ItemType Directory -Path $defenderLogDir -Force
+    # All three adapters share one contract: they never throw, and report
+    # Status='NotInstalled' when the scanner is absent, so an unconditional
+    # loop is safe. AdwCleaner/MSERT have no adapter yet.
+    $scannerAdapters = @(
+        @{ Script = 'Invoke-DefenderScan.ps1'; Name = 'Defender'; LogSubDir = 'MicrosoftDefender' },
+        @{ Script = 'Invoke-KVRTScan.ps1';     Name = 'KVRT';     LogSubDir = 'KVRT' },
+        @{ Script = 'Invoke-ESETScan.ps1';     Name = 'ESET';     LogSubDir = 'ESET' }
+    )
 
-        $defenderResult = & $defenderScript -LogDir $defenderLogDir -TimeoutMinutes 120 -Verbose:$VerboseLog
-        $scannerResults += $defenderResult
-        Write-StageLog "Defender scan: Status=$($defenderResult.Status), Detections=$($defenderResult.DetectionCount), Duration=$($defenderResult.DurationSeconds)s"
-        Add-Content -Path $MasterLogPath -Value "Defender: $($defenderResult.Status)  Detections=$($defenderResult.DetectionCount)  Duration=$($defenderResult.DurationSeconds)s" -Encoding UTF8
-    } else {
-        Write-StageLog "Invoke-DefenderScan.ps1 not found at $defenderScript" 'Warn'
+    foreach ($adapter in $scannerAdapters) {
+        $adapterScript = Join-Path $scannersDir $adapter.Script
+        if (-not (Test-Path $adapterScript)) {
+            Write-StageLog ($adapter.Script + " not found at " + $adapterScript) 'Warn'
+            continue
+        }
+
+        Write-StageLog ("Running " + $adapter.Name + " scan...")
+        $adapterLogDir = Join-Path $logsDir $adapter.LogSubDir
+        $null = New-Item -ItemType Directory -Path $adapterLogDir -Force
+
+        $adapterResult = & $adapterScript -LogDir $adapterLogDir -TimeoutMinutes 120 -Verbose:$VerboseLog
+        $scannerResults += $adapterResult
+        $line = $adapter.Name + ": Status=" + $adapterResult.Status + "  Detections=" + $adapterResult.DetectionCount + "  Duration=" + $adapterResult.DurationSeconds + "s"
+        Write-StageLog $line
+        Add-Content -Path $MasterLogPath -Value $line -Encoding UTF8
     }
 
-    # Future scanners (AdwCleaner, KVRT, ESET, MSERT) - placeholders
-    Write-StageLog "Additional scanners (AdwCleaner, KVRT, ESET, MSERT) not yet implemented."
+    Write-StageLog "Additional scanners (AdwCleaner, MSERT) not yet implemented."
 
     $scannerSummary = Join-Path $WorkDir 'scanner_results.json'
     $scannerResults | ConvertTo-Json -Depth 5 | Set-Content -Path $scannerSummary -Encoding UTF8 -NoNewline
@@ -666,7 +781,6 @@ $stage7Result = Invoke-Stage -StageId 7 -StageName 'Snapshot (After)+Diff' -Skip
 
     Write-StageLog ("Running collect-snapshot.ps1 -Label after -OutFile " + $afterSnapshot)
     $snapArgs = @('-Label', 'after', '-IncidentWindowDays', [string]$incidentDaysInt, '-OutFile', $afterSnapshot)
-    if ($VerboseLog) { $snapArgs += '-Verbose' }
     $rc = Invoke-ChildScript -ScriptPath $collectSnapshot -ArgumentList $snapArgs -LogTag 'Snapshot(after)'
     if ($rc -ne 0) { throw ("collect-snapshot.ps1 (after) exited with code " + $rc) }
     Write-StageLog ("After-snapshot saved: " + $afterSnapshot)
@@ -679,7 +793,14 @@ $stage7Result = Invoke-Stage -StageId 7 -StageName 'Snapshot (After)+Diff' -Skip
     if (Test-Path $diffScript) {
         $diffArgs = @('-Before', $beforeSnapshot, '-After', $afterSnapshot, '-OutFile', $diffPath)
         $rc = Invoke-ChildScript -ScriptPath $diffScript -ArgumentList $diffArgs -LogTag 'Diff'
-        if ($rc -ne 0) { throw ("diff-snapshots.ps1 exited with code " + $rc) }
+        # diff-snapshots.ps1: 0 = CLEAN, 1 = RESURRECTION detected, 2 = failure.
+        # Exit code 1 is a FINDING, not an error - treating it as fatal killed
+        # the pipeline before Stage 8 in exactly the case the tool exists for.
+        if ($rc -eq 1) {
+            Write-StageLog "diff-snapshots.ps1 reports RESURRECTION (exit 1) - continuing to report." 'Warn'
+        } elseif ($rc -ne 0) {
+            throw ("diff-snapshots.ps1 exited with code " + $rc)
+        }
         Write-StageLog ("Diff saved: " + $diffPath)
         $diffResult = Get-Content $diffPath -Raw | ConvertFrom-Json
     } else {

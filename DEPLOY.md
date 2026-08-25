@@ -24,13 +24,14 @@ scanners\
   Invoke-KVRTScan.ps1
   Invoke-ESETScan.ps1
 tools\Get-ToolPack.ps1          <- downloader ONLY; do NOT copy tools\* exes
+tools\Get-AVTools.ps1           <- KVRT / ESET Online Scanner / Malwarebytes stager
 docs\                           <- optional but recommended (work log + roadmap)
 DEPLOY.md                       <- this file
 ```
 
 Do **not** copy:
 
-- `tools\ProcessMonitor\`, `tools\Autoruns\`, `tools\TCPView\`, `tools\Sigcheck\`
+- `tools\ProcessMonitor\`, `tools\Autoruns\`, `tools\TCPView\`, `tools\Sigcheck\`, `tools\AV\`
   — ~24 MB of Sysinternals binaries. `Get-ToolPack.ps1` rebuilds them from the
   official Microsoft download site on the target machine. Never use mirrors.
 - any `*.output`, test artifacts, or old scan output folders.

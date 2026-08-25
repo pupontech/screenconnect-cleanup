@@ -17,14 +17,15 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 # Directories that hold third-party binaries / vendored tools - skip them.
-$excludeDirs = @('\.git\', '\tools\Autoruns\', '\tools\ProcessMonitor\', '\tools\Sigcheck\', '\tools\TCPView\')
+$excludeDirs = @('\.git\', '\tools\Autoruns\', '\tools\ProcessMonitor\', '\tools\Sigcheck\', '\tools\TCPView\', '\tools\GeneralFix\')
 $extensions = @('.ps1', '.bat', '.cmd', '.json', '.md', '.yml', '.sh')
 
 $files = Get-ChildItem -Path $repoRoot -Recurse -File | Where-Object {
     $ext = $_.Extension.ToLowerInvariant()
     if ($extensions -notcontains $ext) { return $false }
+    $fullPath = $_.FullName -replace '/', '\'
     foreach ($d in $excludeDirs) {
-        if ($_.FullName -like ("*" + $d.TrimEnd('\') + "*")) { return $false }
+        if ($fullPath -like ("*" + $d.TrimEnd('\') + "*")) { return $false }
     }
     return $true
 }

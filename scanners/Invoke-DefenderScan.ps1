@@ -299,7 +299,12 @@ if ($timedOut) {
 
 # Collect detections AFTER the scan. With -DisableRemediation the custom-scan
 # output lists detections; the durable record lives in threat history (doc [2]).
-$detections = @(Get-ThreatDetections)
+# NOTE: no outer @() here. The Get-*Detections helpers already return
+# ',$out' (comma-protected). Wrapping that again in @() produced a
+# ONE-element array whose single element was the whole detection list,
+# so New-Object -Property below got an array instead of a hashtable and
+# the adapter crashed the moment a scan actually found something.
+$detections = Get-ThreatDetections
 if ($exitCode -eq 2 -and @($detections).Count -eq 0) {
     $errors += 'Exit code 2 (threats found / errors) but no threat-detection records could be read.'
 }

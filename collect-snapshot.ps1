@@ -141,7 +141,9 @@ function Invoke-Section {
 }
 
 function Sort-ByKey {
-    param([object[]]$Items)
+    # Deliberately untyped: binding an EMPTY generic List to an [object[]]
+    # parameter throws "Argument types do not match" in Windows PowerShell 5.1.
+    param($Items)
     if (-not $Items -or $Items.Count -eq 0) { return , @() }
     return @($Items | Sort-Object -Property Key)
 }
@@ -514,17 +516,35 @@ function Get-FirewallRulesSection {
     $rules = Get-NetFirewallRule -ErrorAction Stop | Where-Object {
         $_.Direction -eq 'Inbound' -and $_.Action -eq 'Allow' -and $_.Enabled -eq $true
     }
+
+    # Piping each rule into Get-NetFirewallApplicationFilter / -PortFilter costs
+    # a separate CIM round-trip per rule: ~3+ minutes and hundreds of MB for a
+    # few hundred rules. Fetching all filters once and joining on InstanceID
+    # (which equals the rule's Name) is effectively instant.
+    $appByInstance = @{}
+    $portByInstance = @{}
+    try {
+        foreach ($f in @(Get-NetFirewallApplicationFilter -All -ErrorAction SilentlyContinue)) {
+            if ($f.InstanceID) { $appByInstance[[string]$f.InstanceID] = $f }
+        }
+    } catch { }
+    try {
+        foreach ($f in @(Get-NetFirewallPortFilter -All -ErrorAction SilentlyContinue)) {
+            if ($f.InstanceID) { $portByInstance[[string]$f.InstanceID] = $f }
+        }
+    } catch { }
+
     $rows = foreach ($r in $rules) {
         $appPath = ''
         $ports = ''
-        try {
-            $af = $r | Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue
-            if ($af) { $appPath = ConvertTo-NullSafeString $af.Program }
-        } catch { }
-        try {
-            $pf = $r | Get-NetFirewallPortFilter -ErrorAction SilentlyContinue
-            if ($pf) { $ports = "$($pf.Protocol):$($pf.LocalPort)" }
-        } catch { }
+        $key = [string]$r.Name
+        if ($appByInstance.ContainsKey($key)) {
+            $appPath = ConvertTo-NullSafeString $appByInstance[$key].Program
+        }
+        if ($portByInstance.ContainsKey($key)) {
+            $pf = $portByInstance[$key]
+            $ports = "$($pf.Protocol):$($pf.LocalPort)"
+        }
         [PSCustomObject]@{
             Key         = $r.Name
             Name        = $r.Name
@@ -553,7 +573,11 @@ function Get-HostsFileLines {
     $hostsPath = Join-Path $env:WINDIR 'System32\drivers\etc\hosts'
     if (-not (Test-Path -LiteralPath $hostsPath)) { return @() }
     $lines = Get-Content -LiteralPath $hostsPath -ErrorAction Stop
-    return @($lines)
+    # Get-Content emits strings decorated with PSPath/PSDrive/PSProvider note
+    # properties. ConvertTo-Json follows PSProvider into ImplementingType,
+    # Capabilities, Drives... for EVERY line - that alone turned this snapshot
+    # into a 115 MB file. Flatten to plain strings.
+    return @($lines | ForEach-Object { [string]$_ })
 }
 
 # ---------------------------------------------------------------------------
@@ -628,11 +652,19 @@ function Get-WmiPersistenceSection {
 # Recent files (only when IncidentWindowDays > 0)
 # ---------------------------------------------------------------------------
 function Get-RecentFilesSection {
-    param([int]$WindowDays, [int]$CapCount = 500)
+    # CapCount bounds the RESULTS only. On a machine with big package/tool
+    # caches under %LOCALAPPDATA% / %ProgramData% (node_modules, pip, nuget,
+    # browser caches) almost nothing matches $extensions, so the result cap
+    # never trips and the walk runs for hours while the directory stack grows
+    # to multiple GB. MaxDirs and TimeBudgetSeconds bound the WALK itself.
+    param([int]$WindowDays, [int]$CapCount = 500,
+          [int]$MaxDirs = 40000, [int]$TimeBudgetSeconds = 120)
 
     $rows = New-Object System.Collections.Generic.List[object]
     if ($WindowDays -le 0) {
-        return [PSCustomObject]@{ Items = @($rows); CapHit = $false }
+        # NOTE: @($list) on an EMPTY generic List throws "Argument types do not
+        # match" in Windows PowerShell 5.1 - use .ToArray() everywhere instead.
+        return [PSCustomObject]@{ Items = [object[]]$rows.ToArray(); CapHit = $false }
     }
 
     $cutoffUtc = (Get-Date).ToUniversalTime().AddDays(-1 * $WindowDays)
@@ -655,8 +687,23 @@ function Get-RecentFilesSection {
     $maxDepth = 6
     $capHit = $false
 
+    # Directory names that are pure noise for this purpose and can each hold
+    # hundreds of thousands of entries.
+    $skipDirNames = @(
+        'node_modules', '.git', '.svn', '.hg', '__pycache__', '.venv', 'venv',
+        'winsxs', 'servicing', 'installer', 'assembly', 'driverstore',
+        'packages', 'package_cache', 'nuget', 'npm-cache', '_npx', 'yarn',
+        'pip', 'cache', 'cache2', 'caches', 'code cache', 'gpucache',
+        'service worker', 'crashpad', 'cypress', 'chocolatey'
+    )
+
+    $dirsVisited = 0
+    $walkWatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $budgetHit = $false
+
     foreach ($root in $roots) {
         if ($rows.Count -ge $CapCount) { $capHit = $true; break }
+        if ($budgetHit) { break }
         if (-not (Test-Path -LiteralPath $root)) { continue }
 
         try {
@@ -666,7 +713,13 @@ function Get-RecentFilesSection {
 
             while ($stack.Count -gt 0) {
                 if ($rows.Count -ge $CapCount) { $capHit = $true; break }
+                if ($dirsVisited -ge $MaxDirs -or $walkWatch.Elapsed.TotalSeconds -ge $TimeBudgetSeconds) {
+                    $budgetHit = $true
+                    $capHit = $true
+                    break
+                }
                 $dir = $stack.Pop()
+                $dirsVisited++
 
                 $dirDepth = ($dir.TrimEnd('\') -split '\\').Count
                 if (($dirDepth - $rootDepth) -ge $maxDepth) { continue }
@@ -683,6 +736,7 @@ function Get-RecentFilesSection {
                     if ($child.PSIsContainer) {
                         # Skip reparse points / junctions to avoid loops.
                         if ($child.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { continue }
+                        if ($skipDirNames -contains $child.Name.ToLowerInvariant()) { continue }
                         $stack.Push($child.FullName)
                         continue
                     }
@@ -709,7 +763,19 @@ function Get-RecentFilesSection {
         if ($capHit) { break }
     }
 
-    return [PSCustomObject]@{ Items = @($rows); CapHit = $capHit }
+    $walkWatch.Stop()
+    if ($budgetHit) {
+        $walkSecs = [int]$walkWatch.Elapsed.TotalSeconds
+        Add-CollectionError -Section 'RecentFiles' -ErrorText "Walk budget exhausted after $dirsVisited directories / ${walkSecs}s; results are partial."
+    }
+
+    return [PSCustomObject]@{
+        Items          = [object[]]$rows.ToArray()
+        CapHit         = $capHit
+        DirsVisited    = $dirsVisited
+        WalkSeconds    = [math]::Round($walkWatch.Elapsed.TotalSeconds, 1)
+        BudgetExhausted = $budgetHit
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -1222,7 +1288,9 @@ if ($IncidentWindowDays -gt 0) {
         $recentFiles = Sort-ByKey $rf.Items
         $recentFilesCapHit = $rf.CapHit
     } catch {
-        Add-CollectionError -Section 'RecentFiles' -ErrorText $_.Exception.Message
+        $errLoc = ''
+        if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) { $errLoc = ' @ line ' + $_.InvocationInfo.ScriptLineNumber }
+        Add-CollectionError -Section 'RecentFiles' -ErrorText ($_.Exception.Message + $errLoc)
     }
 }
 
@@ -1297,7 +1365,12 @@ $result = [ordered]@{
     }
 }
 
-$json = $result | ConvertTo-Json -Depth 12
+Write-Info '  - Serializing'
+# Depth 6 covers the real shape (result > Sections > array > row > scalar).
+# Depth 12 made Windows PowerShell 5.1's ConvertTo-Json recurse into the .NET
+# internals of any non-primitive left in a row, which pushed this step to
+# multiple GB and many minutes on an ordinary workstation.
+$json = $result | ConvertTo-Json -Depth 6
 
 # Write as UTF-8 without BOM so the output stays consistent regardless of
 # which PowerShell host writes it.

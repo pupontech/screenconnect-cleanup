@@ -23,7 +23,7 @@ box" tool has value on day one.
 | **M2** | Stage 2 — ScreenConnect + RAT detection | `-sr` detect-only mode | **PoC DONE** (verified on a real machine) |
 | **M3** | Stage 7 — after-snapshot + diff | Catches resurrections | **Built & Linux-verified** |
 | **M4** | Stage 5 — scanner adapters (Defender first) | Optional, skippable | **Built** — Defender, KVRT, ESET adapters (Linux WhatIf-verified; real exec unverified). AdwCleaner/MSERT not built. |
-| **M5** | Stages 3, 4 — approval gate + removal + quarantine + reboot resume | **Only after heavy VM-snapshot testing** | **Not started** (Stage 3 is a logged stub; Stage 4 is a skip-default stub) |
+| **M5** | Stages 3, 4 — approval gate + removal + quarantine + reboot resume | **Only after heavy VM-snapshot testing** | **Implemented, untested on live Windows** (Stage 3 emits plan.json; Stage 4 consumes it, dry-run unless explicitly confirmed) |
 | **M6** | Stage 6 — targeted Procmon | Respawn investigation | **Not started** (opt-in stub only) |
 | **M7** | Top-level `sc-cleanup.ps1` stage runner tying it together | The actual product | **Built & Linux end-to-end verified** (detect-remote-access stubbed on Linux) |
 

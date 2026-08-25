@@ -300,7 +300,12 @@ if ($timedOut) {
     }
 }
 
-$detections = @(Get-DetectionsFromLog -LogFile $logFile)
+# NOTE: no outer @() here. The Get-*Detections helpers already return
+# ',$out' (comma-protected). Wrapping that again in @() produced a
+# ONE-element array whose single element was the whole detection list,
+# so New-Object -Property below got an array instead of a hashtable and
+# the adapter crashed the moment a scan actually found something.
+$detections = Get-DetectionsFromLog -LogFile $logFile
 
 # Copy the scanner's own log into LogDir (contract: LogPath points at what we kept).
 $logNote = ''

@@ -88,6 +88,15 @@ function Test-IsAdmin {
     return $false
 }
 
+function Test-UacEnabled {
+    try {
+        $val = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name 'EnableLUA' -ErrorAction Stop
+        return ($val.EnableLUA -ne 0)
+    } catch {
+        return $true
+    }
+}
+
 function Get-HostNameSafe {
     # Portable host name: COMPUTERNAME -> HOSTNAME -> .NET -> 'unknown'
     if ($env:COMPUTERNAME) { return $env:COMPUTERNAME }
@@ -196,6 +205,18 @@ function Invoke-RestorePoint {
 function Export-RegistryHives {
     # Export the hives we are most likely to touch during removal.
     # Uses reg.exe SAVE (works while hives are locked/in use).
+    #
+    # DELIBERATELY EXCLUDES HKLM\SAM AND HKLM\SECURITY.
+    # "reg save HKLM\SAM" + "HKLM\SECURITY" is the canonical credential-dumping
+    # pattern (MITRE ATT&CK T1003.002) - it yields local account password hashes
+    # and LSA secrets. Microsoft Defender and every other AV flag a script doing
+    # it, which is why preflight.ps1 was being quarantined on client machines.
+    # Those two hives are also USELESS here: nothing in ScreenConnect removal
+    # reads them, they normally fail anyway without SYSTEM, and if they DID
+    # succeed we would be writing credential material to C:\RIT-SCC on someone
+    # else's machine. SOFTWARE + SYSTEM + HKCU cover services, uninstall keys
+    # and Run keys - everything this tool actually touches.
+    # This now matches the hive list in sc-cleanup.ps1 Stage 0.
     param([string]$DestDir)
     Write-Stage ("Exporting registry hives to {0} ..." -f $DestDir)
     if (-not (Test-Path $DestDir)) {
@@ -204,23 +225,20 @@ function Export-RegistryHives {
     $hives = @(
         @{ Name = 'HKLM-SOFTWARE';  Args = 'HKLM\SOFTWARE' },
         @{ Name = 'HKLM-SYSTEM';    Args = 'HKLM\SYSTEM' },
-        @{ Name = 'HKCU';           Args = 'HKCU' },
-        @{ Name = 'HKLM-SAM';       Args = 'HKLM\SAM' },
-        @{ Name = 'HKLM-SECURITY';  Args = 'HKLM\SECURITY' }
+        @{ Name = 'HKCU';           Args = 'HKCU' }
     )
     $allSaved = $true
     foreach ($hive in $hives) {
         $dest = Join-Path $DestDir ($hive.Name + '.hiv')
-        & reg.exe save $hive.Args $dest /y 2>$null
+        # Out-Null is required: reg.exe writes "The operation completed
+        # successfully." to STDOUT, which would otherwise be emitted as part of
+        # this function's return value. The caller does
+        # "if (-not (Export-RegistryHives ...))", and a non-empty array is
+        # always truthy - so a real failure was silently swallowed.
+        & reg.exe save $hive.Args $dest /y 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path $dest)) {
-            # SAM/SECURITY normally fail without SYSTEM+ privileges even as admin;
-            # note but do not abort on those two specifically.
-            if ($hive.Name -in @('HKLM-SAM', 'HKLM-SECURITY')) {
-                Write-StageWarn ("Hive export skipped (expected without SYSTEM): {0}" -f $hive.Name)
-            } else {
-                Write-StageWarn ("Hive export failed: {0}" -f $hive.Name)
-                $allSaved = $false
-            }
+            Write-StageWarn ("Hive export failed: {0}" -f $hive.Name)
+            $allSaved = $false
         } else {
             Write-Stage ("Hive saved: {0}" -f $dest)
         }
@@ -333,6 +351,19 @@ if (-not (Test-IsAdmin)) {
     }
 } else {
     Write-Stage 'Running elevated.'
+}
+
+# --- 1b. UAC check: a disabled UAC is itself a finding on an incident machine ---
+if ($env:OS -eq 'Windows_NT') {
+    if (-not (Test-UacEnabled)) {
+        if ($Force) {
+            Write-StageWarn 'UAC (User Account Control) is DISABLED. Continuing because -Force was passed - record this as a finding.'
+        } else {
+            Write-StageFail 'UAC (User Account Control) is DISABLED on this machine. Pass -Force to proceed anyway.'
+        }
+    } else {
+        Write-Stage 'UAC check: enabled.'
+    }
 }
 
 # --- 2. OS role check: refuse Server unless -force ---

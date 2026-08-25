@@ -17,7 +17,8 @@
 #         -processlevel N  Neutralize objects of threat level <= N (1 high,
 #                          2 high+medium, 3 all). Omitted here => detect-only
 #                          (read-only safety model).
-#         -customonly      Scan only the defined scope (excludes system memory,
+#         -customonly      DOCUMENTED BUT REJECTED by KVRT 20.x (exit -2). Do not
+#                          use. Scope-only scanning (excludes system memory,
 #                          startup objects, boot sectors).
 #         -custom <path>   Add a directory to the scan scope (full paths;
 #                          repeatable).
@@ -53,7 +54,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$ScanPath,              # optional targeted directory -> -customonly -custom
+    [string]$ScanPath,              # optional targeted directory -> -custom <path>
     [int]$TimeoutMinutes = 120,     # hard timeout per scanner (contract)
     [string]$LogDir,                # where to copy KVRT's own report files
     [string]$ToolPath,              # optional explicit path to KVRT.exe
@@ -114,7 +115,8 @@ function Find-KVRT {
 
     try {
         $candidates = @()
-        foreach ($root in @($env:SystemDrive, 'C:\Users\Public\Downloads', $env:TEMP)) {
+        $toolsAvDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\AV'
+        foreach ($root in @($toolsAvDir, $env:SystemDrive, 'C:\Users\Public\Downloads', $env:TEMP)) {
             if (-not $root) { continue }
             $driveRoot = $root
             if ($root -match '^[A-Za-z]:$') { $driveRoot = $root + '\' }
@@ -253,13 +255,24 @@ $version = Get-KVRTVersion -ExePath $tool
 # Detect-only silent scan: -accepteula -silent, NO -processlevel (per doc [1],
 # without a threat level no actions are applied to detected objects),
 # -dontencrypt so reports stay readable, -details for full-event reporting.
-# A targeted path adds -customonly -custom <path>.
+# A targeted path adds -custom <path> (NOT -customonly - see note below).
 if (-not $TimeoutMinutes -or $TimeoutMinutes -lt 1) { $TimeoutMinutes = 120 }
 
 $dataDir = Join-Path (Get-TempRoot) ('KVRT_Data_' + (Get-Date -Format 'yyyyMMdd_HHmmss'))
+# Create the -d directory up front. KVRT does not reliably create it itself,
+# and when it is missing a run can finish without ever writing a report - which
+# surfaced as "No KVRT data directory found after scan; report output missing"
+# and 0 detections even though the scan ran.
+if (-not (Test-Path -LiteralPath $dataDir)) {
+    try { $null = New-Item -ItemType Directory -Path $dataDir -Force -ErrorAction Stop } catch { }
+}
 $argList = @('-accepteula', '-silent', '-dontencrypt', '-details', ('-d "' + $dataDir + '"'))
 if ($ScanPath) {
-    $argList += @('-customonly', ('-custom "' + $ScanPath + '"'))
+    # -customonly is NOT accepted by KVRT 20.x: measured on 2026-08-25 against
+    # KVRT 20.0.14.0, "-customonly -custom <path>" exits -2 in ~5s and writes no
+    # report at all, while "-custom <path>" alone runs the scan and produces
+    # report files. Passing -custom by itself is also what the vendor documents.
+    $argList += @(('-custom "' + $ScanPath + '"'))
 }
 $commandLine = ('"' + $tool + '" ' + ($argList -join ' '))
 # NOTE: KVRT exit codes are NOT published in doc [1] (the article documents
@@ -329,9 +342,20 @@ if ($timedOut) {
 
 # Collect detections AFTER the scan from the (unencrypted, thanks to
 # -dontencrypt) report files under our explicit -d data directory.
-$detections = @(Get-DetectionsFromReports -DataDir $dataDir)
-if ($null -ne $exitCode -and @($detections).Count -eq 0 -and -not (Test-Path -LiteralPath $dataDir)) {
-    $errors += 'No KVRT data directory found after scan; report output missing.'
+# NOTE: no outer @() here. The Get-*Detections helpers already return
+# ',$out' (comma-protected). Wrapping that again in @() produced a
+# ONE-element array whose single element was the whole detection list,
+# so New-Object -Property below got an array instead of a hashtable and
+# the adapter crashed the moment a scan actually found something.
+$detections = Get-DetectionsFromReports -DataDir $dataDir
+if ($null -ne $exitCode -and @($detections).Count -eq 0) {
+    # We create $dataDir ourselves up front, so its existence proves nothing.
+    # The failure signal is: scan finished but zero report files were produced.
+    $reportFiles = @()
+    try { $reportFiles = @(Get-ChildItem -LiteralPath $dataDir -Recurse -File -ErrorAction SilentlyContinue) } catch { }
+    if ($reportFiles.Count -eq 0) {
+        $errors += 'KVRT wrote no report files to the data directory; scan output missing.'
+    }
 }
 
 $logNote = Copy-ScanLogs -DestinationDir $LogDir -DataDir $dataDir -SinceMinutes ([Math]::Max($duration / 60, 5))
