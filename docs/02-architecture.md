@@ -7,7 +7,7 @@ Tron's shape, our scope. A staged orchestrator that drives existing tools.
 ## The stage pipeline
 
 ```text
-sc-cleanup.ps1  [flags]          <- top-level runner, NOT YET BUILT
+sc-cleanup.ps1  [flags]          <- top-level runner, BUILT (wires Stages 0-8)
 |
 +- STAGE 0  PREFLIGHT
 |    admin check . OS role check (refuse on Server unless -force)

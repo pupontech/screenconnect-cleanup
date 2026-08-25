@@ -92,6 +92,14 @@ if ($instances.Count -eq 0) {
 Write-Line ""
 Write-Line ("Found " + $instances.Count + " ScreenConnect instance(s).") 'White'
 
+if ($Yes) {
+    Write-Line ""
+    Write-Line "  *** -Yes: UNATTENDED REMOVAL. Every ScreenConnect instance will be" 'Red'
+    Write-Line "  *** marked REMOVE and -Execute applied with NO typed confirmation." 'Red'
+    Write-Line "  *** LAB USE ONLY on a disposable, snapshotted VM." 'Red'
+    Write-Line ""
+}
+
 # --- Review gate ------------------------------------------------------------
 $approved = New-Object System.Collections.ArrayList
 $n = 0
@@ -112,11 +120,12 @@ foreach ($inst in $instances) {
         Write-Line "  -Yes: automatically marked REMOVE." 'Yellow'
         [void]$approved.Add($inst)
     } else {
-        # Removing is the DEFAULT: this tool is run because ScreenConnect is not
-        # supposed to be on the machine. Plain y/n, Enter = remove.
+        # KEEP is the default. ScreenConnect is legitimate software a client's
+        # own IT may have installed deliberately, so a careless Enter must not
+        # remove anything. Explicit 'y' is required to mark an instance.
         do {
-            $d = Read-Host 'Remove this instance? [Y/n]'
-            if ([string]::IsNullOrWhiteSpace($d)) { $d = 'Y' }
+            $d = Read-Host 'Remove this instance? [y/N]'
+            if ([string]::IsNullOrWhiteSpace($d)) { $d = 'N' }
             $d = $d.Trim().Substring(0,1).ToUpperInvariant()
         } while ($d -ne 'Y' -and $d -ne 'N')
         if ($d -eq 'Y') { [void]$approved.Add($inst) } else { Write-Line "  Keeping $id." }
@@ -136,10 +145,10 @@ if ($Yes) {
 } else {
     Write-Line ""
     Write-Line ($approved.Count.ToString() + " instance(s) marked REMOVE.") 'Yellow'
-    Write-Line "Files are quarantined, never deleted. Enter = proceed." 'Yellow'
+    Write-Line "Files are quarantined, never deleted. Type y to proceed." 'Yellow'
     do {
-        $c = Read-Host 'Proceed with removal? [Y/n]'
-        if ([string]::IsNullOrWhiteSpace($c)) { $c = 'Y' }
+        $c = Read-Host 'Proceed with removal? [y/N]'
+        if ([string]::IsNullOrWhiteSpace($c)) { $c = 'N' }
         $c = $c.Trim().Substring(0,1).ToUpperInvariant()
     } while ($c -ne 'Y' -and $c -ne 'N')
     if ($c -eq 'Y') { $confirmed = $true }

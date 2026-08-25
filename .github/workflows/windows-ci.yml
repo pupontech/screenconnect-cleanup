@@ -1,10 +1,12 @@
 name: windows-ci
 
-# Real-Windows CI on GitHub-hosted Windows VMs (windows-latest).
-# Exercises the tool's house rules under BOTH PowerShell editions:
+# Real-Windows CI on GitHub-hosted Windows VMs.
+# Exercises the tool's house rules AND safe (non-destructive) integration paths
+# under BOTH PowerShell editions:
 #   - Windows PowerShell 5.1 (the technician target runtime)
 #   - PowerShell 7+ (pwsh, used for local dev checks)
-# No ScreenConnect install or removal happens here - live testing stays manual.
+# No ScreenConnect install or destructive removal happens here - live testing
+# stays manual and destructive removal stays on a disposable dedicated lab VM.
 
 on:
   push:
@@ -14,8 +16,12 @@ on:
 
 jobs:
   windows-tests:
-    runs-on: windows-latest
-    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,6 +46,22 @@ jobs:
         shell: pwsh
         run: ./detect-remote-access.ps1 -ListTargets
 
+      - name: SelfTest - detect-remote-access parser self-test (5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./detect-remote-access.ps1 -SelfTest -NoPause
+
+      - name: SelfTest - preflight self-test (pwsh)
+        shell: pwsh
+        run: ./preflight.ps1 -SelfTest
+
+      - name: Safe Windows integration (removal dry-run + XSS + WhatIf) - 5.1
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/ci/Test-WindowsIntegration.ps1
+
+      - name: Safe Windows integration (removal dry-run + XSS + WhatIf) - pwsh
+        shell: pwsh
+        run: ./tests/ci/Test-WindowsIntegration.ps1
+
       - name: Synthetic Stage 7 diff test (end-to-end via pwsh)
         shell: pwsh
         env:
@@ -50,7 +72,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: synthetic-diff-debug
+          name: synthetic-diff-debug-${{ matrix.os }}
           path: |
             ${{ runner.temp }}/synth-before.json
             ${{ runner.temp }}/synth-after.json

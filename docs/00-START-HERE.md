@@ -48,24 +48,28 @@ Two corollaries that shape the whole design:
 
 ## Current state
 
-| Stage | Purpose | State |
-|---|---|---|
-| 0 Preflight | admin check, restore point, working dir, tool pack | not started |
-| 1 Snapshot (before) | services, tasks, autoruns, processes, connections | draft written, **UNVERIFIED** |
-| **2 Detection** | **ScreenConnect instance identity + other RAT presence** | **BUILT + TESTED** |
-| 3 Technician review | approval gate — nothing removed without it | not started |
-| 4 Remove / quarantine | stop, uninstall, quarantine, clean persistence | not started |
-| 5 Scanners | Defender, KVRT, ESET, AdwCleaner, MSERT | **not started, no files** |
-| 6 Procmon (targeted) | "something reinstalled it — what?" | not started |
-| 7 Snapshot (after) + diff | prove removal, catch resurrections | not started |
-| 8 Report | HTML + JSON + tech summary | draft written, **UNVERIFIED** |
+> **This table was written at an early checkpoint and is now out of date.** The
+> project has since been built through Stages 0–8, including Stage 4 removal.
+> See `README.md` (Status section) and `08-work-log.md` for the current, accurate
+> state. The table is kept here for historical context only.
 
-**Critical caveat.** Four subagents were building components in parallel and were stopped
-mid-flight. Three left files on disk. All four files **parse cleanly and are ASCII-clean**,
-but only `detect-remote-access.ps1` has been functionally tested — the others were killed
-during their verification step, and `tools/Get-ToolPack.ps1` is **known broken** (manifest
-not populating). **Parsing cleanly is not the same as working. Treat the drafts as
-drafts.** Per-file state is in `07-roadmap-open-questions.md`.
+| Stage | Purpose | State (historical snapshot, superseded) |
+|---|---|---|
+| 0 Preflight | admin check, restore point, working dir, tool pack | built (was "not started") |
+| 1 Snapshot (before) | services, tasks, autoruns, processes, connections | built (was "draft") |
+| **2 Detection** | **ScreenConnect instance identity + other RAT presence** | **BUILT + TESTED** |
+| 3 Technician review | approval gate — nothing removed without it | built (interactive y/n, was "not started") |
+| 4 Remove / quarantine | stop, uninstall, quarantine, clean persistence | **built, dry-run default** (was "not started") |
+| 5 Scanners | Defender, KVRT, ESET, AdwCleaner, MSERT | built (3 adapters; AdwCleaner/MSERT not built) |
+| 6 Procmon (targeted) | "something reinstalled it — what?" | stub (opt-in only) |
+| 7 Snapshot (after) + diff | prove removal, catch resurrections | built |
+| 8 Report | HTML + JSON + tech summary | built (XSS + empty-case verified) |
+
+**Critical caveat (still true).** Four subagents built components in parallel and were
+stopped mid-flight; their files have since been independently executed and re-verified on
+Linux/pwsh (see `07-roadmap-open-questions.md` and `08-work-log.md`). **Parsing cleanly is
+not the same as working.** No part of the project has been validated against a live
+ScreenConnect install, and Stage 4 removal has never run on real Windows hardware.
 
 Deliberate build order: **every non-destructive stage ships before any destructive one.**
 Removal is last, on top of machinery already proven in the field.

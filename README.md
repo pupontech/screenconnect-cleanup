@@ -1,5 +1,13 @@
 # ScreenConnect Cleanup Tool
 
+> **Completely vibe coded.** This entire project — every script, the docs, the CI —
+> was created through AI-assisted ("vibe-coded") development across multiple agent
+> sessions. It has been parser-checked, ASCII/no-BOM checked, and Linux/pwsh
+> verified where possible, but **no part of it has ever been validated against a live
+> ScreenConnect install**, and the destructive Stage 4 removal path has **never been
+> run on real Windows hardware**. Read the caveats below and `docs/` before you trust
+> any of it on a client machine.
+
 Windows technician tool for investigating and cleaning up **unauthorized remote-access
 software** on client machines — typically after a tech-support scam, where the client
 was talked into letting someone remote in.
@@ -9,8 +17,12 @@ drives existing tools rather than reimplementing them. Roughly **90% orchestrati
 10% original code** — the original code being the ScreenConnect module, because no
 existing tool answers the question that actually matters.
 
-> **Status: proof of concept.** Only Stage 2 (detection) exists so far, and it is
-> **read-only**. There is no removal code yet. See [Status](#status) below.
+> **Status: full 9-stage pipeline built** (Stages 0–8), including a Stage 4 removal
+> module (`remove-screenconnect.ps1`). Removal is **not read-only**: given an approved
+> plan and `-Execute`, it stops services, runs vendor uninstallers, moves files to
+> quarantine, and removes service/persistence registrations. It is dry-run by default
+> and gated behind a technician review. **On live Windows, nothing beyond the dry-run has
+> been validated** — see [Status](#status) and the caveats.
 
 ---
 
@@ -57,8 +69,8 @@ Two further consequences worth stating plainly:
 | 0 — Preflight | admin check, restore point, working dir, tool pack | **built** (Linux-verified; Win-only paths unverified) |
 | 1 — Snapshot (before) | services, tasks, autoruns, processes, connections, + retro artifacts | **built** (Linux-verified; Win-only content unverified) |
 | **2 — Detection** | **ScreenConnect instance identity + other RAT presence** | **PoC works** (verified on a real machine) |
-| 3 — Technician review | approval gate — nothing is removed without it | **stub** (gate present & logged, no real approval UI yet) |
-| 4 — Remove / quarantine | stop, uninstall, quarantine, clean persistence | **not started** (stubbed, skipped by default via `-sr`) |
+| 3 — Technician review | approval gate — nothing is removed without it | **built** (interactive y/n prompt; no GUI) |
+| 4 — Remove / quarantine | stop, uninstall, quarantine, clean persistence | **built, dry-run default** (never run on live Windows; skipped by default via `-sr`) |
 | 5 — Scanners | Defender, KVRT, ESET (AdwCleaner, MSERT not built) | **built** (3 adapters, Linux-verified WhatIf; real exec unverified) |
 | 6 — Procmon (targeted) | "something reinstalled it — what?" | **not started** (opt-in stub only) |
 | 7 — Snapshot (after) + diff | prove it is gone, catch resurrections | **built** (Linux-verified) |
@@ -80,7 +92,9 @@ Removal comes last, on top of machinery already proven in the field.
 
 ## Usage
 
-Everything here is currently **read-only**. Nothing is stopped, changed or deleted.
+Detection is read-only. Removal is dry-run by default and acts **only** when the
+technician confirms a removal plan (or a lab-only flag is passed — see below).
+Nothing is deleted; files are moved to quarantine.
 
 Double-click `Run-DetectRemoteAccess.bat` (right-click *Run as administrator* for the
 full picture), or from a shell:
@@ -161,12 +175,17 @@ prove the assumptions are right — only a live install can.
 
 ## Design notes
 
-### Read-only now, approval-gated later
+### Read-only detection, approval-gated removal
 
-Detection and removal are deliberately separate. When Stage 4 lands, removal will consume
-an **approved plan file** produced by the Stage 3 review — the destructive code will not
-be reachable without a technician having seen the evidence and said yes. There will be no
-flag that detects and removes in one step.
+Detection and removal are deliberately separate. Stage 4 consumes an
+**approved plan file** produced by the Stage 3 review — the destructive code is not
+reachable without a technician having seen the evidence and typed a confirmation.
+There is no flag that detects and removes in one step for production use.
+
+The exception is a **lab-only** `-ExecuteRemoval` switch on `sc-cleanup.ps1` (and the
+accompanying `RUN-REMOVAL-TEST.bat`), which pre-authorizes every detected ScreenConnect
+instance for removal with no typed confirmation. It prints a prominent red banner and is
+intended **only** for a disposable, snapshotted VM. Never run it on a client machine.
 
 ### Quarantine, never delete
 

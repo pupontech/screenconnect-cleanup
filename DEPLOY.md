@@ -39,6 +39,15 @@ Do **not** copy:
 A prebuilt zip with exactly the layout above is produced by
 `make-deploy-bundle.sh` (Linux side) as `../screenconnect-cleanup-deploy.zip`.
 
+> **Note (2026-08-25 audit):** `tools/Get-ToolPack.ps1` and `tools/Get-AVTools.ps1`
+> are referenced below and by `sc-cleanup.ps1`/`preflight.ps1`/`START-HERE.bat`, but
+> they are **not currently present in the repo** (never committed). The deploy bundle
+> builds without them and warns; the read-only half of the tool is complete without
+> them, but the tool pack and AV-scanner staging legs require rebuilding those two
+> downloader scripts from the official vendor URLs first. Do not hand-copy the
+> Sysinternals binaries into `tools\` — `Get-ToolPack.ps1` is meant to fetch and
+> hash-verify them from Microsoft.
+
 ## 2. First run on a Windows machine
 
 Requirements: Windows 10/11 or Server 2016+, PowerShell 5.1 (built in),

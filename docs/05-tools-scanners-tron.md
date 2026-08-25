@@ -12,8 +12,11 @@ Where this document is uncertain, it says so. A stub adapter that honestly repor
 `NotVerified` is worth more than a plausible-looking one built on invented switches that
 fires on a paying client's machine.
 
-**Nothing in the `scanners/` folder has been built yet.** An agent was researching this
-when work was paused; it wrote no files.
+**The `scanners/` folder is now built** (3 adapters: Defender, KVRT, ESET), each with
+documented switches, WhatIf support, and timeout handling. AdwCleaner and MSERT adapters
+are still not built (see the table below). Note: `tools/Get-AVTools.ps1` — which would
+stage KVRT/ESET/MSERT binaries — is **not currently in the repo** (never committed); the
+adapters exist but their binaries must be fetched from the official vendor URLs.
 
 ---
 

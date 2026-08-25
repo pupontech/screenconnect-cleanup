@@ -600,13 +600,15 @@ $stage3Result = Invoke-Stage -StageId 3 -StageName 'Review Gate' -SkipFlag '' -S
             $decision = 'REMOVE'
             Write-Host "  -ExecuteRemoval: auto-selecting REMOVE (test mode)." -ForegroundColor Yellow
         } else {
-            # Removing is the DEFAULT: this tool is run precisely because
-            # ScreenConnect should not be on the machine. Plain y/n, Enter =
-            # remove. Matches Invoke-ReviewAndRemove.ps1 so both entry points
-            # behave identically.
+            # KEEP is the default. ScreenConnect is legitimate software that a
+            # client's own IT may have installed on purpose, so a technician
+            # pressing Enter carelessly must NOT remove anything. Explicit 'y'
+            # is required to mark an instance for removal. This matches the
+            # safety model (docs/06: unknown must never silently become
+            # removal) and Invoke-ReviewAndRemove.ps1 identically.
             do {
-                $answer = Read-Host 'Remove this instance? [Y/n]'
-                if ([string]::IsNullOrWhiteSpace($answer)) { $answer = 'Y' }
+                $answer = Read-Host 'Remove this instance? [y/N]'
+                if ([string]::IsNullOrWhiteSpace($answer)) { $answer = 'N' }
                 $answer = $answer.Trim().Substring(0,1).ToUpperInvariant()
             } while ($answer -ne 'Y' -and $answer -ne 'N')
             if ($answer -eq 'Y') { $decision = 'REMOVE' } else { $decision = 'KEEP' }
@@ -625,10 +627,10 @@ $stage3Result = Invoke-Stage -StageId 3 -StageName 'Review Gate' -SkipFlag '' -S
             $removalConfirmed = $true
             Write-StageLog "-ExecuteRemoval: removal pre-authorized, typed confirmation waived (TEST MODE)." 'Warn'
         } else {
-            Write-Host "Files are quarantined, never deleted. Enter = proceed."
+            Write-Host "Files are quarantined, never deleted. Type y to proceed."
             do {
-                $confirmation = Read-Host 'Proceed with removal? [Y/n]'
-                if ([string]::IsNullOrWhiteSpace($confirmation)) { $confirmation = 'Y' }
+                $confirmation = Read-Host 'Proceed with removal? [y/N]'
+                if ([string]::IsNullOrWhiteSpace($confirmation)) { $confirmation = 'N' }
                 $confirmation = $confirmation.Trim().Substring(0,1).ToUpperInvariant()
             } while ($confirmation -ne 'Y' -and $confirmation -ne 'N')
             if ($confirmation -eq 'Y') {

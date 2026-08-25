@@ -99,9 +99,9 @@ if not defined FINDINGS_JSON (
 rem ---- Step 5: REVIEW + REMOVE ------------------------------------------------
 echo.
 echo  STEP 5 of 9: Review detected ScreenConnect and REMOVE the approved ones
-echo    This is the step that removes ScreenConnect. Removal is the DEFAULT,
-echo    so just press Enter. Files are quarantined, never deleted, and every
-echo    action is recorded in removal-manifest.json.
+echo    This is the step that removes ScreenConnect. KEEP is the default - type y
+echo    for each instance you actually want to remove. Files are quarantined,
+echo    never deleted, and every action is recorded in removal-manifest.json.
 set /p GO="    Run removal review now? [Y/n] "
 if /i not "%GO%"=="n" (
     if exist "%~dp0Invoke-ReviewAndRemove.ps1" (
