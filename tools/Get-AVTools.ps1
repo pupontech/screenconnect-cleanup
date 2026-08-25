@@ -1,96 +1,117 @@
 <#
-  tools/Get-AVTools.ps1  -  Stage + verify the AV scanner executables.
+  Get-AVTools.ps1  -  Stage third-party AV scanners for the Stage 5 pass.
 
-  The three AV tools used by Stage 5 / the guided runner's step 6 are NOT
-  downloadable from a stable direct URL the way Sysinternals tools are. They are
-  interactive retail downloads:
+  Distinct from Get-ToolPack.ps1 (which stages Sysinternals diagnostic
+  utilities as zips from download.sysinternals.com). This script stages
+  the actual antivirus SCANNERS Stage 5 can use:
 
-    KVRT        Kaspersky Virus Removal Tool   https://www.kaspersky.com/downloads/free-virus-removal-tool
-    ESET Online Scanner                        https://www.eset.com/int/home/online-scanner/
-    Malwarebytes installer stub (MBSetup.exe)  https://www.malwarebytes.com/mwb-download
+    KVRT.exe               Kaspersky Virus Removal Tool - downloaded fresh
+                            from Kaspersky's official distribution URL every
+                            run (KVRT is meant to be used current; it is not
+                            versioned/pinned upstream). Has a documented
+                            silent CLI (-accepteula -silent), which
+                            scanners\Invoke-KVRTScan.ps1 already drives.
 
-  House rule (docs/05/06): DO NOT invent download URLs, and never pull from a
-  third-party mirror. So this script does NOT download them. Instead it:
+    esetonlinescanner.exe   ESET Online Scanner (consumer, GUI-only). No
+    MBSetup.exe             officially documented unattended/silent scan
+                            switches for either of these, so this script
+                            only STAGES them for a technician to run by
+                            double-click during Stage 5 - it does not
+                            invent CLI flags to drive them unattended.
+                            Copied from the internal tools share when
+                            available (-InternalShare), else left for the
+                            technician to supply manually.
 
-    1. Ensures the staging directory (<ToolDir>, default tools\AV) exists.
-    2. Reports, for each tool, whether the expected file is present with its
-       size, and - when absent - prints the official page to fetch it from.
-    3. Exits 0 when everything requested is staged, 1 otherwise, so the caller
-       (sc-cleanup.ps1, START-HERE.bat) can tell the tech what's still missing.
-
-  The expectation is that a technician stages these ONCE into tools\AV\ (or a
-  shared internal share) - matching how START-HERE.bat expects KVRT.exe,
-  esetonlinescanner.exe and MBSetup.exe to already sit in tools\AV\.
-
-  NOTE: KVRT, ESET and Malwarebytes are NOT bundled on a client machine by this
-  script; it only verifies presence. "Not staged" is a report, not an error, and
-  Stage 5 treats a missing scanner as NotInstalled (non-fatal) regardless.
+  Usage:
+    Get-AVTools.ps1 -ToolDir .\tools\AV
+    Get-AVTools.ps1 -ToolDir .\tools\AV -InternalShare '\\10.0.0.5\Public\Tools'
+    Get-AVTools.ps1 -ToolDir .\tools\AV -Verify
 
   PS 5.1 compatible. Pure ASCII, no BOM.
 #>
 
-[CmdletBinding()]
 param(
-    # Staging directory for the AV executables (default: tools\AV).
     [string]$ToolDir,
-
-    # Suppress non-error output.
+    [string]$InternalShare = '\\10.0.0.5\Public\Tools',
+    [switch]$Verify,
     [switch]$Quiet
 )
 
-Set-StrictMode -Version 2.0
-$ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-if (-not $ToolDir) { $ToolDir = Join-Path (Split-Path -Parent $ScriptDir) 'tools\AV' }
-
-function Write-Info { param([string]$Message) if (-not $Quiet) { Write-Host $Message } }
-function Write-WarnMsg { param([string]$Message) Write-Host ("WARNING: " + $Message) -ForegroundColor Yellow }
-
-# Tool -> expected staged filename + official acquisition source. The filenames
-# are exactly what START-HERE.bat (steps 6b/6c/6d) looks for.
-$tools = [ordered]@{
-    'KVRT'                 = 'KVRT.exe'
-    'ESET Online Scanner'  = 'esetonlinescanner.exe'
-    'Malwarebytes (stub)'  = 'MBSetup.exe'
+if (-not $ToolDir) {
+    $ToolDir = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'AV'
 }
-$sources = [ordered]@{
-    'KVRT.exe'                = 'https://www.kaspersky.com/downloads/free-virus-removal-tool'
-    'esetonlinescanner.exe'   = 'https://www.eset.com/int/home/online-scanner/'
-    'MBSetup.exe'             = 'https://www.malwarebytes.com/mwb-download'
-}
-
 if (-not (Test-Path -LiteralPath $ToolDir)) {
     $null = New-Item -ItemType Directory -Path $ToolDir -Force
-    Write-Info ("Created staging directory: " + $ToolDir)
 }
 
-Write-Info ("AV scanner staging directory: " + $ToolDir)
+function Say {
+    param([string]$Message, [string]$Color = 'Gray')
+    if (-not $Quiet) { Write-Host $Message -ForegroundColor $Color }
+}
 
-$missing = @()
-$present = @()
-foreach ($name in @($tools.Keys)) {
-    $file = $tools[$name]
-    $path = Join-Path $ToolDir $file
-    if (Test-Path -LiteralPath $path) {
-        $item = Get-Item -LiteralPath $path
-        if ($item.Length -gt 0) {
-            Write-Info ("  [PRESENT] {0}  ({1} bytes)" -f $file, $item.Length)
-            $present += $file
+$kvrtPath = Join-Path $ToolDir 'KVRT.exe'
+$eosPath  = Join-Path $ToolDir 'esetonlinescanner.exe'
+$mbPath   = Join-Path $ToolDir 'MBSetup.exe'
+
+if ($Verify) {
+    $ok = $true
+    foreach ($p in @($kvrtPath, $eosPath, $mbPath)) {
+        if (Test-Path -LiteralPath $p) {
+            Say ("  present: " + $p) 'Green'
         } else {
-            Write-WarnMsg ("{0} is zero bytes - re-stage it" -f $file)
-            $missing += $file
+            Say ("  MISSING: " + $p) 'Red'
+            $ok = $false
+        }
+    }
+    if (-not $ok) { exit 1 }
+    exit 0
+}
+
+# --- KVRT: always fetch fresh from Kaspersky's official URL --------------
+Say 'Downloading KVRT.exe (Kaspersky Virus Removal Tool)...'
+try {
+    Invoke-WebRequest -Uri 'https://devbuilds.s.kaspersky-labs.com/kvrt/latest/full/KVRT.exe' -OutFile $kvrtPath -ErrorAction Stop
+    Say ("  OK: " + $kvrtPath) 'Green'
+} catch {
+    Say ("  FAILED: " + $_.Exception.Message) 'Yellow'
+}
+
+# --- ESET Online Scanner + Malwarebytes: copy from the internal share ----
+# if reachable. GUI-only tools, staged for attended use - not invoked by
+# the automated pipeline.
+if ($InternalShare -and (Test-Path -LiteralPath $InternalShare)) {
+    $srcAv = Join-Path $InternalShare 'AV\esetonlinescanner.exe'
+    if (Test-Path -LiteralPath $srcAv) {
+        try {
+            Copy-Item -LiteralPath $srcAv -Destination $eosPath -Force -ErrorAction Stop
+            Say ("  OK: " + $eosPath + " (from " + $srcAv + ")") 'Green'
+        } catch {
+            Say ("  FAILED to copy ESET Online Scanner: " + $_.Exception.Message) 'Yellow'
         }
     } else {
-        Write-WarnMsg ("{0} not staged - fetch it from {1}" -f $file, $sources[$file])
-        $missing += $file
+        Say ("  ESET Online Scanner not found at " + $srcAv + " - skipping.") 'Yellow'
     }
+
+    $srcMb = Join-Path $InternalShare 'MBSetup.exe'
+    if (Test-Path -LiteralPath $srcMb) {
+        try {
+            Copy-Item -LiteralPath $srcMb -Destination $mbPath -Force -ErrorAction Stop
+            Say ("  OK: " + $mbPath + " (from " + $srcMb + ")") 'Green'
+        } catch {
+            Say ("  FAILED to copy Malwarebytes: " + $_.Exception.Message) 'Yellow'
+        }
+    } else {
+        Say ("  Malwarebytes installer not found at " + $srcMb + " - skipping.") 'Yellow'
+    }
+} else {
+    Say ("Internal share not reachable (" + $InternalShare + ") - ESET Online Scanner and Malwarebytes must be staged manually into " + $ToolDir) 'Yellow'
 }
 
-Write-Info ("AV staging: {0} present, {1} missing." -f $present.Count, $missing.Count)
-
-if ($missing.Count -gt 0) {
-    Write-Info "Stage the missing tools into $ToolDir manually (official sites above), then re-run."
-    exit 1
-}
+Say ''
+Say 'Done. KVRT.exe runs unattended via scanners\Invoke-KVRTScan.ps1 (Stage 5).' 'Cyan'
+Say 'esetonlinescanner.exe and MBSetup.exe are GUI tools - no verified silent-scan' 'Cyan'
+Say 'switches exist for either, so run them by hand from tools\AV\ if you want' 'Cyan'
+Say 'that extra coverage; the automated pipeline does not launch them.' 'Cyan'
 exit 0
