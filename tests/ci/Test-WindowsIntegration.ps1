@@ -185,17 +185,20 @@ $scCleanup = Join-Path $repoRoot 'sc-cleanup.ps1'
 # (2022/2025 Datacenter) and the server-OS refusal is a deliberate product
 # guard (docs/06 rule 8) that a CI host legitimately overrides. -WhatIf still
 # executes NOTHING, so this stays safe.
-$psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source
-if (-not $psi.FileName) { $psi.FileName = (Get-Command pwsh -ErrorAction SilentlyContinue).Source }
-if (-not $psi.FileName) { $psi.FileName = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName }
-$psi.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $scCleanup + '" -WhatIf -force -np -offline -OutRoot "' + $tmp + '" -TechName CI -ClientName CI'
-$psi.UseShellExecute = $false
-$psi.RedirectStandardOutput = $true
-$psi.RedirectStandardError = $true
-$proc = [System.Diagnostics.Process]::Start($psi)
-$proc.WaitForExit()
-$whatIfRc = $proc.ExitCode
+$hostExe = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source
+if (-not $hostExe) { $hostExe = (Get-Command pwsh -ErrorAction SilentlyContinue).Source }
+if (-not $hostExe) { $hostExe = 'pwsh' }
+$whatIfArgs = @(
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', $scCleanup,
+    '-WhatIf', '-force', '-np', '-offline',
+    '-OutRoot', $tmp, '-TechName', 'CI', '-ClientName', 'CI'
+)
+# Start-Process -Wait -PassThru drains inheritable streams itself (unlike a
+# manual ProcessStartInfo with RedirectStandardOutput/Error=true that deadlocks
+# if you never read the pipes), and its ExitCode is the script's real one.
+$whatIfP = Start-Process -FilePath $hostExe -ArgumentList $whatIfArgs -Wait -PassThru -NoNewWindow
+$whatIfRc = $whatIfP.ExitCode
 Check 'sc-cleanup -WhatIf exits 0' ($whatIfRc -eq 0) "rc=$whatIfRc"
 
 # ---------------------------------------------------------------------
