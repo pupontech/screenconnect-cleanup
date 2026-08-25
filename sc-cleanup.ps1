@@ -14,8 +14,9 @@
 
   Nothing destructive is reachable without explicit flags and the review gate.
   -ExecuteRemoval pre-authorizes Stage 4 for lab/VM testing: every detected
-  ScreenConnect instance defaults to REMOVE and the typed confirmation is
-  waived. It still honors -sr. Do not use it on a client machine.
+  ScreenConnect instance is auto-marked REMOVE and the typed confirmation is
+  waived (KEEP remains the default in the normal interactive review gate).
+  It still honors -sr. Do not use it on a client machine.
   PowerShell 5.1 compatible. Pure ASCII, no BOM.
 #>
 
