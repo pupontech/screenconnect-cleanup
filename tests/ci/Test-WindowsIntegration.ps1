@@ -82,7 +82,10 @@ if (Test-Path -LiteralPath $manifestPath) {
     $entries = @($mf.Entries)
     $verifEntries = @($entries | Where-Object { $_.Action -eq 'ProductVerification' })
     $verifFailed = @($verifEntries | Where-Object { $_.Result -eq 'PRODUCT_VERIFICATION_FAILED' })
-    $smuggledRejected = ($verifFailed | Where-Object { $_.InstanceId -eq 'evil-anydesk' })
+    # Wrapped in @() - PS 5.1 unwraps a single-element Where-Object result to a
+    # bare object whose .Count is $null, so .Count -ge 1 would silently fail
+    # (the exact trap documented in docs/06-safety-model.md).
+    $smuggledRejected = @($verifFailed | Where-Object { $_.InstanceId -eq 'evil-anydesk' })
     Check 'smuggled AnyDesk entry rejected by product verification' ($smuggledRejected.Count -ge 1)
 
     # No destructive action may have been recorded with a real Success result
@@ -177,8 +180,22 @@ if (Test-Path -LiteralPath $reportHtml) {
 # 3. sc-cleanup.ps1 -WhatIf parses and gating works (no stage executed)
 # ---------------------------------------------------------------------
 $scCleanup = Join-Path $repoRoot 'sc-cleanup.ps1'
-& $scCleanup -WhatIf -np -offline -OutRoot $tmp -TechName CI -ClientName CI 2>&1 | Out-Null
-$whatIfRc = $LASTEXITCODE
+# Run in a CHILD process so its exit code is real: `& .ps1` does not set
+# $LASTEXITCODE. Also pass -force because GitHub runners are Windows SERVER
+# (2022/2025 Datacenter) and the server-OS refusal is a deliberate product
+# guard (docs/06 rule 8) that a CI host legitimately overrides. -WhatIf still
+# executes NOTHING, so this stays safe.
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source
+if (-not $psi.FileName) { $psi.FileName = (Get-Command pwsh -ErrorAction SilentlyContinue).Source }
+if (-not $psi.FileName) { $psi.FileName = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName }
+$psi.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $scCleanup + '" -WhatIf -force -np -offline -OutRoot "' + $tmp + '" -TechName CI -ClientName CI'
+$psi.UseShellExecute = $false
+$psi.RedirectStandardOutput = $true
+$psi.RedirectStandardError = $true
+$proc = [System.Diagnostics.Process]::Start($psi)
+$proc.WaitForExit()
+$whatIfRc = $proc.ExitCode
 Check 'sc-cleanup -WhatIf exits 0' ($whatIfRc -eq 0) "rc=$whatIfRc"
 
 # ---------------------------------------------------------------------
