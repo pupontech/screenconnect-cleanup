@@ -717,7 +717,10 @@ try { Start-Transcript -Path $transcriptPath -Force | Out-Null } catch { }
 
 $script:RunExitCode = 0
 try {
-    Clear-Host
+    # Clear-Host touches $Host.UI.RawUI.CursorPosition, which throws
+    # "The handle is invalid" when stdout is not a real console (CI runners,
+    # redirected output). Guard it so non-interactive runs still work.
+    try { Clear-Host } catch { }
     Write-Host "===============================================================" -ForegroundColor Cyan
     Write-Host "   Remote Access Agent Detector  (PROOF OF CONCEPT $ScriptVersion)" -ForegroundColor Cyan
     Write-Host "   READ-ONLY - nothing is stopped, changed or removed" -ForegroundColor Cyan
