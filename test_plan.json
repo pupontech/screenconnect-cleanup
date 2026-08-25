@@ -1,0 +1,28 @@
+{
+  "GeneratedUtc": "2026-08-23 15:38:00",
+  "TechName": "TestTech",
+  "ClientName": "TestClient",
+  "IncidentDate": "2026-08-23",
+  "Decision": "ALL_REMOVE",
+  "SourceFindings": "C:\\RIT-SCC\\TESTHOST_20260823_153800\\detect\\findings.json",
+  "ScreenConnectInstances": [
+    {
+      "InstanceId": "a1b2c3d4e5f6",
+      "Identifier": "a1b2c3d4e5f6",
+      "ServiceName": "ScreenConnect Client (a1b2c3d4e5f6)",
+      "ServiceDisplayName": "ScreenConnect Client (a1b2c3d4e5f6)",
+      "ServiceState": "Running",
+      "ServiceStartMode": "Auto",
+      "ServiceAccount": "LocalSystem",
+      "ServiceImagePath": "C:\\Program Files (x86)\\ScreenConnect Client (a1b2c3d4e5f6)\\ScreenConnect.ClientService.exe",
+      "InstallDir": "C:\\Program Files (x86)\\ScreenConnect Client (a1b2c3d4e5f6)",
+      "UninstallRegistryKey": "HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\ScreenConnect Client (a1b2c3d4e5f6)",
+      "UninstallDisplayName": "ScreenConnect Client (a1b2c3d4e5f6)",
+      "UninstallString": "MsiExec.exe /X{12345678-1234-1234-1234-123456789012}",
+      "QuietUninstallString": "MsiExec.exe /X{12345678-1234-1234-1234-123456789012} /qn",
+      "DisplayVersion": "23.5.1",
+      "Publisher": "ConnectWise",
+      "InstallDate": "20230115"
+    }
+  ]
+}

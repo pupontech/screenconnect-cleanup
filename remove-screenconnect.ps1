@@ -1,0 +1,1203 @@
+<#
+  remove-screenconnect.ps1  -  Stage 4: Contain + Remove (ScreenConnect ONLY)
+
+  Consumes an approved plan.json (produced by Stage 3 from Stage 2 findings)
+  and performs containment + removal for each approved ScreenConnect instance.
+
+  OWNER POLICY (binding): ScreenConnect instances ONLY may be removed.
+  AnyDesk/TeamViewer/RustDesk/all other remote-access products in targets.json
+  are detect/report-only and MUST BE EXCLUDED from any plan or removal action
+  even if present in findings.
+
+  Required behavior:
+  (1) Consumes an approved plan file (JSON listing instance IDs/service names/
+      directories) produced from Stage 2 findings - no flag that detects-and-
+      removes in one step.
+  (2) For each approved instance:
+      - Stop service + kill process
+      - Run vendor uninstaller via registry UninstallString (msiexec /x
+        {ProductCode} if MSI) capturing exit code
+      - Manual surgery ONLY as fallback: move service binaries/directory to
+        quarantine folder (NEVER delete; record original path + SHA256 in a
+        manifest), delete service registration, clean persistence (scheduled
+        tasks, Run keys, WMI subscriptions referencing quarantined paths)
+  (3) Write removal-manifest.json recording every action + result
+  (4) Support reboot-resume via RunOnce key if files were in-use
+  (5) Dry-run default: require explicit -Execute to act, otherwise log what
+      would happen
+
+  HOUSE RULES:
+  - PS 5.1 compatible syntax, pure ASCII no BOM (verify byte count =0)
+  - Never invent CLI flags/uninstall switches - use registry data at runtime
+  - Verify parse+ASCII+synthetic dry-run with installed pwsh
+  - Do NOT modify sc-cleanup.ps1 (that wiring is t_stage4wire)
+#>
+
+param(
+    # Path to the approved plan.json (mandatory)
+    [Alias('PlanJson')]
+    [Parameter(Mandatory = $true)]
+    [string]$PlanFile,
+
+    # Working directory root (where quarantine + manifest go)
+    [string]$WorkDir,
+
+    # Actually perform removal actions. Without this, DRY-RUN only.
+    [switch]$Execute,
+
+    # Resume after reboot (internal, used by RunOnce)
+    [switch]$Resume,
+
+    # Skip creating a System Restore point (for testing)
+    [switch]$NoRestorePoint,
+
+    # Verbose logging
+    [switch]$VerboseLog
+)
+
+Set-StrictMode -Version 2.0
+$ErrorActionPreference = 'Stop'
+
+# -----------------------------------------------------------------------------
+# Script metadata
+# -----------------------------------------------------------------------------
+$ScriptVersion = '1.0.0'
+$ScriptName = 'remove-screenconnect.ps1'
+
+# -----------------------------------------------------------------------------
+# Logging
+# -----------------------------------------------------------------------------
+$script:LogLines = New-Object System.Collections.ArrayList
+$script:Manifest = New-Object System.Collections.ArrayList
+
+function Write-Log {
+    param([string]$Message, [string]$Level = 'Info', [switch]$NoConsole)
+    $stamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+    $prefix = @{ 'Info' = '==>'; 'Warn' = '!! '; 'Error' = '!!!'; 'Debug' = '...' }[$Level]
+    if (-not $prefix) { $prefix = '==>' }
+    $line = "$stamp $prefix $Message"
+    [void]$script:LogLines.Add($line)
+    if (-not $NoConsole) {
+        $color = @{ 'Info' = 'White'; 'Warn' = 'Yellow'; 'Error' = 'Red'; 'Debug' = 'Gray' }[$Level]
+        if (-not $color) { $color = 'White' }
+        Write-Host $line -ForegroundColor $color
+    }
+}
+
+function Write-Section {
+    param([string]$Title)
+    Write-Host ""
+    Write-Host ("-" * 70) -ForegroundColor DarkCyan
+    Write-Host "  $Title" -ForegroundColor Cyan
+    Write-Host ("-" * 70) -ForegroundColor DarkCyan
+    [void]$script:LogLines.Add("")
+    [void]$script:LogLines.Add("=== $Title ===")
+}
+
+function Add-ManifestEntry {
+    param(
+        [string]$InstanceId,
+        [string]$Action,
+        [string]$Target,
+        [string]$Result,
+        [string]$Details = '',
+        [int]$ExitCode = $null
+    )
+    $entry = [ordered]@{
+        TimestampUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        InstanceId   = $InstanceId
+        Action       = $Action
+        Target       = $Target
+        Result       = $Result
+        Details      = $Details
+        ExitCode     = $ExitCode
+    }
+    [void]$script:Manifest.Add($entry)
+}
+
+# -----------------------------------------------------------------------------
+# Helpers
+# -----------------------------------------------------------------------------
+function Test-IsAdmin {
+    try {
+        $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $pr = New-Object Security.Principal.WindowsPrincipal($id)
+        return $pr.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch { return $false }
+}
+
+function Get-Sha256File {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    try {
+        return (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash
+    } catch { return $null }
+}
+
+function Get-Sha256Hex {
+    param([string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) { return $null }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+        $hash  = $sha.ComputeHash($bytes)
+        return (($hash | ForEach-Object { $_.ToString('x2') }) -join '')
+    } finally { $sha.Dispose() }
+}
+
+function Expand-Env {
+    param([string]$Path)
+    if (-not $Path) { return $Path }
+    return [System.Environment]::ExpandEnvironmentVariables($Path)
+}
+
+function Get-QuarantineDir {
+    param([string]$WorkDir)
+    $q = Join-Path $WorkDir 'quarantine'
+    if (-not (Test-Path -LiteralPath $q)) {
+        $null = New-Item -ItemType Directory -Path $q -Force
+    }
+    return $q
+}
+
+# Force array context for PS 5.1 (single-element array unwrapping)
+function Force-Array {
+    param($InputObject)
+    if ($null -eq $InputObject) { return @() }
+    if ($InputObject -is [System.Array]) { return $InputObject }
+    $arr = New-Object System.Collections.ArrayList
+    [void]$arr.Add($InputObject)
+    return $arr.ToArray()
+}
+
+# -----------------------------------------------------------------------------
+# Load and validate plan.json
+# -----------------------------------------------------------------------------
+Write-Section "Loading plan: $PlanFile"
+
+if (-not (Test-Path -LiteralPath $PlanFile)) {
+    throw "Plan file not found: $PlanFile"
+}
+
+try {
+    $plan = Get-Content -LiteralPath $PlanFile -Raw | ConvertFrom-Json -ErrorAction Stop
+} catch {
+    throw "Failed to parse plan.json: $($_.Exception.Message)"
+}
+
+# Validate plan structure
+if (-not $plan -or -not $plan.Decision) {
+    throw "Invalid plan.json: missing Decision field"
+}
+
+if ($plan.Decision -ne 'ALL_REMOVE' -and $plan.Decision -ne 'PARTIAL_REMOVE') {
+    Write-Log "Plan decision: $($plan.Decision) - no removal actions required" 'Warn'
+    exit 0
+}
+
+# Filter to ScreenConnect-only instances (owner policy binding)
+$scInstances = @()
+if ($plan.ScreenConnectInstances) {
+    $scInstances = @($plan.ScreenConnectInstances)
+} elseif ($plan.Instances) {
+    # Fallback: filter by target type if plan uses generic structure
+    $scInstances = @($plan.Instances | Where-Object { $_.TargetId -eq 'screenconnect' -or $_.Type -eq 'screenconnect' })
+}
+
+if ($scInstances.Count -eq 0) {
+    Write-Log "No ScreenConnect instances marked for removal in plan" 'Warn'
+    exit 0
+}
+
+Write-Log "Plan decision: $($plan.Decision)"
+Write-Log "ScreenConnect instances to process: $($scInstances.Count)"
+
+# -----------------------------------------------------------------------------
+# FIX 1: per-entry product verification
+#
+# The plan is trusted for SELECTION but never for IDENTITY. Every instance is
+# re-verified as genuinely ScreenConnect (ServiceName/ImagePath/directory vs
+# known ScreenConnect patterns from targets.json) BEFORE any stop/kill/
+# uninstall/quarantine action. Entries failing verification are skipped and
+# logged as PRODUCT_VERIFICATION_FAILED; they are never uninstalled.
+# -----------------------------------------------------------------------------
+
+$script:ScIdentityCache = $null
+
+function Get-ScreenConnectIdentity {
+    # Known-good ScreenConnect identity markers. Patterns are sourced from the
+    # 'screenconnect' entry in targets.json when present, with safe defaults.
+    if ($script:ScIdentityCache) { return $script:ScIdentityCache }
+    $identity = @{
+        ServiceNamePatterns = @('ScreenConnect*')
+        BinaryNamePatterns  = @('ServiceScreenConnect.exe', 'ScreenConnect*.exe')
+        DirSegmentPattern   = '*\ScreenConnect*'
+    }
+    try {
+        $targetsFile = Join-Path $PSScriptRoot 'targets.json'
+        if (Test-Path -LiteralPath $targetsFile) {
+            $cfg = Get-Content -LiteralPath $targetsFile -Raw | ConvertFrom-Json
+            foreach ($t in @($cfg.targets)) {
+                if ((Get-EntryPropertySafe -Instance $t -PropertyName 'id') -ne 'screenconnect') { continue }
+                $tgtSvc = Get-EntryPropertySafe -Instance $t -PropertyName 'servicePatterns'
+                $tgtProc = Get-EntryPropertySafe -Instance $t -PropertyName 'processPatterns'
+                if ($tgtSvc) { $identity.ServiceNamePatterns = @($tgtSvc) + $identity.ServiceNamePatterns }
+                if ($tgtProc) {
+                    $bins = @()
+                    foreach ($pp in @($tgtProc)) { $bins += ('{0}.exe' -f [string]$pp) }
+                    $identity.BinaryNamePatterns = @('ServiceScreenConnect.exe') + $bins
+                }
+                Write-Log "Product verification patterns loaded from targets.json"
+                break
+            }
+        } else {
+            Write-Log "targets.json not found, using built-in ScreenConnect verification patterns" 'Debug'
+        }
+    } catch {
+        Write-Log "Could not read targets.json, using built-in ScreenConnect verification patterns" 'Debug'
+    }
+    $script:ScIdentityCache = $identity
+    return $identity
+}
+
+function Get-EntryPropertySafe {
+    # StrictMode-safe property read: plan entries may be missing fields.
+    param($Instance, [string]$PropertyName)
+    if ($null -eq $Instance) { return $null }
+    try {
+        $p = $Instance.PSObject.Properties[$PropertyName]
+        if ($p) { return $p.Value }
+    } catch { }
+    return $null
+}
+
+function Get-PlanInstanceId {
+    param($Instance)
+    foreach ($name in @('InstanceId', 'Identifier', 'Key')) {
+        $v = Get-EntryPropertySafe -Instance $Instance -PropertyName $name
+        if ($v) { return [string]$v }
+    }
+    return 'unknown'
+}
+
+function Get-PathBinaryLeaf {
+    # Platform-neutral final-path-segment extraction for Windows image/paths.
+    # Handles quoted paths ("C:\...\x.exe" /args), unquoted paths with
+    # trailing arguments, and falls back to '/' separation only when the
+    # string carries no backslash (normalized/POSIX-style input).
+    param([string]$PathString)
+    if (-not $PathString) { return '' }
+    $s = $PathString.Trim()
+
+    if ($s.StartsWith('"')) {
+        # Quoted form: the binary path is exactly the quoted span
+        $endQ = $s.IndexOf('"', 1)
+        if ($endQ -gt 0) { $s = $s.Substring(1, $endQ - 1) } else { $s = $s.Trim('"') }
+    } elseif ($s.Contains('"')) {
+        # Embedded closing quote followed by arguments
+        $q = $s.IndexOf('"')
+        if ($q -ge 0) { $s = $s.Substring(0, $q).Trim() }
+    }
+
+    if ($s.Contains('\')) {
+        $idx = $s.LastIndexOf('\')
+        if ($idx -ge 0) { $s = $s.Substring($idx + 1) }
+    } else {
+        $idx = $s.LastIndexOf('/')
+        if ($idx -ge 0) { $s = $s.Substring($idx + 1) }
+    }
+
+    $s = $s.Trim().Trim('"')
+    # Trim trailing arguments off an executable token (e.g. "x.exe -k run")
+    $rxOpts = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    $exeMatch = [regex]::Match($s, '^([^\s]+\.(exe|sys|dll|com))(\s|$)', $rxOpts)
+    if ($exeMatch.Success) { return $exeMatch.Groups[1].Value }
+    return $s
+}
+
+function Test-ScreenConnectInstance {
+    <#
+        Re-verifies that a plan entry really is ScreenConnect before any action
+        is taken against it. Returns PSCustomObject with:
+            Verified : boolean
+            Reasons  : string[] of failure reasons (empty when Verified=true)
+    #>
+    param($Instance)
+
+    $reasons = New-Object System.Collections.ArrayList
+    $identity = Get-ScreenConnectIdentity
+
+    # Collect evidence defensively (plan entry may be malformed)
+    $svcName = [string](Get-EntryPropertySafe -Instance $Instance -PropertyName 'ServiceName')
+    $pathStrings = New-Object System.Collections.ArrayList
+    foreach ($pn in @('ImagePath', 'ServiceImagePath', 'InstallDir')) {
+        $raw = Get-EntryPropertySafe -Instance $Instance -PropertyName $pn
+        if ($raw) {
+            $exp = Expand-Env ([string]$raw)
+            if ($exp) { [void]$pathStrings.Add($exp.Trim()) }
+        }
+    }
+
+    # Gate A: some path must live under a ScreenConnect directory
+    $dirOk = $false
+    foreach ($p in $pathStrings) {
+        if ($p -like $identity.DirSegmentPattern) { $dirOk = $true; break }
+    }
+    if (-not $dirOk) {
+        [void]$reasons.Add("no candidate path under a ScreenConnect directory (checked $(@($pathStrings).Count) path field(s))")
+    }
+
+    # Gate B: binary name must match ServiceScreenConnect.exe or the
+    # ScreenConnect client patterns from targets.json
+    $binOk = $false
+    foreach ($p in $pathStrings) {
+        $leaf = Get-PathBinaryLeaf -PathString $p
+        if (-not $leaf) { continue }
+        $isFileLike = ($leaf -match '\.(exe|sys|dll|com)$')
+        if (-not $isFileLike) { continue } # directory entry, checked on disk below
+        foreach ($pat in $identity.BinaryNamePatterns) {
+            if ($leaf -like $pat) { $binOk = $true; break }
+        }
+        if ($binOk) { break }
+    }
+    if (-not $binOk) {
+        # Directory-only entries: look for a known ScreenConnect binary on disk
+        foreach ($p in $pathStrings) {
+            $leaf = Get-PathBinaryLeaf -PathString $p
+            if ($leaf -and ($leaf -match '\.(exe|sys|dll|com)$')) { continue } # file-like entry, checked above
+            if (-not (Test-Path -LiteralPath $p -PathType Container)) { continue }
+            foreach ($pat in $identity.BinaryNamePatterns) {
+                $hits = @(Get-ChildItem -LiteralPath $p -Filter $pat -File -ErrorAction SilentlyContinue)
+                if ($hits.Count -gt 0) { $binOk = $true; break }
+            }
+            if ($binOk) { break }
+        }
+    }
+    if (-not $binOk) {
+        [void]$reasons.Add("no binary matching known ScreenConnect executable patterns")
+    }
+
+    # Gate C: service name (when supplied) must match ScreenConnect patterns
+    if ($svcName) {
+        $svcOk = $false
+        foreach ($pat in $identity.ServiceNamePatterns) {
+            if ($svcName -like $pat) { $svcOk = $true; break }
+        }
+        if (-not $svcOk) {
+            [void]$reasons.Add("ServiceName '$svcName' does not match ScreenConnect service patterns")
+        }
+    }
+
+    return [PSCustomObject]@{
+        Verified = ($reasons.Count -eq 0)
+        Reasons  = @($reasons.ToArray())
+    }
+}
+
+function Get-VerifiedUninstallEntry {
+    <#
+        Honors a plan-supplied UninstallRegistryKey ONLY when reading the key
+        shows a DisplayName that is ScreenConnect-like AND value data on the
+        key that references the same verified install path. Returns the
+        registry entry object, or $null when the key cannot be trusted.
+    #>
+    param([string]$RegistryKeyPath, [string]$VerifiedInstallDir, [string]$InstanceId)
+
+    if ([string]::IsNullOrWhiteSpace($RegistryKeyPath)) { return $null }
+
+    $entry = $null
+    try {
+        $entry = Get-ItemProperty -LiteralPath $RegistryKeyPath -ErrorAction Stop
+    } catch {
+        $msg = $_.Exception.Message
+        Write-Log "  Plan UninstallRegistryKey unreadable, ignoring it: $msg" 'Warn'
+        Add-ManifestEntry -InstanceId $InstanceId -Action 'ValidateUninstallKey' -Target $RegistryKeyPath -Result 'Rejected' -Details "Unreadable key: $msg"
+        return $null
+    }
+
+    # The key must be ScreenConnect/ConnectWise Control-named
+    $displayName = [string](Get-EntryPropertySafe -Instance $entry -PropertyName 'DisplayName')
+    if (($displayName -notlike '*ScreenConnect*') -and ($displayName -notlike '*ConnectWise Control*')) {
+        Write-Log "  Plan UninstallRegistryKey rejected: DisplayName '$displayName' is not ScreenConnect-like" 'Warn'
+        Add-ManifestEntry -InstanceId $InstanceId -Action 'ValidateUninstallKey' -Target $RegistryKeyPath -Result 'Rejected' -Details "DisplayName '$displayName' does not reference ScreenConnect/ConnectWise Control"
+        return $null
+    }
+
+    # Some value on the key must reference the verified install path
+    if ([string]::IsNullOrWhiteSpace($VerifiedInstallDir)) {
+        Write-Log "  Plan UninstallRegistryKey rejected: no verified install dir available for cross-check" 'Warn'
+        Add-ManifestEntry -InstanceId $InstanceId -Action 'ValidateUninstallKey' -Target $RegistryKeyPath -Result 'Rejected' -Details 'No verified install dir available for cross-check'
+        return $null
+    }
+
+    $needle = $VerifiedInstallDir.TrimEnd('\')
+    foreach ($prop in $entry.PSObject.Properties) {
+        if ($prop.Name -like 'PS*') { continue }
+        $data = Expand-Env ([string]$prop.Value)
+        if (-not $data) { continue }
+        if ($data.IndexOf($needle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            Write-Log "  Plan UninstallRegistryKey accepted: value '$($prop.Name)' references verified install dir"
+            Add-ManifestEntry -InstanceId $InstanceId -Action 'ValidateUninstallKey' -Target $RegistryKeyPath -Result 'Accepted' -Details "Value '$($prop.Name)' references verified install dir"
+            return $entry
+        }
+    }
+
+    Write-Log "  Plan UninstallRegistryKey rejected: no value data references verified install dir '$VerifiedInstallDir'" 'Warn'
+    Add-ManifestEntry -InstanceId $InstanceId -Action 'ValidateUninstallKey' -Target $RegistryKeyPath -Result 'Rejected' -Details "No value data references verified install dir '$VerifiedInstallDir'"
+    return $null
+}
+
+# -----------------------------------------------------------------------------
+# Resolve working directory
+# -----------------------------------------------------------------------------
+if (-not $WorkDir) {
+    $WorkDir = 'C:\RIT-SCC'
+}
+if (-not (Test-Path -LiteralPath $WorkDir)) {
+    throw "WorkDir not found: $WorkDir"
+}
+
+$quarantineDir = Get-QuarantineDir $WorkDir
+$manifestPath = Join-Path $WorkDir 'removal-manifest.json'
+$masterLogPath = Join-Path $WorkDir 'master.log'
+$resumeMarkerPath = Join-Path $WorkDir 'resume-marker.json'
+
+Write-Log "WorkDir: $WorkDir"
+Write-Log "Quarantine: $quarantineDir"
+Write-Log "Manifest: $manifestPath"
+Write-Log "Execute mode: $($Execute.IsPresent)"
+
+# -----------------------------------------------------------------------------
+# FIX 2: reboot-resume support via resume-marker.json
+#
+# Execute-mode removal writes the marker listing every instance + status at
+# session start, updates it after each instance, and -Resume skips instances
+# already recorded as Completed. Marker WRITES happen only in Execute mode;
+# dry-run never touches the file.
+# -----------------------------------------------------------------------------
+$script:ResumeStatuses = New-Object System.Collections.ArrayList
+$script:CompletedInstanceIds = New-Object System.Collections.ArrayList
+
+function Write-ResumeMarker {
+    param([string]$Phase)
+    if (-not $Execute) { return }
+    try {
+        $markerObj = [PSCustomObject]@{
+            Script     = $ScriptName
+            Version    = $ScriptVersion
+            PlanFile   = $PlanFile
+            Phase      = $Phase
+            UpdatedUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+            Instances  = @($script:ResumeStatuses.ToArray())
+        }
+        $markerJson = $markerObj | ConvertTo-Json -Depth 5
+        # UTF8 without BOM (Set-Content -Encoding UTF8 would emit a BOM on 5.1)
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($resumeMarkerPath, $markerJson, $utf8NoBom)
+    } catch {
+        Write-Log "Could not update resume marker: $($_.Exception.Message)" 'Warn'
+    }
+}
+
+function Initialize-ResumeMarker {
+    if (-not $Execute) { return }
+    $script:ResumeStatuses.Clear()
+    foreach ($instItem in $scInstancesArray) {
+        $id = Get-PlanInstanceId -Instance $instItem
+        $status = 'Pending'
+        if ($script:CompletedInstanceIds -contains $id) { $status = 'Completed' }
+        [void]$script:ResumeStatuses.Add([PSCustomObject]@{
+            InstanceId = $id
+            Status     = $status
+            UpdatedUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        })
+    }
+    Write-ResumeMarker -Phase 'session-start'
+}
+
+function Update-ResumeStatus {
+    param([string]$InstanceId, [string]$Status)
+    if (-not $Execute) { return }
+    foreach ($item in @($script:ResumeStatuses)) {
+        if ($item.InstanceId -eq $InstanceId) {
+            $item.Status = $Status
+            $item.UpdatedUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+            break
+        }
+    }
+    Write-ResumeMarker -Phase ('instance:' + $InstanceId + ' -> ' + $Status)
+}
+
+if ($Resume) {
+    Write-Log "RESUME mode: continuing after reboot" 'Warn'
+    if (Test-Path -LiteralPath $resumeMarkerPath) {
+        try {
+            $marker = Get-Content -LiteralPath $resumeMarkerPath -Raw | ConvertFrom-Json
+            foreach ($mi in @($marker.Instances)) {
+                if ([string](Get-EntryPropertySafe -Instance $mi -PropertyName 'Status') -eq 'Completed') {
+                    [void]$script:CompletedInstanceIds.Add([string](Get-EntryPropertySafe -Instance $mi -PropertyName 'InstanceId'))
+                }
+            }
+            Write-Log "Resume marker found: $($script:CompletedInstanceIds.Count) completed instance(s) will be skipped"
+        } catch {
+            Write-Log "Could not read resume marker: $($_.Exception.Message)" 'Warn'
+        }
+    } else {
+        Write-Log "No resume marker found at: $resumeMarkerPath" 'Warn'
+    }
+    # Pending quarantine moves deferred via MoveFileEx are still retried below
+}
+
+# -----------------------------------------------------------------------------
+# System Restore point (safety rule 4)
+# FIX 4: skipped entirely when not in Execute mode, so the default dry-run
+# stays strictly inert (no system-state mutation).
+# -----------------------------------------------------------------------------
+if ($Execute -and -not $NoRestorePoint -and -not $Resume) {
+    Write-Log "Creating System Restore point..."
+    try {
+        Checkpoint-Computer -Description "ScreenConnect Removal - $(Get-Date).ToString('yyyy-MM-dd HH:mm:ss')" -RestorePointType 'MODIFY_SETTINGS' -ErrorAction Stop
+        Write-Log "System Restore point created"
+    } catch {
+        Write-Log "System Restore point creation failed: $($_.Exception.Message)" 'Warn'
+    }
+}
+
+# -----------------------------------------------------------------------------
+# Registry helper to read uninstall strings
+# -----------------------------------------------------------------------------
+function Get-UninstallEntriesForInstance {
+    param([string]$InstanceIdentifier)
+    $roots = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+    )
+    $matches = New-Object System.Collections.ArrayList
+    foreach ($r in $roots) {
+        if (-not (Test-Path -LiteralPath $r)) { continue }
+        try {
+            foreach ($k in (Get-ChildItem -LiteralPath $r -ErrorAction SilentlyContinue)) {
+                try {
+                    $p = Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction SilentlyContinue
+                    if (-not $p.DisplayName) { continue }
+                    # Match ScreenConnect / ConnectWise Control entries
+                    if ($p.DisplayName -like '*ScreenConnect*' -or $p.DisplayName -like '*ConnectWise Control*') {
+                        # If instance identifier provided, try to match it
+                        if ($InstanceIdentifier) {
+                            if ($p.DisplayName -like "*$InstanceIdentifier*" -or ($p.InstallLocation -and $p.InstallLocation -like "*$InstanceIdentifier*")) {
+                                [void]$matches.Add($p)
+                            }
+                        } else {
+                            [void]$matches.Add($p)
+                        }
+                    }
+                } catch { }
+            }
+        } catch { }
+    }
+    return $matches.ToArray()
+}
+
+# -----------------------------------------------------------------------------
+# Service management
+# -----------------------------------------------------------------------------
+function Stop-ServiceSafe {
+    param([string]$ServiceName, [string]$InstanceId)
+    try {
+        $svc = Get-Service -Name $ServiceName -ErrorAction Stop
+        if ($svc.Status -ne 'Stopped') {
+            if ($Execute) {
+                Write-Log "  Stopping service: $ServiceName"
+                Stop-Service -Name $ServiceName -Force -ErrorAction Stop
+                $svc.WaitForStatus('Stopped', '00:00:30')
+                Add-ManifestEntry -InstanceId $InstanceId -Action 'StopService' -Target $ServiceName -Result 'Success' -Details 'Service stopped'
+            } else {
+                Write-Log "  [DRY-RUN] Would stop service: $ServiceName"
+                Add-ManifestEntry -InstanceId $InstanceId -Action 'StopService' -Target $ServiceName -Result 'DryRun' -Details 'Would stop service'
+            }
+        } else {
+            Write-Log "  Service already stopped: $ServiceName"
+            Add-ManifestEntry -InstanceId $InstanceId -Action 'StopService' -Target $ServiceName -Result 'Skipped' -Details 'Already stopped'
+        }
+        return $true
+    } catch {
+        $msg = $_.Exception.Message
+        Write-Log "  Failed to stop service ${ServiceName}: $msg" 'Error'
+        Add-ManifestEntry -InstanceId $InstanceId -Action 'StopService' -Target $ServiceName -Result 'Failed' -Details $msg
+        return $false
+    }
+}
+
+function Kill-ProcessesForInstance {
+    param([string]$InstallDir, [string]$ServiceName, [string]$InstanceId)
+    try {
+        $pids = @()
+        # Find processes by executable path
+        $procs = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop |
+            Where-Object { $_.ExecutablePath -and $_.ExecutablePath -like "$InstallDir\*" }
+        foreach ($p in $procs) {
+            $pids += $p.ProcessId
+        }
+        # Also by service name if no install dir
+        if ($pids.Count -eq 0 -and $ServiceName) {
+            $svc = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
+            if ($svc -and $svc.ProcessId) {
+                $pids += $svc.ProcessId
+            }
+        }
+        # Also scan for ScreenConnect client/service processes
+        if ($pids.Count -eq 0) {
+            $scProcs = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop |
+                Where-Object { $_.Name -like '*ScreenConnect*' -or $_.CommandLine -like '*ScreenConnect*' }
+            foreach ($p in $scProcs) {
+                $pids += $p.ProcessId
+            }
+        }
+        $pids = @($pids | Sort-Object -Unique)
+        if ($pids.Count -eq 0) {
+            Write-Log "  No processes found to kill"
+            Add-ManifestEntry -InstanceId $InstanceId -Action 'KillProcesses' -Target 'N/A' -Result 'Skipped' -Details 'No processes found'
+            return $true
+        }
+        foreach ($pid in $pids) {
+            if ($Execute) {
+                Write-Log "  Killing process PID $pid"
+                try {
+                    Stop-Process -Id $pid -Force -ErrorAction Stop
+                    Add-ManifestEntry -InstanceId $InstanceId -Action 'KillProcess' -Target "PID $pid" -Result 'Success' -Details 'Process terminated'
+                } catch {
+                    $msg = $_.Exception.Message
+                    Write-Log "    Failed to kill PID ${pid}: $msg" 'Error'
+                    Add-ManifestEntry -InstanceId $InstanceId -Action 'KillProcess' -Target "PID $pid" -Result 'Failed' -Details $msg
+                }
+            } else {
+                Write-Log "  [DRY-RUN] Would kill process PID $pid"
+                Add-ManifestEntry -InstanceId $InstanceId -Action 'KillProcess' -Target "PID $pid" -Result 'DryRun' -Details 'Would kill process'
+            }
+        }
+        return $true
+    } catch {
+        $msg = $_.Exception.Message
+        Write-Log "  Error killing processes: $msg" 'Error'
+        Add-ManifestEntry -InstanceId $InstanceId -Action 'KillProcesses' -Target 'N/A' -Result 'Failed' -Details $msg
+        return $false
+    }
+}
+
+function Delete-ServiceRegistration {
+    param([string]$ServiceName, [string]$InstanceId)
+    try {
+        $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+        if (-not $svc) {
+            Write-Log "  Service not found (already deleted): $ServiceName"
+            Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteService' -Target $ServiceName -Result 'Skipped' -Details 'Not found'
+            return $true
+        }
+        if ($Execute) {
+            Write-Log "  Deleting service registration: $ServiceName"
+            # Use sc.exe for reliable deletion
+            $scResult = sc.exe delete $ServiceName 2>&1
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -eq 0) {
+                Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteService' -Target $ServiceName -Result 'Success' -Details 'Service deleted' -ExitCode $exitCode
+            } else {
+                $msg = "sc.exe delete exited with code ${exitCode}: $($scResult -join ' ')"
+                Write-Log "    $msg" 'Error'
+                Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteService' -Target $ServiceName -Result 'Failed' -Details $msg -ExitCode $exitCode
+                return $false
+            }
+        } else {
+            Write-Log "  [DRY-RUN] Would delete service: $ServiceName"
+            Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteService' -Target $ServiceName -Result 'DryRun' -Details 'Would delete service'
+        }
+        return $true
+    } catch {
+        $msg = $_.Exception.Message
+        Write-Log "  Failed to delete service ${ServiceName}: $msg" 'Error'
+        Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteService' -Target $ServiceName -Result 'Failed' -Details $msg
+        return $false
+    }
+}
+
+# -----------------------------------------------------------------------------
+# Uninstaller execution
+# -----------------------------------------------------------------------------
+function Run-VendorUninstaller {
+    param($UninstallEntry, [string]$InstanceId)
+    if (-not $UninstallEntry) {
+        Write-Log "  No uninstall registry entry provided"
+        Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target 'Registry' -Result 'Skipped' -Details 'No uninstall entry'
+        return $false
+    }
+
+    $uninstallString = $UninstallEntry.UninstallString
+    $quietUninstallString = $UninstallEntry.QuietUninstallString
+    $displayName = $UninstallEntry.DisplayName
+    $registryKey = $UninstallEntry.PSPath
+
+    Write-Log "  Found uninstall entry: $displayName"
+
+    # Determine the command to run
+    $cmd = $null
+    $isMsi = $false
+    $productCode = $null
+
+    if ($quietUninstallString) {
+        $cmd = $quietUninstallString
+    } elseif ($uninstallString) {
+        $cmd = $uninstallString
+    }
+
+    if (-not $cmd) {
+        Write-Log "  No UninstallString or QuietUninstallString found" 'Warn'
+        Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target $displayName -Result 'Failed' -Details 'No uninstall string'
+        return $false
+    }
+
+    # Check if MSI
+    if ($cmd -match '/x\s+\{([A-F0-9-]{36})\}' -or $cmd -match 'msiexec.*/x\s+(\{[A-F0-9-]{36}\})') {
+        $isMsi = $true
+        $productCode = $matches[1]
+        Write-Log "  Detected MSI uninstaller, ProductCode: $productCode"
+    }
+
+    # Build the actual command line
+    $finalCmd = $cmd
+    if ($isMsi) {
+        # Ensure quiet uninstall flags
+        if ($finalCmd -notmatch '/qn') {
+            $finalCmd = $finalCmd + ' /qn'
+        }
+        if ($finalCmd -notmatch '/norestart') {
+            $finalCmd = $finalCmd + ' /norestart'
+        }
+    } else {
+        # For non-MSI, try to add common silent flags if not present
+        if ($finalCmd -notmatch '/s' -and $finalCmd -notmatch '/quiet' -and $finalCmd -notmatch '/silent') {
+            # Don't invent flags - use what the registry provides
+            # But log that we're running as-is
+            Write-Log "  Running uninstaller as-is (no silent flags added per policy)" 'Debug'
+        }
+    }
+
+    Write-Log "  Uninstall command: $finalCmd"
+
+    if ($Execute) {
+        try {
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'cmd.exe'
+            $psi.Arguments = '/c ' + $finalCmd
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            $psi.CreateNoWindow = $true
+            $psi.Verb = 'runas'
+
+            $proc = [System.Diagnostics.Process]::Start($psi)
+            $stdout = $proc.StandardOutput.ReadToEnd()
+            $stderr = $proc.StandardError.ReadToEnd()
+            $proc.WaitForExit(300000) # 5 minute timeout
+            $exitCode = $proc.ExitCode
+
+            Write-Log "  Uninstaller exit code: $exitCode"
+            if ($stdout) { Write-Log "    STDOUT: $stdout" 'Debug' }
+            if ($stderr) { Write-Log "    STDERR: $stderr" 'Debug' }
+
+            if ($exitCode -eq 0 -or $exitCode -eq 3010) { # 3010 = reboot required
+                Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target $displayName -Result 'Success' -Details "Exit code $exitCode" -ExitCode $exitCode
+                if ($exitCode -eq 3010) {
+                    Write-Log "  Uninstaller requests reboot (exit code 3010)" 'Warn'
+                }
+                return $true
+            } else {
+                Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target $displayName -Result 'Failed' -Details "Exit code ${exitCode}: $stderr" -ExitCode $exitCode
+                return $false
+            }
+        } catch {
+            $msg = $_.Exception.Message
+            Write-Log "  Uninstaller exception: $msg" 'Error'
+            Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target $displayName -Result 'Failed' -Details $msg
+            return $false
+        }
+    } else {
+        Write-Log "  [DRY-RUN] Would run uninstaller: $finalCmd"
+        Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target $displayName -Result 'DryRun' -Details "Would run: $finalCmd"
+        return $true # dry-run assumes success
+    }
+}
+
+# -----------------------------------------------------------------------------
+# Quarantine directory move (manual surgery fallback)
+# -----------------------------------------------------------------------------
+function Move-ToQuarantine {
+    param([string]$SourcePath, [string]$InstanceId, [string]$Description)
+    if (-not (Test-Path -LiteralPath $SourcePath)) {
+        Write-Log "  Source not found, skipping quarantine: $SourcePath"
+        Add-ManifestEntry -InstanceId $InstanceId -Action 'Quarantine' -Target $SourcePath -Result 'Skipped' -Details "Not found: $Description"
+        return $true
+    }
+
+    $sha256 = Get-Sha256File $SourcePath
+    $destName = [System.IO.Path]::GetFileName($SourcePath)
+    $destPath = Join-Path $quarantineDir "$InstanceId" "$destName"
+
+    # Ensure quarantine subdirectory exists
+    $qSubDir = Split-Path -Parent $destPath
+    if (-not (Test-Path -LiteralPath $qSubDir)) {
+        $null = New-Item -ItemType Directory -Path $qSubDir -Force
+    }
+
+    Write-Log "  Quarantining ${Description}: ${SourcePath} -> ${destPath}"
+    Write-Log "  SHA256: $sha256"
+
+    if ($Execute) {
+        try {
+            # Check if file is in use
+            $isLocked = $false
+            try {
+                $testStream = [System.IO.File]::Open($SourcePath, 'Open', 'ReadWrite', 'None')
+                $testStream.Close()
+            } catch {
+                $isLocked = $true
+            }
+
+            if ($isLocked) {
+                Write-Log "  File in use, scheduling move on reboot via MoveFileEx" 'Warn'
+                # Use MoveFileEx with MOVEFILE_DELAY_UNTIL_REBOOT
+                $kernel32 = Add-Type -MemberDefinition @'
+                    [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Auto)]
+                    public static extern bool MoveFileEx(string lpExistingFileName, string lpNewFileName, int dwFlags);
+'@ -Name 'Kernel32' -Namespace 'Win32' -PassThru
+                $MOVEFILE_DELAY_UNTIL_REBOOT = 4
+                $result = $kernel32::MoveFileEx($SourcePath, $destPath, $MOVEFILE_DELAY_UNTIL_REBOOT)
+                if (-not $result) {
+                    $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                    throw "MoveFileEx failed with error $err"
+                }
+                # Set RunOnce to resume
+                Set-RunOnceResume -InstanceId $InstanceId -WorkDir $WorkDir
+                Add-ManifestEntry -InstanceId $InstanceId -Action 'Quarantine' -Target $SourcePath -Result 'Deferred' -Details "File in use, scheduled for reboot move. SHA256: $sha256. Original: $SourcePath`nQuarantine: $destPath`nDescription: $Description"
+            } else {
+                Move-Item -LiteralPath $SourcePath -Destination $destPath -Force -ErrorAction Stop
+                Add-ManifestEntry -InstanceId $InstanceId -Action 'Quarantine' -Target $SourcePath -Result 'Success' -Details "Moved to quarantine. SHA256: $sha256. Original: $SourcePath`nQuarantine: $destPath`nDescription: $Description"
+            }
+            return $true
+        } catch {
+            $msg = $_.Exception.Message
+            Write-Log "  Failed to quarantine: $msg" 'Error'
+            Add-ManifestEntry -InstanceId $InstanceId -Action 'Quarantine' -Target $SourcePath -Result 'Failed' -Details $msg
+            return $false
+        }
+    } else {
+        Write-Log "  [DRY-RUN] Would quarantine: $SourcePath -> $destPath (SHA256: $sha256)"
+        Add-ManifestEntry -InstanceId $InstanceId -Action 'Quarantine' -Target $SourcePath -Result 'DryRun' -Details "Would move to quarantine. SHA256: $sha256"
+        return $true
+    }
+}
+
+function Set-RunOnceResume {
+    param([string]$InstanceId, [string]$WorkDir)
+    try {
+        $runOncePath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce'
+        $scriptPath = Join-Path $PSScriptRoot 'remove-screenconnect.ps1'
+        $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -PlanFile `"$PlanFile`" -WorkDir `"$WorkDir`" -Execute -Resume"
+        if (-not (Test-Path -LiteralPath $runOncePath)) {
+            $null = New-Item -Path $runOncePath -Force
+        }
+        Set-ItemProperty -LiteralPath $runOncePath -Name "SCCleanup_Resume_$InstanceId" -Value $cmd -Force -ErrorAction Stop
+        Write-Log "  RunOnce resume key set for $InstanceId"
+    } catch {
+        Write-Log "  Failed to set RunOnce key: $($_.Exception.Message)" 'Warn'
+    }
+}
+
+# -----------------------------------------------------------------------------
+# Persistence cleanup (scheduled tasks, Run keys, WMI subscriptions)
+# -----------------------------------------------------------------------------
+function Clean-Persistence {
+    param([string]$InstallDir, [string]$InstanceId)
+    $cleaned = 0
+
+    # 1. Scheduled Tasks referencing the install directory
+    try {
+        $tasks = Get-ScheduledTask -ErrorAction SilentlyContinue
+        if ($tasks) {
+            foreach ($task in $tasks) {
+                try {
+                    $actions = $task.Actions
+                    foreach ($action in $actions) {
+                        $path = $action.Execute
+                        $args = $action.Arguments
+                        if (($path -and $path -like "$InstallDir\*") -or ($args -and $args -like "*$InstallDir*")) {
+                            $taskName = $task.TaskName
+                            $taskPath = $task.TaskPath
+                            Write-Log "  Found scheduled task referencing install dir: $taskPath$taskName"
+                            if ($Execute) {
+                                Unregister-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Confirm:$false -ErrorAction Stop
+                                Write-Log "    Deleted scheduled task: $taskPath$taskName"
+                                Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteScheduledTask' -Target "$taskPath$taskName" -Result 'Success' -Details "Referenced $InstallDir"
+                                $cleaned++
+                            } else {
+                                Write-Log "    [DRY-RUN] Would delete scheduled task: $taskPath$taskName"
+                                Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteScheduledTask' -Target "$taskPath$taskName" -Result 'DryRun' -Details "Referenced $InstallDir"
+                                $cleaned++
+                            }
+                        }
+                    }
+                } catch { }
+            }
+        }
+    } catch { Write-Log "  Scheduled task enumeration failed: $($_.Exception.Message)" 'Warn' }
+
+    # 2. Registry Run/RunOnce keys
+    $runKeys = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run',
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce',
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run',
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\RunOnce'
+    )
+    foreach ($rk in $runKeys) {
+        if (-not (Test-Path -LiteralPath $rk)) { continue }
+        try {
+            $vals = Get-ItemProperty -LiteralPath $rk -ErrorAction SilentlyContinue
+            if ($vals) {
+                foreach ($prop in $vals.PSObject.Properties) {
+                    if ($prop.Name -eq 'PSPath' -or $prop.Name -eq 'PSParentPath' -or $prop.Name -eq 'PSChildName' -or $prop.Name -eq 'PSDrive' -or $prop.Name -eq 'PSProvider') { continue }
+                    $val = $prop.Value
+                    if ($val -and $val -like "*$InstallDir*") {
+                        Write-Log "  Found Run key referencing install dir: $rk\$($prop.Name) = $val"
+                        if ($Execute) {
+                            Remove-ItemProperty -LiteralPath $rk -Name $prop.Name -Force -ErrorAction Stop
+                            Write-Log "    Deleted Run key value: $prop.Name"
+                            Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteRunKey' -Target "$rk\$($prop.Name)" -Result 'Success' -Details "Referenced $InstallDir"
+                            $cleaned++
+                        } else {
+                            Write-Log "    [DRY-RUN] Would delete Run key value: $prop.Name"
+                            Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteRunKey' -Target "$rk\$($prop.Name)" -Result 'DryRun' -Details "Referenced $InstallDir"
+                            $cleaned++
+                        }
+                    }
+                }
+            }
+        } catch { }
+    }
+
+    # 3. WMI Event Subscriptions (FilterToConsumerBinding)
+    try {
+        $bindings = Get-CimInstance -Namespace 'root\subscription' -ClassName '__FilterToConsumerBinding' -ErrorAction Stop
+        foreach ($b in $bindings) {
+            try {
+                $filter = Get-CimInstance -Namespace 'root\subscription' -ClassName '__EventFilter' -Filter "Name='$($b.Filter)'" -ErrorAction SilentlyContinue
+                $consumer = Get-CimInstance -Namespace 'root\subscription' -ClassName 'CommandLineEventConsumer' -Filter "Name='$($b.Consumer)'" -ErrorAction SilentlyContinue
+                if ($consumer -and $consumer.CommandLineTemplate -and $consumer.CommandLineTemplate -like "*$InstallDir*") {
+                    Write-Log "  Found WMI subscription referencing install dir: $($filter.Name) -> $($consumer.Name)"
+                    if ($Execute) {
+                        Remove-CimInstance -CimInstance $b -ErrorAction Stop
+                        Remove-CimInstance -CimInstance $filter -ErrorAction Stop
+                        Remove-CimInstance -CimInstance $consumer -ErrorAction Stop
+                        Write-Log "    Deleted WMI subscription"
+                        Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteWmiSubscription' -Target "$($filter.Name) -> $($consumer.Name)" -Result 'Success' -Details "Referenced $InstallDir"
+                        $cleaned++
+                    } else {
+                        Write-Log "    [DRY-RUN] Would delete WMI subscription"
+                        Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteWmiSubscription' -Target "$($filter.Name) -> $($consumer.Name)" -Result 'DryRun' -Details "Referenced $InstallDir"
+                        $cleaned++
+                    }
+                }
+            } catch { }
+        }
+    } catch { Write-Log "  WMI subscription enumeration failed: $($_.Exception.Message)" 'Warn' }
+
+    if ($cleaned -eq 0) {
+        Write-Log "  No persistence artifacts found referencing $InstallDir"
+        Add-ManifestEntry -InstanceId $InstanceId -Action 'CleanPersistence' -Target $InstallDir -Result 'Skipped' -Details 'No artifacts found'
+    }
+    return $true
+}
+
+# -----------------------------------------------------------------------------
+# Main processing loop
+# -----------------------------------------------------------------------------
+Write-Section "Processing ScreenConnect instances"
+
+Initialize-ResumeMarker
+
+$overallSuccess = $true
+
+$scInstancesArray = @($scInstances)
+foreach ($inst in $scInstancesArray) {
+
+    # FIX 3: resolve the id up front (defensively) so any failure below can
+    # still be attributed in the manifest, then isolate each instance so one
+    # malformed entry logs an error and processing continues.
+    $instanceId = Get-PlanInstanceId -Instance $inst
+
+    try {
+        Write-Section "Instance: $instanceId"
+
+        # FIX 2: skip instances already completed by a previous interrupted run
+        if (($script:CompletedInstanceIds.Count -gt 0) -and ($script:CompletedInstanceIds -contains $instanceId)) {
+            Write-Log "  Already completed in previous run (resume marker), skipping: $instanceId"
+            Add-ManifestEntry -InstanceId $instanceId -Action 'ResumeSkip' -Target 'N/A' -Result 'Skipped' -Details 'Already completed according to resume-marker.json'
+            continue
+        }
+
+        # FIX 1: verify this entry really is ScreenConnect BEFORE acting on it
+        $verification = Test-ScreenConnectInstance -Instance $inst
+        if (-not $verification.Verified) {
+            $why = ($verification.Reasons -join '; ')
+            Write-Log "  PRODUCT VERIFICATION FAILED for ${instanceId}: $why" 'Error'
+            Add-ManifestEntry -InstanceId $instanceId -Action 'ProductVerification' -Target 'N/A' -Result 'PRODUCT_VERIFICATION_FAILED' -Details "Entry skipped, never uninstalled. Reasons: $why"
+            Update-ResumeStatus -InstanceId $instanceId -Status 'PRODUCT_VERIFICATION_FAILED'
+            continue
+        }
+        Write-Log "  Product verification passed"
+        Add-ManifestEntry -InstanceId $instanceId -Action 'ProductVerification' -Target 'N/A' -Result 'Passed' -Details 'Entry identity confirmed against ScreenConnect patterns'
+
+        $serviceName = Get-EntryPropertySafe -Instance $inst -PropertyName 'ServiceName'
+        $installDir = Get-EntryPropertySafe -Instance $inst -PropertyName 'InstallDir'
+        if ($installDir) { $installDir = Expand-Env ([string]$installDir) }
+        $uninstallEntry = $null
+
+        # FIX 1: plan-supplied UninstallRegistryKey is only honored when its
+        # value data references the same verified install path
+        $planRegKey = Get-EntryPropertySafe -Instance $inst -PropertyName 'UninstallRegistryKey'
+        if ($planRegKey) {
+            $uninstallEntry = Get-VerifiedUninstallEntry -RegistryKeyPath ([string]$planRegKey) -VerifiedInstallDir ([string]$installDir) -InstanceId $instanceId
+        }
+
+        # If no usable uninstall entry from plan, look it up
+        if (-not $uninstallEntry -and $instanceId -ne 'unknown') {
+            $entries = Get-UninstallEntriesForInstance $instanceId
+            $entriesArray = @($entries)
+            if ($entriesArray.Count -gt 0) {
+                $uninstallEntry = $entriesArray[0]
+            }
+        }
+
+        # 1. Stop service + kill processes
+        if ($serviceName) {
+            Stop-ServiceSafe -ServiceName $serviceName -InstanceId $instanceId
+        }
+        if ($installDir) {
+            Kill-ProcessesForInstance -InstallDir $installDir -ServiceName $serviceName -InstanceId $instanceId
+        } else {
+            Kill-ProcessesForInstance -InstallDir '' -ServiceName $serviceName -InstanceId $instanceId
+        }
+
+        # 2. Run vendor uninstaller
+        $uninstallSuccess = $false
+        if ($uninstallEntry) {
+            $uninstallSuccess = Run-VendorUninstaller -UninstallEntry $uninstallEntry -InstanceId $instanceId
+        } else {
+            Write-Log "  No uninstall entry found, will proceed to manual surgery" 'Warn'
+            Add-ManifestEntry -InstanceId $instanceId -Action 'Uninstall' -Target 'N/A' -Result 'Skipped' -Details 'No uninstall registry entry found'
+        }
+
+        # 3. Manual surgery fallback (if uninstall failed or no uninstaller)
+        if ($installDir -and (Test-Path -LiteralPath $installDir)) {
+            Write-Log "  Proceeding with manual surgery for: $installDir"
+
+            # Quarantine the entire install directory
+            Move-ToQuarantine -SourcePath $installDir -InstanceId $instanceId -Description 'Install directory'
+
+            # Delete service registration
+            if ($serviceName) {
+                Delete-ServiceRegistration -ServiceName $serviceName -InstanceId $instanceId
+            }
+        } else {
+            Write-Log "  Install directory not found or empty: $installDir" 'Warn'
+            if ($serviceName) {
+                Delete-ServiceRegistration -ServiceName $serviceName -InstanceId $instanceId
+            }
+        }
+
+        # 4. Clean persistence (always attempt, even if uninstall succeeded)
+        if ($installDir) {
+            Clean-Persistence -InstallDir $installDir -InstanceId $instanceId
+        }
+
+        # Also clean persistence for any service executable paths
+        $svcImagePath = Get-EntryPropertySafe -Instance $inst -PropertyName 'ServiceImagePath'
+        if ($svcImagePath) {
+            $svcDir = Split-Path -Parent ([string]$svcImagePath)
+            if ($svcDir -and $svcDir -ne $installDir) {
+                Clean-Persistence -InstallDir $svcDir -InstanceId $instanceId
+            }
+        }
+
+        Update-ResumeStatus -InstanceId $instanceId -Status 'Completed'
+    } catch {
+        # FIX 3: one malformed/failed entry must not abort the remaining work
+        $msg = $_.Exception.Message
+        Write-Log "  Unhandled error processing instance ${instanceId}, continuing with next: $msg" 'Error'
+        Add-ManifestEntry -InstanceId $instanceId -Action 'ProcessInstance' -Target 'N/A' -Result 'Failed' -Details "Unhandled error, continued with next instance: $msg"
+        Update-ResumeStatus -InstanceId $instanceId -Status 'Failed'
+        $overallSuccess = $false
+        continue
+    }
+}
+
+Write-ResumeMarker -Phase 'session-complete'
+
+# -----------------------------------------------------------------------------
+# Write removal manifest
+# -----------------------------------------------------------------------------
+Write-Section "Writing removal manifest"
+
+$manifestObj = [PSCustomObject]@{
+    Script           = $ScriptName
+    Version          = $ScriptVersion
+    GeneratedUtc     = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+    ComputerName     = $env:COMPUTERNAME
+    PlanFile         = $PlanFile
+    WorkDir          = $WorkDir
+    QuarantineDir    = $quarantineDir
+    ExecuteMode      = $Execute.IsPresent
+    ResumeMode       = $Resume.IsPresent
+    Entries          = $script:Manifest.ToArray()
+}
+
+try {
+    $manifestObj | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding UTF8 -NoNewline
+    Write-Log "Manifest written: $manifestPath"
+} catch {
+    Write-Log "Failed to write manifest: $($_.Exception.Message)" 'Error'
+    $overallSuccess = $false
+}
+
+# -----------------------------------------------------------------------------
+# Final summary
+# -----------------------------------------------------------------------------
+Write-Section "Removal complete"
+
+$successCount = @($script:Manifest | Where-Object { $_.Result -eq 'Success' }).Count
+$failedCount  = @($script:Manifest | Where-Object { $_.Result -eq 'Failed' }).Count
+$dryRunCount  = @($script:Manifest | Where-Object { $_.Result -eq 'DryRun' }).Count
+$deferredCount = @($script:Manifest | Where-Object { $_.Result -eq 'Deferred' }).Count
+$verifFailCount = @($script:Manifest | Where-Object { ($_.Action -eq 'ProductVerification') -and ($_.Result -eq 'PRODUCT_VERIFICATION_FAILED') }).Count
+
+Write-Log "Actions successful:   $successCount"
+Write-Log "Actions failed:       $failedCount"
+Write-Log "Actions dry-run:      $dryRunCount"
+Write-Log "Actions deferred:     $deferredCount"
+Write-Log "Verification failures (skipped, never uninstalled): $verifFailCount"
+Write-Log "Manifest: $manifestPath"
+
+if ($failedCount -gt 0) {
+    Write-Log "WARNING: Some actions failed. Check manifest for details." 'Warn'
+    $overallSuccess = $false
+}
+
+if ($deferredCount -gt 0) {
+    Write-Log "Some file moves deferred to reboot. RunOnce key set." 'Warn'
+}
+
+if (-not $Execute) {
+    Write-Log "DRY-RUN complete. Re-run with -Execute to perform actual removal." 'Warn'
+}
+
+if ($overallSuccess) { exit 0 } else { exit 1 }

@@ -1,0 +1,56 @@
+name: windows-ci
+
+# Real-Windows CI on GitHub-hosted Windows VMs (windows-latest).
+# Exercises the tool's house rules under BOTH PowerShell editions:
+#   - Windows PowerShell 5.1 (the technician target runtime)
+#   - PowerShell 7+ (pwsh, used for local dev checks)
+# No ScreenConnect install or removal happens here - live testing stays manual.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows-tests:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: House rules - pure ASCII, no BOM, valid JSON
+        shell: pwsh
+        run: ./tests/ci/Test-HouseRules.ps1
+
+      - name: Parse all scripts - Windows PowerShell 5.1
+        shell: powershell
+        run: ./tests/ci/Test-Parse.ps1
+
+      - name: Parse all scripts - PowerShell 7 (pwsh)
+        shell: pwsh
+        run: ./tests/ci/Test-Parse.ps1
+
+      - name: Smoke - detect-remote-access target list loads (5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./detect-remote-access.ps1 -ListTargets
+
+      - name: Smoke - detect-remote-access target list loads (pwsh)
+        shell: pwsh
+        run: ./detect-remote-access.ps1 -ListTargets
+
+      - name: Synthetic Stage 7 diff test (end-to-end via pwsh)
+        shell: pwsh
+        run: python ./tests/test_diff_synthetic.py
+
+      - name: Upload diff output on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-diff-debug
+          path: |
+            ${{ runner.temp }}/synth-before.json
+            ${{ runner.temp }}/synth-after.json
+            ${{ runner.temp }}/synth-diff.json
+          if-no-files-found: ignore

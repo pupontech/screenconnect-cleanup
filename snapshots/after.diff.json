@@ -1,0 +1,168 @@
+{
+  "SchemaVersion": 1,
+  "DiffUtc": "2026-08-23 12:24:32",
+  "BeforeFile": "before.json",
+  "BeforeLabel": "before",
+  "BeforeCollectedUtc": "2026-08-23 11:21:36",
+  "AfterFile": "after.json",
+  "AfterLabel": "after",
+  "AfterCollectedUtc": "2026-08-23 11:21:41",
+  "SameComputerName": true,
+  "ResurrectionsAdded": 0,
+  "Verdict": "CLEAN",
+  "Sections": [
+    {
+      "Section": "Services",
+      "Kind": "stable",
+      "BeforeCount": 0,
+      "AfterCount": 0,
+      "Removed": [],
+      "Added": [],
+      "Changed": []
+    },
+    {
+      "Section": "ScheduledTasks",
+      "Kind": "stable",
+      "BeforeCount": 0,
+      "AfterCount": 0,
+      "Removed": [],
+      "Added": [],
+      "Changed": []
+    },
+    {
+      "Section": "RegistryAutoruns",
+      "Kind": "stable",
+      "BeforeCount": 0,
+      "AfterCount": 0,
+      "Removed": [],
+      "Added": [],
+      "Changed": []
+    },
+    {
+      "Section": "StartupFolders",
+      "Kind": "stable",
+      "BeforeCount": 0,
+      "AfterCount": 0,
+      "Removed": [],
+      "Added": [],
+      "Changed": []
+    },
+    {
+      "Section": "InstalledPrograms",
+      "Kind": "stable",
+      "BeforeCount": 0,
+      "AfterCount": 0,
+      "Removed": [],
+      "Added": [],
+      "Changed": []
+    },
+    {
+      "Section": "LocalAccounts",
+      "Kind": "stable",
+      "BeforeCount": 0,
+      "AfterCount": 0,
+      "Removed": [],
+      "Added": [],
+      "Changed": []
+    },
+    {
+      "Section": "FirewallRules",
+      "Kind": "stable",
+      "BeforeCount": 0,
+      "AfterCount": 0,
+      "Removed": [],
+      "Added": [],
+      "Changed": []
+    },
+    {
+      "Section": "WmiPersistence",
+      "Kind": "stable",
+      "BeforeCount": 0,
+      "AfterCount": 0,
+      "Removed": [],
+      "Added": [],
+      "Changed": []
+    },
+    {
+      "Section": "Prefetch",
+      "Kind": "stable",
+      "BeforeCount": 0,
+      "AfterCount": 0,
+      "Removed": [],
+      "Added": [],
+      "Changed": []
+    },
+    {
+      "Section": "ShimCache",
+      "Kind": "stable",
+      "BeforeCount": 0,
+      "AfterCount": 0,
+      "Removed": [],
+      "Added": [],
+      "Changed": []
+    },
+    {
+      "Section": "BamDam",
+      "Kind": "stable",
+      "BeforeCount": 0,
+      "AfterCount": 0,
+      "Removed": [],
+      "Added": [],
+      "Changed": []
+    },
+    {
+      "Section": "UserAssist",
+      "Kind": "stable",
+      "BeforeCount": 0,
+      "AfterCount": 0,
+      "Removed": [],
+      "Added": [],
+      "Changed": []
+    },
+    {
+      "Section": "Processes",
+      "Kind": "volatile",
+      "BeforeCount": 0,
+      "AfterCount": 0,
+      "Removed": [],
+      "Added": [],
+      "Changed": []
+    },
+    {
+      "Section": "Connections",
+      "Kind": "volatile",
+      "BeforeCount": 0,
+      "AfterCount": 0,
+      "Removed": [],
+      "Added": [],
+      "Changed": []
+    },
+    {
+      "Section": "RecentFiles",
+      "Kind": "volatile",
+      "BeforeCount": 0,
+      "AfterCount": 0,
+      "Removed": [],
+      "Added": [],
+      "Changed": []
+    },
+    {
+      "Section": "Srum",
+      "Kind": "object",
+      "BeforeCount": -1,
+      "AfterCount": -1,
+      "Removed": [],
+      "Added": [],
+      "Changed": []
+    },
+    {
+      "Section": "SystemSettings",
+      "Kind": "object",
+      "BeforeCount": -1,
+      "AfterCount": -1,
+      "Removed": [],
+      "Added": [],
+      "Changed": []
+    }
+  ]
+}

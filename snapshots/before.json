@@ -1,0 +1,109 @@
+{
+  "SchemaVersion": 2,
+  "Label": "before",
+  "ComputerName": "aygross",
+  "CollectedUtc": "2026-08-23 11:21:36",
+  "IsAdmin": false,
+  "OSCaption": "",
+  "IncidentWindowDays": 0,
+  "CollectionErrors": [
+    {
+      "Section": "OSInfo",
+      "Error": "The term 'Get-CimInstance' is not recognized as a name of a cmdlet, function, script file, or executable program.\nCheck the spelling of the name, or if a path was included, verify that the path is correct and try again."
+    },
+    {
+      "Section": "Services",
+      "Error": "The term 'Get-CimInstance' is not recognized as a name of a cmdlet, function, script file, or executable program.\nCheck the spelling of the name, or if a path was included, verify that the path is correct and try again."
+    },
+    {
+      "Section": "ScheduledTasks",
+      "Error": "The term 'Get-ScheduledTask' is not recognized as a name of a cmdlet, function, script file, or executable program.\nCheck the spelling of the name, or if a path was included, verify that the path is correct and try again."
+    },
+    {
+      "Section": "StartupFolders",
+      "Error": "Cannot bind argument to parameter 'Path' because it is null."
+    },
+    {
+      "Section": "Processes",
+      "Error": "The term 'Get-CimInstance' is not recognized as a name of a cmdlet, function, script file, or executable program.\nCheck the spelling of the name, or if a path was included, verify that the path is correct and try again."
+    },
+    {
+      "Section": "Connections",
+      "Error": "The term 'Get-NetTCPConnection' is not recognized as a name of a cmdlet, function, script file, or executable program.\nCheck the spelling of the name, or if a path was included, verify that the path is correct and try again."
+    },
+    {
+      "Section": "LocalAccounts",
+      "Error": "Administrators group lookup: The term 'net' is not recognized as a name of a cmdlet, function, script file, or executable program.\nCheck the spelling of the name, or if a path was included, verify that the path is correct and try again."
+    },
+    {
+      "Section": "LocalAccounts",
+      "Error": "The term 'Get-CimInstance' is not recognized as a name of a cmdlet, function, script file, or executable program.\nCheck the spelling of the name, or if a path was included, verify that the path is correct and try again."
+    },
+    {
+      "Section": "FirewallRules",
+      "Error": "The term 'Get-NetFirewallRule' is not recognized as a name of a cmdlet, function, script file, or executable program.\nCheck the spelling of the name, or if a path was included, verify that the path is correct and try again."
+    },
+    {
+      "Section": "WmiPersistence",
+      "Error": "__EventFilter: The term 'Get-CimInstance' is not recognized as a name of a cmdlet, function, script file, or executable program.\nCheck the spelling of the name, or if a path was included, verify that the path is correct and try again."
+    },
+    {
+      "Section": "WmiPersistence",
+      "Error": "__EventConsumer: The term 'Get-CimInstance' is not recognized as a name of a cmdlet, function, script file, or executable program.\nCheck the spelling of the name, or if a path was included, verify that the path is correct and try again."
+    },
+    {
+      "Section": "WmiPersistence",
+      "Error": "__FilterToConsumerBinding: The term 'Get-CimInstance' is not recognized as a name of a cmdlet, function, script file, or executable program.\nCheck the spelling of the name, or if a path was included, verify that the path is correct and try again."
+    },
+    {
+      "Section": "SystemSettings",
+      "Error": "Hosts file: Cannot bind argument to parameter 'Path' because it is null."
+    },
+    {
+      "Section": "Prefetch",
+      "Error": "Cannot bind argument to parameter 'Path' because it is null."
+    },
+    {
+      "Section": "ShimCache",
+      "Error": "AppCompatCache key not found: HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\AppCompatCache"
+    },
+    {
+      "Section": "Srum",
+      "Error": "Cannot bind argument to parameter 'Path' because it is null."
+    }
+  ],
+  "Sections": {
+    "Services": [],
+    "ScheduledTasks": [],
+    "RegistryAutoruns": [],
+    "StartupFolders": [],
+    "Processes": [],
+    "Connections": [],
+    "InstalledPrograms": [],
+    "LocalAccounts": [],
+    "FirewallRules": [],
+    "WmiPersistence": [],
+    "RecentFiles": [],
+    "RecentFilesCapHit": false,
+    "Prefetch": [],
+    "ShimCache": [],
+    "BamDam": [],
+    "UserAssist": [],
+    "Srum": {
+      "DatabasePresent": false,
+      "DatabasePath": "",
+      "DatabaseSha256": "",
+      "Files": [],
+      "OfflineCopyPath": "",
+      "OfflineCopyOk": false,
+      "OfflineCopyError": "Cannot bind argument to parameter 'Path' because it is null.",
+      "Limitations": [
+        "Section failed entirely."
+      ]
+    },
+    "SystemSettings": {
+      "RdpEnabled": null,
+      "HostsFileLines": []
+    }
+  }
+}

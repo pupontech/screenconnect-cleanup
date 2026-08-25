@@ -1,0 +1,163 @@
+{
+  "_comment": [
+    "Toggle what detect-remote-access.ps1 looks for. Set enabled true/false.",
+    "deep=true means there is a dedicated module for it (ScreenConnect only for now).",
+    "deep=false means presence-only: service / process / directory / uninstall-entry match.",
+    "Paths may use %ENVVAR% - they are expanded at runtime.",
+    "This file is OPTIONAL. If it is missing the script uses the same defaults,",
+    "so a single copied .ps1 still works on its own (see -ListTargets)."
+  ],
+
+  "targets": [
+    {
+      "id": "screenconnect",
+      "name": "ScreenConnect / ConnectWise Control",
+      "enabled": true,
+      "deep": true,
+      "servicePatterns":   ["ScreenConnect*"],
+      "processPatterns":   ["ScreenConnect.*"],
+      "pathPatterns":      ["%ProgramFiles(x86)%\\ScreenConnect Client*", "%ProgramFiles%\\ScreenConnect Client*", "%ProgramData%\\ScreenConnect*"],
+      "uninstallPatterns": ["ScreenConnect*", "ConnectWise Control*"]
+    },
+    {
+      "id": "anydesk",
+      "name": "AnyDesk",
+      "enabled": false,
+      "deep": false,
+      "servicePatterns":   ["AnyDesk*"],
+      "processPatterns":   ["AnyDesk*"],
+      "pathPatterns":      ["%ProgramFiles(x86)%\\AnyDesk*", "%ProgramFiles%\\AnyDesk*", "%ProgramData%\\AnyDesk*", "%APPDATA%\\AnyDesk*"],
+      "uninstallPatterns": ["AnyDesk*"]
+    },
+    {
+      "id": "teamviewer",
+      "name": "TeamViewer",
+      "enabled": false,
+      "deep": false,
+      "servicePatterns":   ["TeamViewer*"],
+      "processPatterns":   ["TeamViewer*", "tv_*"],
+      "pathPatterns":      ["%ProgramFiles(x86)%\\TeamViewer*", "%ProgramFiles%\\TeamViewer*"],
+      "uninstallPatterns": ["TeamViewer*"]
+    },
+    {
+      "id": "ultraviewer",
+      "name": "UltraViewer",
+      "enabled": false,
+      "deep": false,
+      "servicePatterns":   ["UltraViewer*"],
+      "processPatterns":   ["UltraViewer*"],
+      "pathPatterns":      ["%ProgramFiles(x86)%\\UltraViewer*", "%ProgramFiles%\\UltraViewer*"],
+      "uninstallPatterns": ["UltraViewer*"]
+    },
+    {
+      "id": "supremo",
+      "name": "Supremo",
+      "enabled": false,
+      "deep": false,
+      "servicePatterns":   ["Supremo*"],
+      "processPatterns":   ["Supremo*"],
+      "pathPatterns":      ["%ProgramFiles(x86)%\\Supremo*", "%ProgramFiles%\\Supremo*", "%APPDATA%\\Supremo*"],
+      "uninstallPatterns": ["Supremo*"]
+    },
+    {
+      "id": "rustdesk",
+      "name": "RustDesk",
+      "enabled": false,
+      "deep": false,
+      "servicePatterns":   ["RustDesk*"],
+      "processPatterns":   ["rustdesk*"],
+      "pathPatterns":      ["%ProgramFiles%\\RustDesk*", "%ProgramFiles(x86)%\\RustDesk*", "%APPDATA%\\RustDesk*"],
+      "uninstallPatterns": ["RustDesk*"]
+    },
+    {
+      "id": "splashtop",
+      "name": "Splashtop (incl. SOS)",
+      "enabled": false,
+      "deep": false,
+      "servicePatterns":   ["SplashtopRemoteService*", "Splashtop*"],
+      "processPatterns":   ["SR*Service*", "Splashtop*", "strwinclt*"],
+      "pathPatterns":      ["%ProgramFiles(x86)%\\Splashtop*", "%ProgramFiles%\\Splashtop*"],
+      "uninstallPatterns": ["Splashtop*"]
+    },
+    {
+      "id": "logmein",
+      "name": "LogMeIn / GoTo (incl. Rescue)",
+      "enabled": false,
+      "deep": false,
+      "servicePatterns":   ["LMIGuardian*", "LogMeIn*"],
+      "processPatterns":   ["LogMeIn*", "LMI*", "Support-LogMeInRescue*"],
+      "pathPatterns":      ["%ProgramFiles(x86)%\\LogMeIn*", "%ProgramFiles%\\LogMeIn*"],
+      "uninstallPatterns": ["LogMeIn*", "GoTo*"]
+    },
+    {
+      "id": "zohoassist",
+      "name": "Zoho Assist",
+      "enabled": false,
+      "deep": false,
+      "servicePatterns":   ["ZohoMeeting*", "Zoho*"],
+      "processPatterns":   ["ZA*", "Zoho*"],
+      "pathPatterns":      ["%ProgramFiles(x86)%\\ZohoMeeting*", "%ProgramFiles%\\ZohoMeeting*"],
+      "uninstallPatterns": ["Zoho Assist*", "Zoho*"]
+    },
+    {
+      "id": "atera",
+      "name": "Atera / AteraAgent",
+      "enabled": false,
+      "deep": false,
+      "servicePatterns":   ["AteraAgent*"],
+      "processPatterns":   ["AteraAgent*"],
+      "pathPatterns":      ["%ProgramFiles(x86)%\\ATERA Networks*", "%ProgramFiles%\\ATERA Networks*"],
+      "uninstallPatterns": ["Atera*"]
+    },
+    {
+      "id": "dwagent",
+      "name": "DWAgent / DWService",
+      "enabled": false,
+      "deep": false,
+      "servicePatterns":   ["DWAgent*"],
+      "processPatterns":   ["dwagent*"],
+      "pathPatterns":      ["%ProgramFiles%\\DWAgent*", "%ProgramFiles(x86)%\\DWAgent*"],
+      "uninstallPatterns": ["DWAgent*", "DWService*"]
+    },
+    {
+      "id": "meshagent",
+      "name": "MeshCentral agent",
+      "enabled": false,
+      "deep": false,
+      "servicePatterns":   ["Mesh Agent*", "MeshAgent*"],
+      "processPatterns":   ["MeshAgent*"],
+      "pathPatterns":      ["%ProgramFiles%\\Mesh Agent*", "%ProgramFiles(x86)%\\Mesh Agent*"],
+      "uninstallPatterns": ["Mesh Agent*", "MeshCentral*"]
+    },
+    {
+      "id": "netsupport",
+      "name": "NetSupport Manager",
+      "enabled": false,
+      "deep": false,
+      "servicePatterns":   ["Client32*", "NetSupport*"],
+      "processPatterns":   ["client32*", "pcicfgui*"],
+      "pathPatterns":      ["%ProgramFiles(x86)%\\NetSupport*", "%ProgramFiles%\\NetSupport*"],
+      "uninstallPatterns": ["NetSupport*"]
+    },
+    {
+      "id": "remoteutilities",
+      "name": "Remote Utilities",
+      "enabled": false,
+      "deep": false,
+      "servicePatterns":   ["RManService*", "Remote Utilities*"],
+      "processPatterns":   ["rutserv*", "rfusclient*"],
+      "pathPatterns":      ["%ProgramFiles(x86)%\\Remote Utilities*", "%ProgramFiles%\\Remote Utilities*"],
+      "uninstallPatterns": ["Remote Utilities*"]
+    },
+    {
+      "id": "vnc",
+      "name": "VNC family (Ultra/Tight/Real/TigerVNC)",
+      "enabled": false,
+      "deep": false,
+      "servicePatterns":   ["uvnc*", "tvnserver*", "vncserver*", "RealVNC*"],
+      "processPatterns":   ["winvnc*", "tvnserver*", "vncserver*"],
+      "pathPatterns":      ["%ProgramFiles%\\uvnc*", "%ProgramFiles%\\TightVNC*", "%ProgramFiles%\\RealVNC*", "%ProgramFiles(x86)%\\uvnc*", "%ProgramFiles(x86)%\\TightVNC*", "%ProgramFiles(x86)%\\RealVNC*"],
+      "uninstallPatterns": ["*VNC*"]
+    }
+  ]
+}
