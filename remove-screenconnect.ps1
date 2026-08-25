@@ -530,10 +530,13 @@ function Write-ResumeMarker {
 function Initialize-ResumeMarker {
     if (-not $Execute) { return }
     $script:ResumeStatuses.Clear()
-    # Use $scInstances (set right after the plan loads), NOT $scInstancesArray:
-    # that one is assigned AFTER this function is called, so under
-    # Set-StrictMode -Version 2.0 it threw "The variable '$scInstancesArray'
-    # cannot be retrieved because it has not been set." The early
+    # Use $scInstances here, NOT $scInstancesArray. $scInstances is set right
+    # after the plan loads; $scInstancesArray is only assigned later (after
+    # this function runs), so under Set-StrictMode -Version 2.0 referencing it
+    # here threw "The variable '$scInstancesArray' cannot be retrieved because
+    # it has not been set." Both variables end up holding the same instances,
+    # so this timing quirk is invisible at runtime - but keep using $scInstances
+    # in any code that executes BEFORE the main removal loop. The early
     # 'if (-not $Execute) { return }' above hid this in every dry-run, so it
     # only ever fired on a REAL removal - Stage 4 died before touching anything.
     foreach ($instItem in $scInstances) {
@@ -1217,6 +1220,13 @@ foreach ($inst in $scInstancesArray) {
         $uninstallSuccess = $false
         if ($uninstallEntry) {
             $uninstallSuccess = Run-VendorUninstaller -UninstallEntry $uninstallEntry -InstanceId $instanceId
+            if ($uninstallSuccess) {
+                Write-Log "  Vendor uninstaller reported success"
+                Add-ManifestEntry -InstanceId $instanceId -Action 'Uninstall' -Target ($uninstallEntry.UninstallString) -Result 'Success'
+            } else {
+                Write-Log "  Vendor uninstaller failed or returned no success signal" 'Warn'
+                Add-ManifestEntry -InstanceId $instanceId -Action 'Uninstall' -Target ($uninstallEntry.UninstallString) -Result 'Failed' -Details 'Falling back to manual surgery + quarantine'
+            }
         } else {
             Write-Log "  No uninstall entry found, will proceed to manual surgery" 'Warn'
             Add-ManifestEntry -InstanceId $instanceId -Action 'Uninstall' -Target 'N/A' -Result 'Skipped' -Details 'No uninstall registry entry found'
