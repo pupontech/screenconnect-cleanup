@@ -39,16 +39,16 @@ Do **not** copy:
 A prebuilt zip with exactly the layout above is produced by
 `make-deploy-bundle.sh` (Linux side) as `../screenconnect-cleanup-deploy.zip`.
 
-> **Note (2026-08-25, updated):** `tools/Get-ToolPack.ps1` (Sysinternals pack:
-> download + hash-verify from the official Microsoft endpoint, against
-> `tools/manifest.json`) and `tools/Get-AVTools.ps1` (AV scanner staging /
-> presence check) are now both present. KVRT / ESET Online Scanner / Malwarebytes
-> have no stable direct download URL, so `Get-AVTools.ps1` intentionally does NOT
-> download them - it creates `tools\AV\`, reports which files are missing, and
-> points at the official pages; a technician stages `KVRT.exe`,
-> `esetonlinescanner.exe` and `MBSetup.exe` there manually (or from your internal
-> share). Never hand-copy the Sysinternals binaries into `tools\` - `Get-ToolPack.ps1`
-> is the only thing that fetches and hash-verifies them.
+> **Note (2026-08-25):** `tools/Get-ToolPack.ps1` (Sysinternals pack: download +
+> hash-verify from the official Microsoft `download.sysinternals.com` endpoint,
+> against `tools/manifest.json`) and `tools/Get-AVTools.ps1` (AV scanner staging)
+> are both present. `Get-AVTools.ps1` downloads KVRT fresh from Kaspersky's
+> official distribution URL each run, and copies the GUI-only ESET Online Scanner
+> + Malwarebytes installer from an internal tools share (`-InternalShare`,
+> default `\\10.0.0.5\Public\Tools`) when reachable, else leaves them for the
+> technician to supply manually. Never hand-copy the Sysinternals binaries into
+> `tools\` - `Get-ToolPack.ps1` is the only thing that fetches and hash-verifies
+> them.
 
 ## 2. First run on a Windows machine
 
