@@ -778,13 +778,17 @@ function Delete-ServiceRegistration {
         }
         if ($Execute) {
             Write-Log "  Deleting service registration: $ServiceName"
-            # Use sc.exe for reliable deletion
-            $scResult = sc.exe delete $ServiceName 2>&1
+            # Use sc.exe for reliable deletion. stderr goes to $null (NOT 2>&1):
+            # under $ErrorActionPreference='Stop' a merged-stderr redirect turns
+            # sc.exe's first stderr line into a terminating NativeCommandError
+            # in Windows PowerShell 5.1, making the $LASTEXITCODE branch below
+            # dead code. Success output goes to stdout and is drained.
+            & sc.exe delete $ServiceName 2>$null | Out-Null
             $exitCode = $LASTEXITCODE
             if ($exitCode -eq 0) {
                 Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteService' -Target $ServiceName -Result 'Success' -Details 'Service deleted' -ExitCode $exitCode
             } else {
-                $msg = "sc.exe delete exited with code ${exitCode}: $($scResult -join ' ')"
+                $msg = "sc.exe delete exited with code ${exitCode}"
                 Write-Log "    $msg" 'Error'
                 Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteService' -Target $ServiceName -Result 'Failed' -Details $msg -ExitCode $exitCode
                 return $false

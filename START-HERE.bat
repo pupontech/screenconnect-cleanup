@@ -191,15 +191,16 @@ if /i "%GO%"=="y" (
 )
 set GO=
 
-rem ---- Step 7: Tikun (runs by default) ----------------------------------------
+rem ---- Step 7: Tikun (OPT-IN - destructive, deletes without quarantine) --------
 echo.
 echo  STEP 7 of 9: Tikun ^(the general fix - tools\GeneralFix\^)
 echo    Note: Tikun kills processes and DELETES files, folders and registry
 echo    Run-keys system-wide, including removable drives, without quarantine.
 echo    It also installs a scheduled task that reruns it at boot and on USB
-echo    insertion. Answer n to skip it.
-set /p GO="    Run Tikun now? [Y/n] "
-if /i not "%GO%"=="n" (
+echo    insertion. This is the ONLY step here that deletes instead of
+echo    quarantines - type y to run it, Enter or n skips it.
+set /p GO="    Run Tikun now? [y/N] "
+if /i "%GO%"=="y" (
     set "GFIX_SCRIPT="
     for %%S in ("%~dp0tools\GeneralFix\*.bat") do if not defined GFIX_SCRIPT set "GFIX_SCRIPT=%%~fS"
     if defined GFIX_SCRIPT (
