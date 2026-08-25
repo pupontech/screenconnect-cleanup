@@ -674,10 +674,9 @@ $stage4Result = Invoke-Stage -StageId 4 -StageName 'Contain + Remove' -SkipFlag 
     $planJson = $stage3Result.Result.PlanJson
     $removeScript = Join-Path $ScriptRoot 'remove-screenconnect.ps1'
     if (-not (Test-Path $removeScript)) { throw "remove-screenconnect.ps1 not found at $removeScript" }
-    # A run that actually acts should get a real rollback point unless -np asked
-    # otherwise; -NoRestorePoint used to be hardcoded here.
+    # The rollback restore point is already established in Stage 0, so the
+    # remover does not create its own.
     $removeArgs = @('-PlanJson', $planJson, '-WorkDir', $WorkDir)
-    if ($np) { $removeArgs += '-NoRestorePoint' }
     $confirmed = [bool]$stage3Result.Result.RemovalConfirmed
     if ($confirmed -and -not $sr) { $removeArgs += '-Execute' }
     if ($VerboseLog) { $removeArgs += '-VerboseLog' }

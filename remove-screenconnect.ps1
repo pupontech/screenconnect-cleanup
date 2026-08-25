@@ -601,26 +601,14 @@ if ($Resume) {
 
 # -----------------------------------------------------------------------------
 # System Restore point (safety rule 4)
-# FIX 4: skipped entirely when not in Execute mode, so the default dry-run
-# stays strictly inert (no system-state mutation).
+#
+# NOTE: a restore point is NOT created here. preflight.ps1 / sc-cleanup.ps1
+# Stage 0 already established one at the START of the pipeline (before anything
+# was touched), which is the rollback safety net for the whole run. Creating a
+# second one right before removal is redundant -- one restore point at the start
+# of the script is sufficient. This script therefore assumes its caller already
+# took the baseline snapshot and does not emit another.
 # -----------------------------------------------------------------------------
-if ($Execute -and -not $NoRestorePoint -and -not $Resume) {
-    Write-Log "Creating System Restore point..."
-    try {
-        Checkpoint-Computer -Description "ScreenConnect Removal - $(Get-Date).ToString('yyyy-MM-dd HH:mm:ss')" -RestorePointType 'MODIFY_SETTINGS' -ErrorAction Stop
-        Write-Log "System Restore point created"
-    } catch {
-        # FIX (safety): the restore point is the rollback safety net for a
-        # destructive stage. If it cannot be created, fail-closed rather than
-        # proceeding unprotected -- unless the operator explicitly opted out
-        # with -NoRestorePoint. This prevents silent unprotected removal.
-        Write-Log "System Restore point creation failed: $($_.Exception.Message)" 'Error'
-        Write-Host "ERROR: Could not create a System Restore point, and removal is destructive." -ForegroundColor Red
-        Write-Host "       Aborting to avoid unprotected removal. Re-run with -NoRestorePoint to" -ForegroundColor Red
-        Write-Host "       proceed anyway (NOT recommended), or fix System Restore and retry." -ForegroundColor Red
-        exit 3
-    }
-}
 
 # -----------------------------------------------------------------------------
 # Registry helper to read uninstall strings
