@@ -1140,9 +1140,13 @@ function Clean-Persistence {
             foreach ($task in $tasks) {
                 try {
                     $actions = $task.Actions
-                    foreach ($action in $actions) {
-                        $path = $action.Execute
-                        $args = $action.Arguments
+                    foreach ($action in @($actions)) {
+                        # Scheduled tasks can carry action types that have no
+                        # Execute property (e.g. COM handler actions expose
+                        # ClassId/Data instead). Read defensively so a
+                        # non-execute action does not throw under StrictMode.
+                        $path = Get-EntryPropertySafe -Instance $action -PropertyName 'Execute'
+                        $args = Get-EntryPropertySafe -Instance $action -PropertyName 'Arguments'
                         if (($path -and $path -like "$InstallDir\*") -or ($args -and $args -like "*$InstallDir*")) {
                             $taskName = $task.TaskName
                             $taskPath = $task.TaskPath
