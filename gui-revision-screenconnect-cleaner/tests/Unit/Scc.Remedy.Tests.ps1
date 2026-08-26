@@ -396,10 +396,9 @@ Describe 'Scc.Remedy Quarantine Manifest' {
 
             Invoke-SccRemediation -Run $run -Plan $plan -Execute
 
-            $qManifestPath = Join-Path (Join-Path $run.RunDir 'Quarantine') 'quarantine-manifest.json'
-            Test-Path -LiteralPath $qManifestPath | Should -Be $true
-            $man = ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($qManifestPath))
-            $entry = $man[0]
+            $man = Read-QuarantineManifest -Run $run
+            @($man).Count | Should -BeGreaterOrEqual 1
+            $entry = @($man | Where-Object { $_.OriginalPath -eq $srcFile })[0]
             $entry | Should -Not -BeNullOrEmpty
             $entry.OriginalPath | Should -Be $srcFile
             $entry.SHA256 | Should -Be $expectedHash
@@ -479,8 +478,13 @@ Describe 'Scc.Remedy Restore and Clear Quarantine' {
     It 'Clear-SccQuarantine refuses without -Approved and wrong -ConfirmText, and works with both' {
         $run = New-TestRun
         try {
-            # Seed a quarantine directory + manifest.
-            $qDir = Join-Path (Join-Path $run.RunDir 'Quarantine') 'q'
+            # Seed a quarantine directory + manifest at the ACTUAL resolved root
+            # (on Windows this is under ProgramData, on Linux it is RunDir/Quarantine).
+            $actualQRoot = InModuleScope -ModuleName 'Scc.Remedy' -Parameters @{ RunObj = $run } {
+                param($RunObj)
+                Get-SccRemedyQuarantineRoot -Run $RunObj
+            }
+            $qDir = Join-Path $actualQRoot 'q'
             New-Item -ItemType Directory -Path $qDir -Force | Out-Null
             [System.IO.File]::WriteAllText((Join-Path $qDir 'junk.bin'), 'x', [System.Text.Encoding]::ASCII)
 
@@ -726,7 +730,10 @@ Describe 'F3: Path traversal guard on restore' {
             $itemId = $man[0].ItemId
 
             # Tamper the manifest to inject a traversal path
-            $qBase = Join-Path $run.RunDir 'Quarantine'
+            $qBase = InModuleScope -ModuleName 'Scc.Remedy' -Parameters @{ RunObj = $run } {
+                param($RunObj)
+                Get-SccRemedyQuarantineRoot -Run $RunObj
+            }
             $mp = Join-Path $qBase 'quarantine-manifest.json'
             $man[0].OriginalPath = $srcDir + '\..\..\..\Windows\System32\evil.dll'
             [System.IO.File]::WriteAllText($mp, (ConvertTo-Json -InputObject $man -Depth 10), [System.Text.Encoding]::ASCII)

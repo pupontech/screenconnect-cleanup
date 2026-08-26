@@ -5,6 +5,7 @@
     Author            = 'ScreenConnect Cleaner Team'
     Description       = 'Foundation module: config, paths, runs, logging, caches, file facts, safe JSON, preflight.'
     PowerShellVersion = '5.1'
+    RequiredModules   = @('Microsoft.PowerShell.Utility')
     FunctionsToExport = @(
         'Get-SccConfig',
         'Set-SccConfigValue',

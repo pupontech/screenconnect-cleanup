@@ -7,6 +7,7 @@
     Copyright         = '(c) 2026 ScreenConnect Cleaner Contributors. MIT License.'
     Description       = 'Evidence snapshot collection for ScreenConnect Cleaner investigation runs.'
     PowerShellVersion = '5.1'
+    RequiredModules   = @('Microsoft.PowerShell.Utility')
     FunctionsToExport = @('New-SccSnapshot', 'Get-SccSnapshot')
     CmdletsToExport   = @()
     VariablesToExport  = @()

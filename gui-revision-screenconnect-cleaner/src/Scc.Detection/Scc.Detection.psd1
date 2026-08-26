@@ -8,6 +8,7 @@
     Copyright         = '(c) 2026 ScreenConnect Cleaner Contributors. MIT License.'
     Description       = 'ScreenConnect deep detection, other remote-access detection, and trust matching.'
     PowerShellVersion = '5.1'
+    RequiredModules   = @('Microsoft.PowerShell.Utility')
     FunctionsToExport = @(
         'Get-SccScreenConnect',
         'Get-SccRemoteAccess',

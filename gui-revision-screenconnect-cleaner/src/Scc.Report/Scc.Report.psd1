@@ -5,6 +5,7 @@
     Author            = 'ScreenConnect Cleaner Team'
     Description       = 'Reporting engine: report.html, report.json, technician-summary.txt with XSS-safe escaping and deterministic output.'
     PowerShellVersion = '5.1'
+    RequiredModules   = @('Microsoft.PowerShell.Utility')
     FunctionsToExport = @(
         'New-SccReport',
         'ConvertTo-SccHtml'

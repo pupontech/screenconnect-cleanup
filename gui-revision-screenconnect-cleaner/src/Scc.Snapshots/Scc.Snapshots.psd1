@@ -7,6 +7,7 @@
     Copyright         = '(c) 2026 ScreenConnect Cleaner Contributors. MIT License.'
     Description       = 'Before/after snapshot diff and resurrection detection for ScreenConnect Cleaner.'
     PowerShellVersion = '5.1'
+    RequiredModules   = @('Microsoft.PowerShell.Utility')
     FunctionsToExport = @('Compare-SccSnapshots', 'Test-SccResurrection')
     CmdletsToExport   = @()
     VariablesToExport  = @()
