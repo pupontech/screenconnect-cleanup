@@ -108,3 +108,80 @@ builders own files under src/Scc.*/; this file does not modify them.
 - No file under src/ was modified. Any cross-module wiring issues that required
   a fix are noted here rather than edited in place, per house rule 8.
 
+## 2026-08-26 - CI workflow + packaging (M10, CI engineer)
+
+### .github/workflows/gui-revision-ci.yml (NEW, root workflows dir)
+
+- New file only; windows-ci.yml and everything else at repo root untouched.
+- Two jobs: `linux-static` (ubuntu-latest, pwsh) and `windows-dynamic`
+  (matrix windows-2022 + windows-2025). `fail-fast: false` on the matrix;
+  `timeout-minutes: 45` on both jobs. All steps fail the job on error
+  (no continue-on-error except the artifact upload, which is `if: always()`).
+- Triggers: push to branch `gui-revision-screenconnect-cleaner`,
+  pull_request, workflow_dispatch.
+- linux-static: install pwsh, run tests/ci/Test-HouseRules.ps1 + Test-Parse.ps1
+  (pwsh), install Pester 6.1.0, run ALL tests/Unit + tests/Integration.
+- windows-dynamic: Test-HouseRules + Test-Parse under BOTH `powershell` (5.1)
+  and `pwsh`; Pester unit (pwsh); Test-SelfTests.ps1; headless smoke;
+  malformed-config guard; build; verify; upload.
+- Pester invocation uses `Invoke-Pester -Path <dir> -PassThru` and inspects
+  `$res.FailedCount` (Pester 6 removed the `-Show` parameter; the legacy CI
+  uses `-Show Summary` which would error under 6.1.0 - avoided here).
+- Headless smoke uses `-Mode DetectOnly -SkipScanners` (read-only, deterministic,
+  exits 0). Full mode is NOT used: it reaches the AwaitingReview gate with no
+  plan and exits 1, which would fail CI. DetectOnly satisfies "headless smoke"
+  without crossing the no-auto-approve removal guard.
+- Version derivation in CI: from GITHUB_REF tag/branch (branch sanitized to
+  [0-9A-Za-z.-]) else 0.1.0; passed to Build-Portable.ps1 -Version.
+
+### build/Build-Portable.ps1 (NEW)
+
+- PS 5.1 compatible, pure ASCII, no BOM. Parameters: -OutDir (default
+  <script>/output), -Version (default VERSION file > git describe > 0.1.0),
+  -Zip (default $true), -IncludeConfigs (default $true).
+- Stages: Scc.Cleaner.ps1, Start-ScreenConnectCleaner.bat, src/, config/,
+  docs/, tools/, and optional top-level README.md/LICENSE/CHANGELOG.md -> into
+  <OutDir>/ScreenConnectCleaner-<Version>/.
+- Computes SHA256 of every staged file into SHA256SUMS.txt (relative paths,
+  forward slashes, ASCII). Zips to ScreenConnectCleaner-<Version>-portable.zip
+  via Compress-Archive, plus a ScreenConnectCleaner-<Version>-portable.zip.sha256
+  sidecar (hash of the zip itself).
+- Excludes tests/, build/, audit/ directories and DEVIATIONS* files (.gitignore,
+  VERSION) from the staged tree.
+- RESILIENT STAGING: optional files that do not exist yet (README.md, LICENSE,
+  CHANGELOG.md, tools/) are skipped with a warning, NOT fatal - so the build
+  does not break while sibling modules are still landing. Verified locally:
+  build produces a valid zip (testzip clean) with sidecar hash matching, and the
+  bat preserved as CRLF inside the archive.
+- SHA256 computed via .NET SHA256 (not Get-FileHash) for 5.1 parity and to
+  avoid any provider differences; result is identical hex.
+
+### build/Install-Scc.ps1 (NEW)
+
+- PS 5.1 compatible, pure ASCII, no BOM. Dry-run PREVIEW by default (no -Install):
+  prints every action it would take. -Install performs the install; -WhatIf
+  forces a preview even with -Install; -Uninstall removes only what this script
+  placed (%ProgramFiles%\ScreenConnectCleaner, Start Menu folder,
+  %ProgramData%\ScreenConnectCleaner).
+- Windows-only ops (Program Files, Start Menu COM shortcuts, ProgramData) are
+  guarded: on a non-Windows host it only shows a preview and never writes.
+- Copies the portable tree, writes a machine config stub
+  (ProgramData\ScreenConnectCleaner\config\scc-config.json), and creates two
+  Start Menu shortcuts (app -> Start-ScreenConnectCleaner.bat, docs ->
+  docs\ARCHITECTURE.md). Shortcut creation failure is non-fatal (warning).
+
+### Local verification that could NOT run here
+
+- The GitHub workflow YAML is not executed locally; its syntax is validated by
+  GitHub at push time. I verified the YAML parses with python3 yaml.safe_load
+  (PyYAML) - see gating step below - which catches indentation/structure errors.
+- Windows-only installer behavior (Program Files copy, Start Menu COM shortcut
+  creation, %ProgramData% stub) cannot run on this Linux host. Install-Scc.ps1
+  was parse-checked (0 errors) and its preview path was exercised on Linux
+  (prints intended actions, makes no changes). The actual install/uninstall
+  must be live-tested on Windows by a human (documented in README-BUILD.md).
+- Pester unit suite: locally 216 passed / 3 failed on this Linux host. The 3
+  failures are in Scc.Scanners (MSERT log-copy mock) and Scc.UI (Start-SccJob
+  cancellation mock) - other agents' modules, outside my assigned paths, and
+  not fixed here. They are tracked on their own cards.
+

@@ -187,6 +187,7 @@ Describe 'Scc.Remedy Remediation Ordering' {
             $f[0] | Add-Member -MemberType NoteProperty -Name 'QuarantinePaths' -Value @('C:\SC\sc1') -Force
             $plan = New-SccPlan -Run $run -Findings $f -Decisions @{ 'sc1' = 'REMOVE' }
 
+            Mock Test-SccScreenConnectTarget -ModuleName 'Scc.Remedy' { return $true }
             Mock Stop-SccTargetService -ModuleName 'Scc.Remedy' { [void]$global:callOrder.Add('StopService'); return $true }
             Mock Stop-SccTargetProcesses -ModuleName 'Scc.Remedy' { [void]$global:callOrder.Add('KillProcesses'); return $true }
             Mock Uninstall-SccTarget -ModuleName 'Scc.Remedy' { [void]$global:callOrder.Add('Uninstall'); return $true }
@@ -272,6 +273,7 @@ Describe 'Scc.Remedy Uninstaller Discovery' {
             $f = @((New-Finding -Id 'sc1' -Product 'screenconnect' -ServiceName 'ScreenConnect Client Service' -InstallDir 'C:\SC\sc1'))
             $plan = New-SccPlan -Run $run -Findings $f -Decisions @{ 'sc1' = 'REMOVE' }
 
+            Mock Test-SccScreenConnectTarget -ModuleName 'Scc.Remedy' { return $true }
             Mock Get-SccTargetUninstallData -ModuleName 'Scc.Remedy' {
                 return [PSCustomObject]@{
                     UninstallString      = 'C:\SC\sc1\uninstall.exe /quiet'
@@ -281,6 +283,7 @@ Describe 'Scc.Remedy Uninstaller Discovery' {
                     PSPath               = 'Registry::HKLM:\x'
                 }
             }
+            Mock Test-SccUninstallExeValid -ModuleName 'Scc.Remedy' { return $true }
             Mock Invoke-SccUninstallCommand -ModuleName 'Scc.Remedy' { return $true }
             Mock Stop-SccTargetService -ModuleName 'Scc.Remedy' { return $true }
             Mock Stop-SccTargetProcesses -ModuleName 'Scc.Remedy' { return $true }
@@ -305,6 +308,7 @@ Describe 'Scc.Remedy Uninstaller Discovery' {
             $plan = New-SccPlan -Run $run -Findings $f -Decisions @{ 'sc1' = 'REMOVE' }
             $code = '{A1B2C3D4-0000-0000-0000-000000000001}'
 
+            Mock Test-SccScreenConnectTarget -ModuleName 'Scc.Remedy' { return $true }
             Mock Get-SccTargetUninstallData -ModuleName 'Scc.Remedy' {
                 return [PSCustomObject]@{
                     UninstallString      = ''
@@ -338,6 +342,7 @@ Describe 'Scc.Remedy Uninstaller Discovery' {
             $f = @((New-Finding -Id 'sc1' -Product 'screenconnect' -ServiceName 'ScreenConnect Client Service' -InstallDir 'C:\SC\sc1'))
             $plan = New-SccPlan -Run $run -Findings $f -Decisions @{ 'sc1' = 'REMOVE' }
 
+            Mock Test-SccScreenConnectTarget -ModuleName 'Scc.Remedy' { return $true }
             Mock Get-SccTargetUninstallData -ModuleName 'Scc.Remedy' { return $null }
             Mock Stop-SccTargetService -ModuleName 'Scc.Remedy' { return $true }
             Mock Stop-SccTargetProcesses -ModuleName 'Scc.Remedy' { return $true }
@@ -379,6 +384,7 @@ Describe 'Scc.Remedy Quarantine Manifest' {
             $f[0] | Add-Member -MemberType NoteProperty -Name 'QuarantinePaths' -Value @($srcFile) -Force
             $plan = New-SccPlan -Run $run -Findings $f -Decisions @{ 'sc1' = 'REMOVE' }
 
+            Mock Test-SccScreenConnectTarget -ModuleName 'Scc.Remedy' { return $true }
             Mock Stop-SccTargetService -ModuleName 'Scc.Remedy' { return $true }
             Mock Stop-SccTargetProcesses -ModuleName 'Scc.Remedy' { return $true }
             Mock Uninstall-SccTarget -ModuleName 'Scc.Remedy' { return $true }
@@ -426,6 +432,7 @@ Describe 'Scc.Remedy Restore and Clear Quarantine' {
             $f[0] | Add-Member -MemberType NoteProperty -Name 'QuarantinePaths' -Value @($srcFile) -Force
             $plan = New-SccPlan -Run $run -Findings $f -Decisions @{ 'sc1' = 'REMOVE' }
 
+            Mock Test-SccScreenConnectTarget -ModuleName 'Scc.Remedy' { return $true }
             Mock Stop-SccTargetService -ModuleName 'Scc.Remedy' { return $true }
             Mock Stop-SccTargetProcesses -ModuleName 'Scc.Remedy' { return $true }
             Mock Uninstall-SccTarget -ModuleName 'Scc.Remedy' { return $true }
@@ -518,5 +525,305 @@ Describe 'Scc.Remedy Plan Preview (Test-SccPlan)' {
         $joined | Should -BeLike '*KEEP*'
         $smuggledPreview = Test-SccPlan -Plan $smuggled
         (@($smuggledPreview) -join "`n") | Should -BeLike '*not ScreenConnect*'
+    }
+}
+
+# =====================================================================
+# Security hardening regression tests (F1-F7)
+# =====================================================================
+
+Describe 'F1: AND-of-gates re-verification (poisoned-plan test)' {
+    BeforeAll {
+        $helperPath = Join-Path $PSScriptRoot '_SccRemedyHelpers.ps1'
+        . $helperPath
+    }
+
+    It 'poisoned plan with Product=screenconnect but arbitrary ServiceName performs ZERO destructive calls' {
+        $run = New-TestRun
+        try {
+            $poison = [PSCustomObject]@{
+                PlanVersion = '1.0'
+                CreatedUtc  = '2026-08-26 00:00:00'
+                CreatedBy   = 'attacker'
+                Items = @(
+                    [PSCustomObject]@{
+                        FindingId   = 'sc-poison'
+                        Product     = 'screenconnect'
+                        TargetType  = 'Service'
+                        Action      = 'REMOVE'
+                        Detail      = ''
+                        DisplayText = 'sc-poison [screenconnect]'
+                        ServiceName = 'Defragsvc'
+                        InstallDir  = 'C:\Windows\System32'
+                        MainExe     = 'Defragsvc.exe'
+                    }
+                )
+            }
+            Mock Stop-SccTargetService -ModuleName 'Scc.Remedy' { return $true }
+            Mock Stop-SccTargetProcesses -ModuleName 'Scc.Remedy' { return $true }
+            Mock Uninstall-SccTarget -ModuleName 'Scc.Remedy' { return $true }
+            Mock Test-SccTargetRemoved -ModuleName 'Scc.Remedy' { return $true }
+            Mock Remove-SccTargetService -ModuleName 'Scc.Remedy' { return $true }
+            Mock Remove-SccTargetScheduledTask -ModuleName 'Scc.Remedy' { return $true }
+            Mock Remove-SccTargetRunKey -ModuleName 'Scc.Remedy' { return $true }
+            Mock Remove-SccTargetFirewallRule -ModuleName 'Scc.Remedy' { return $true }
+            Mock Move-SccTargetToQuarantine -ModuleName 'Scc.Remedy' { return $true }
+
+            Invoke-SccRemediation -Run $run -Plan $poison -Execute
+
+            Should -Invoke Stop-SccTargetService -ModuleName 'Scc.Remedy' -Exactly 0
+            Should -Invoke Stop-SccTargetProcesses -ModuleName 'Scc.Remedy' -Exactly 0
+            Should -Invoke Uninstall-SccTarget -ModuleName 'Scc.Remedy' -Exactly 0
+            Should -Invoke Move-SccTargetToQuarantine -ModuleName 'Scc.Remedy' -Exactly 0
+        } finally { Remove-TestRun $run }
+    }
+
+    It 'plan item with only InstallDir hint and no service match is rejected' {
+        $run = New-TestRun
+        try {
+            $poison = [PSCustomObject]@{
+                PlanVersion = '1.0'
+                CreatedUtc  = '2026-08-26 00:00:00'
+                CreatedBy   = 'tester'
+                Items = @(
+                    [PSCustomObject]@{
+                        FindingId   = 'sc-dir-only'
+                        Product     = 'screenconnect'
+                        TargetType  = 'Service'
+                        Action      = 'REMOVE'
+                        Detail      = ''
+                        DisplayText = 'sc-dir-only [screenconnect]'
+                        ServiceName = ''
+                        InstallDir  = 'C:\Fake\ScreenConnect\Path'
+                        MainExe     = ''
+                    }
+                )
+            }
+            Mock Stop-SccTargetService -ModuleName 'Scc.Remedy' { return $true }
+            Mock Stop-SccTargetProcesses -ModuleName 'Scc.Remedy' { return $true }
+            Mock Uninstall-SccTarget -ModuleName 'Scc.Remedy' { return $true }
+            Mock Move-SccTargetToQuarantine -ModuleName 'Scc.Remedy' { return $true }
+
+            Invoke-SccRemediation -Run $run -Plan $poison -Execute
+
+            Should -Invoke Stop-SccTargetService -ModuleName 'Scc.Remedy' -Exactly 0
+            Should -Invoke Move-SccTargetToQuarantine -ModuleName 'Scc.Remedy' -Exactly 0
+        } finally { Remove-TestRun $run }
+    }
+}
+
+Describe 'F2: Uninstaller validation (calc.exe rejection)' {
+    BeforeAll {
+        $helperPath = Join-Path $PSScriptRoot '_SccRemedyHelpers.ps1'
+        . $helperPath
+    }
+
+    It 'rejects a mocked UninstallString pointing at C:\Windows\System32\calc.exe' {
+        $run = New-TestRun
+        try {
+            $f = @((New-Finding -Id 'sc1' -Product 'screenconnect' -ServiceName 'ScreenConnect Client Service' -InstallDir 'C:\SC\sc1'))
+            $plan = New-SccPlan -Run $run -Findings $f -Decisions @{ 'sc1' = 'REMOVE' }
+
+            Mock Test-SccScreenConnectTarget -ModuleName 'Scc.Remedy' { return $true }
+            Mock Get-SccTargetUninstallData -ModuleName 'Scc.Remedy' {
+                return [PSCustomObject]@{
+                    UninstallString      = 'C:\Windows\System32\calc.exe /uninstall'
+                    QuietUninstallString = ''
+                    ProductCode          = ''
+                    DisplayName          = 'ScreenConnect Client'
+                    PSPath               = 'Registry::HKLM:\x'
+                }
+            }
+            Mock Invoke-SccUninstallCommand -ModuleName 'Scc.Remedy' { return $true }
+            Mock Stop-SccTargetService -ModuleName 'Scc.Remedy' { return $true }
+            Mock Stop-SccTargetProcesses -ModuleName 'Scc.Remedy' { return $true }
+            Mock Test-SccTargetRemoved -ModuleName 'Scc.Remedy' { return $true }
+            Mock Remove-SccTargetService -ModuleName 'Scc.Remedy' { return $true }
+            Mock Remove-SccTargetScheduledTask -ModuleName 'Scc.Remedy' { return $true }
+            Mock Remove-SccTargetRunKey -ModuleName 'Scc.Remedy' { return $true }
+            Mock Remove-SccTargetFirewallRule -ModuleName 'Scc.Remedy' { return $true }
+            Mock Move-SccTargetToQuarantine -ModuleName 'Scc.Remedy' { return $true }
+
+            Invoke-SccRemediation -Run $run -Plan $plan -Execute
+
+            Should -Invoke Invoke-SccUninstallCommand -ModuleName 'Scc.Remedy' -Exactly 0
+
+            $rem = Read-Remediation -Run $run
+            $un = @($rem | Where-Object { $_.Action -eq 'Uninstall' })[0]
+            $un.Result | Should -Be 'Failed'
+            $un.Error | Should -BeLike '*uninstaller-validation-failed*'
+        } finally { Remove-TestRun $run }
+    }
+
+    It 'allows a legitimate uninstaller under the verified install dir' {
+        $run = New-TestRun
+        try {
+            $f = @((New-Finding -Id 'sc1' -Product 'screenconnect' -ServiceName 'ScreenConnect Client Service' -InstallDir 'C:\SC\sc1'))
+            $plan = New-SccPlan -Run $run -Findings $f -Decisions @{ 'sc1' = 'REMOVE' }
+
+            Mock Test-SccScreenConnectTarget -ModuleName 'Scc.Remedy' { return $true }
+            Mock Get-SccTargetUninstallData -ModuleName 'Scc.Remedy' {
+                return [PSCustomObject]@{
+                    UninstallString      = 'C:\SC\sc1\ScreenConnect.Uninstall.exe'
+                    QuietUninstallString = ''
+                    ProductCode          = ''
+                    DisplayName          = 'ScreenConnect Client'
+                    PSPath               = 'Registry::HKLM:\x'
+                }
+            }
+            Mock Test-SccUninstallExeValid -ModuleName 'Scc.Remedy' { return $true }
+            Mock Invoke-SccUninstallCommand -ModuleName 'Scc.Remedy' { return $true }
+            Mock Stop-SccTargetService -ModuleName 'Scc.Remedy' { return $true }
+            Mock Stop-SccTargetProcesses -ModuleName 'Scc.Remedy' { return $true }
+            Mock Test-SccTargetRemoved -ModuleName 'Scc.Remedy' { return $true }
+            Mock Remove-SccTargetService -ModuleName 'Scc.Remedy' { return $true }
+            Mock Remove-SccTargetScheduledTask -ModuleName 'Scc.Remedy' { return $true }
+            Mock Remove-SccTargetRunKey -ModuleName 'Scc.Remedy' { return $true }
+            Mock Remove-SccTargetFirewallRule -ModuleName 'Scc.Remedy' { return $true }
+            Mock Move-SccTargetToQuarantine -ModuleName 'Scc.Remedy' { return $true }
+
+            Invoke-SccRemediation -Run $run -Plan $plan -Execute
+
+            $rem = Read-Remediation -Run $run
+            $un = @($rem | Where-Object { $_.Action -eq 'Uninstall' })[0]
+            $un.Result | Should -Be 'Succeeded'
+        } finally { Remove-TestRun $run }
+    }
+}
+
+Describe 'F3: Path traversal guard on restore' {
+    BeforeAll {
+        $helperPath = Join-Path $PSScriptRoot '_SccRemedyHelpers.ps1'
+        . $helperPath
+    }
+
+    It 'rejects restoring to a path containing double-dots (traversal)' {
+        $run = New-TestRun
+        try {
+            $srcDir = Join-Path ([System.IO.Path]::GetTempPath()) ('scc_f3_' + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $srcDir -Force | Out-Null
+            $srcFile = Join-Path $srcDir 'evil.dll'
+            [System.IO.File]::WriteAllText($srcFile, 'payload', [System.Text.Encoding]::ASCII)
+
+            $f = @((New-Finding -Id 'sc1' -Product 'screenconnect' -ServiceName 'ScreenConnect Client Service' -InstallDir 'C:\SC\sc1'))
+            $f[0] | Add-Member -MemberType NoteProperty -Name 'QuarantinePaths' -Value @($srcFile) -Force
+            $plan = New-SccPlan -Run $run -Findings $f -Decisions @{ 'sc1' = 'REMOVE' }
+
+            Mock Test-SccScreenConnectTarget -ModuleName 'Scc.Remedy' { return $true }
+            Mock Stop-SccTargetService -ModuleName 'Scc.Remedy' { return $true }
+            Mock Stop-SccTargetProcesses -ModuleName 'Scc.Remedy' { return $true }
+            Mock Uninstall-SccTarget -ModuleName 'Scc.Remedy' { return $true }
+            Mock Test-SccTargetRemoved -ModuleName 'Scc.Remedy' { return $true }
+            Mock Remove-SccTargetService -ModuleName 'Scc.Remedy' { return $true }
+            Mock Remove-SccTargetScheduledTask -ModuleName 'Scc.Remedy' { return $true }
+            Mock Remove-SccTargetRunKey -ModuleName 'Scc.Remedy' { return $true }
+            Mock Remove-SccTargetFirewallRule -ModuleName 'Scc.Remedy' { return $true }
+
+            Invoke-SccRemediation -Run $run -Plan $plan -Execute
+
+            $man = Read-QuarantineManifest -Run $run
+            @($man).Count | Should -Be 1
+            $itemId = $man[0].ItemId
+
+            # Tamper the manifest to inject a traversal path
+            $qBase = Join-Path $run.RunDir 'Quarantine'
+            $mp = Join-Path $qBase 'quarantine-manifest.json'
+            $man[0].OriginalPath = $srcDir + '\..\..\..\Windows\System32\evil.dll'
+            [System.IO.File]::WriteAllText($mp, (ConvertTo-Json -InputObject $man -Depth 10), [System.Text.Encoding]::ASCII)
+
+            { Restore-SccQuarantineItem -Run $run -ItemId $itemId } | Should -Throw -Because 'traversal path must be rejected'
+        } finally {
+            if (Test-Path -LiteralPath $srcDir) { Remove-Item -LiteralPath $srcDir -Recurse -Force -ErrorAction SilentlyContinue }
+            Remove-TestRun $run
+        }
+    }
+}
+
+Describe 'F5: Process-kill self-protection (ancestor-PID chain)' {
+    BeforeAll {
+        $helperPath = Join-Path $PSScriptRoot '_SccRemedyHelpers.ps1'
+        . $helperPath
+    }
+
+    It 'Stop-SccTargetProcesses handles missing Get-CimInstance gracefully on Linux' {
+        $run = New-TestRun
+        try {
+            InModuleScope -ModuleName 'Scc.Remedy' -Parameters @{ RunObj = $run } {
+                param($RunObj)
+                $script:remediationPath = Join-Path $RunObj.RunDir 'remediation.json'
+                $script:remediationActions = @()
+                Stop-SccTargetProcesses -InstallDir 'C:\Fake' -ServiceName '' -PlanItem ([PSCustomObject]@{ FindingId = 'test' }) -Run $RunObj
+            }
+            $rem = Read-Remediation -Run $run
+            @($rem).Count | Should -BeGreaterOrEqual 1
+            $skipped = @($rem | Where-Object { $_.Action -eq 'KillProcesses' -and $_.Result -eq 'Skipped' })
+            @($skipped).Count | Should -BeGreaterOrEqual 1
+        } finally { Remove-TestRun $run }
+    }
+}
+
+Describe 'F6: Admin gate before -Execute' {
+    BeforeAll {
+        $helperPath = Join-Path $PSScriptRoot '_SccRemedyHelpers.ps1'
+        . $helperPath
+    }
+
+    It 'refuses -Execute when Test-SccIsAdmin returns false (mocked Windows)' {
+        $run = New-TestRun
+        try {
+            $f = @((New-Finding -Id 'sc1' -Product 'screenconnect' -ServiceName 'ScreenConnect Client Service' -InstallDir 'C:\SC\sc1'))
+            $plan = New-SccPlan -Run $run -Findings $f -Decisions @{ 'sc1' = 'REMOVE' }
+
+            Mock Test-SccIsAdmin -ModuleName 'Scc.Remedy' { return $false }
+
+            { Invoke-SccRemediation -Run $run -Plan $plan -Execute } | Should -Throw -Because 'non-admin must be refused'
+        } finally { Remove-TestRun $run }
+    }
+}
+
+Describe 'F7: Quarantine reboot-resume on in-use file' {
+    BeforeAll {
+        $helperPath = Join-Path $PSScriptRoot '_SccRemedyHelpers.ps1'
+        . $helperPath
+    }
+
+    It 'records a resume marker when Move-Item fails (in-use file simulation)' {
+        $run = New-TestRun
+        try {
+            $srcDir = Join-Path ([System.IO.Path]::GetTempPath()) ('scc_f7_' + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $srcDir -Force | Out-Null
+            $srcFile = Join-Path $srcDir 'locked.dll'
+            [System.IO.File]::WriteAllText($srcFile, 'locked-by-process', [System.Text.Encoding]::ASCII)
+
+            $f = @((New-Finding -Id 'sc1' -Product 'screenconnect' -ServiceName 'ScreenConnect Client Service' -InstallDir 'C:\SC\sc1'))
+            $f[0] | Add-Member -MemberType NoteProperty -Name 'QuarantinePaths' -Value @($srcFile) -Force
+            $plan = New-SccPlan -Run $run -Findings $f -Decisions @{ 'sc1' = 'REMOVE' }
+
+            Mock Test-SccScreenConnectTarget -ModuleName 'Scc.Remedy' { return $true }
+            Mock Stop-SccTargetService -ModuleName 'Scc.Remedy' { return $true }
+            Mock Stop-SccTargetProcesses -ModuleName 'Scc.Remedy' { return $true }
+            Mock Uninstall-SccTarget -ModuleName 'Scc.Remedy' { return $true }
+            Mock Test-SccTargetRemoved -ModuleName 'Scc.Remedy' { return $true }
+            Mock Remove-SccTargetService -ModuleName 'Scc.Remedy' { return $true }
+            Mock Remove-SccTargetScheduledTask -ModuleName 'Scc.Remedy' { return $true }
+            Mock Remove-SccTargetRunKey -ModuleName 'Scc.Remedy' { return $true }
+            Mock Remove-SccTargetFirewallRule -ModuleName 'Scc.Remedy' { return $true }
+            # Override Move-Item to simulate failure
+            Mock Move-Item -ModuleName 'Scc.Remedy' { throw 'The process cannot access the file' }
+
+            Invoke-SccRemediation -Run $run -Plan $plan -Execute
+
+            $rem = Read-Remediation -Run $run
+            $quar = @($rem | Where-Object { $_.Action -eq 'Quarantine' })[0]
+            $quar.Result | Should -Be 'PendingReboot'
+
+            $resumePath = Join-Path $run.RunDir 'resume-marker.json'
+            Test-Path -LiteralPath $resumePath | Should -Be $true
+            $marker = ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($resumePath))
+            $marker.Phase | Should -Be 'quarantine-pending'
+        } finally {
+            if (Test-Path -LiteralPath $srcDir) { Remove-Item -LiteralPath $srcDir -Recurse -Force -ErrorAction SilentlyContinue }
+            Remove-TestRun $run
+        }
     }
 }

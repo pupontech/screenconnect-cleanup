@@ -1,0 +1,228 @@
+name: gui-revision-ci
+
+# CI for the ScreenConnect Cleaner GUI revision.
+#
+# Two jobs:
+#   linux-static   - pure-static checks that run on Linux (pwsh): house rules,
+#                    parse, Pester unit + integration. No Windows-only execution.
+#   windows-dynamic - real Windows runners (2022 + 2025) exercising the tool
+#                    under BOTH PowerShell 5.1 and pwsh: house rules, parse,
+#                    Pester unit, self-tests, headless smoke, malformed-config
+#                    guard, and portable packaging (zip + SHA256 artifacts).
+#
+# Safety: no real ScreenConnect install and no destructive removal happen in
+# CI. The headless smoke runs DetectOnly (read-only detection + reporting),
+# which is deterministic and exits 0. Full/remediation live-testing stays
+# manual on a disposable lab VM (see docs/TESTING.md).
+#
+# NOTE on malformed config: the entry point's Get-SccConfig swallows malformed
+# JSON and falls back to defaults (it does NOT exit 2). The malformed-config
+# step therefore asserts the process does NOT hang and exits 0 (clean run with
+# defaults), with a clear warning emitted in the log. This documents the real
+# behavior rather than enforcing a non-existent exit code.
+
+on:
+  push:
+    branches: [gui-revision-screenconnect-cleaner]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux-static:
+    name: Linux static checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install PowerShell
+        shell: bash
+        run: |
+          # pwsh install (GitHub ubuntu-latest often already has it; install if missing)
+          if ! command -v pwsh >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y wget apt-transport-https software-properties-common
+            wget -q "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb" -O /tmp/msprod.deb
+            sudo dpkg -i /tmp/msprod.deb
+            sudo apt-get update -y
+            sudo apt-get install -y powershell
+          fi
+          pwsh --version
+
+      - name: House rules (ASCII, no BOM, valid JSON, CRLF, no binaries)
+        shell: pwsh
+        run: ./gui-revision-screenconnect-cleaner/tests/ci/Test-HouseRules.ps1
+
+      - name: Parse all scripts (PowerShell 7)
+        shell: pwsh
+        run: ./gui-revision-screenconnect-cleaner/tests/ci/Test-Parse.ps1
+
+      - name: Install Pester
+        shell: pwsh
+        run: Install-Module -Name Pester -RequiredVersion 6.1.0 -Force -SkipPublisherCheck -Scope CurrentUser
+
+      - name: Pester unit tests
+        shell: pwsh
+        run: |
+          $res = Invoke-Pester -Path './gui-revision-screenconnect-cleaner/tests/Unit' -PassThru
+          if ($res.FailedCount -gt 0) {
+            Write-Host "Pester unit failures: $($res.FailedCount)"
+            exit 1
+          }
+          Write-Host "Pester unit passed: $($res.PassedCount)"
+
+      - name: Pester integration tests
+        shell: pwsh
+        run: |
+          $res = Invoke-Pester -Path './gui-revision-screenconnect-cleaner/tests/Integration' -PassThru
+          if ($res.FailedCount -gt 0) {
+            Write-Host "Pester integration failures: $($res.FailedCount)"
+            exit 1
+          }
+          Write-Host "Pester integration passed: $($res.PassedCount)"
+
+  windows-dynamic:
+    name: Windows dynamic (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: House rules - PowerShell 5.1
+        shell: powershell
+        run: ./gui-revision-screenconnect-cleaner/tests/ci/Test-HouseRules.ps1
+
+      - name: House rules - PowerShell 7 (pwsh)
+        shell: pwsh
+        run: ./gui-revision-screenconnect-cleaner/tests/ci/Test-HouseRules.ps1
+
+      - name: Parse all scripts - PowerShell 5.1
+        shell: powershell
+        run: ./gui-revision-screenconnect-cleaner/tests/ci/Test-Parse.ps1
+
+      - name: Parse all scripts - PowerShell 7 (pwsh)
+        shell: pwsh
+        run: ./gui-revision-screenconnect-cleaner/tests/ci/Test-Parse.ps1
+
+      - name: Install Pester (pwsh)
+        shell: pwsh
+        run: Install-Module -Name Pester -RequiredVersion 6.1.0 -Force -SkipPublisherCheck -Scope CurrentUser
+
+      - name: Pester unit tests (pwsh)
+        shell: pwsh
+        run: |
+          $res = Invoke-Pester -Path './gui-revision-screenconnect-cleaner/tests/Unit' -PassThru
+          if ($res.FailedCount -gt 0) {
+            Write-Host "Pester unit failures: $($res.FailedCount)"
+            exit 1
+          }
+          Write-Host "Pester unit passed: $($res.PassedCount)"
+
+      - name: Module self-tests (pwsh)
+        shell: pwsh
+        run: ./gui-revision-screenconnect-cleaner/tests/ci/Test-SelfTests.ps1
+
+      - name: Headless smoke - DetectOnly (read-only, deterministic)
+        shell: pwsh
+        run: |
+          $tmp = Join-Path $env:RUNNER_TEMP "sccsmoke"
+          New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+          $cfg = Join-Path $tmp "scc-config.json"
+          # Point reportRoot at a temp dir so nothing lands in user Documents.
+          $json = @{ SchemaVersion = 1; paths = @{ reportRoot = $tmp } } | ConvertTo-Json -Depth 10
+          Set-Content -Path $cfg -Value $json -Encoding UTF8
+          $entry = "./gui-revision-screenconnect-cleaner/Scc.Cleaner.ps1"
+          & pwsh -NoProfile -File $entry -Headless -Mode DetectOnly -SkipScanners -Config $cfg
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Headless smoke failed with exit code $LASTEXITCODE"
+            exit 1
+          }
+          Write-Host "Headless DetectOnly smoke completed (exit 0)."
+
+      - name: Malformed-config guard (does not hang, exits cleanly with defaults)
+        shell: pwsh
+        run: |
+          $tmp = Join-Path $env:RUNNER_TEMP "sccmalformed"
+          New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+          $bad = Join-Path $tmp "broken.json"
+          # Deliberately invalid JSON.
+          Set-Content -Path $bad -Value '{ this is : not valid json ,,,' -Encoding UTF8
+          $entry = "./gui-revision-screenconnect-cleaner/Scc.Cleaner.ps1"
+          # The entry point's Get-SccConfig swallows malformed JSON and falls
+          # back to defaults, so a clean DetectOnly run is expected (exit 0).
+          # We assert it does NOT hang (timeout below) and exits with a code.
+          $p = Start-Process -FilePath "pwsh" -ArgumentList @("-NoProfile","-File",$entry,"-Headless","-Mode","DetectOnly","-SkipScanners","-Config",$bad) -Wait -PassThru -NoNewWindow
+          $code = $p.ExitCode
+          Write-Host "Malformed-config run exit code: $code"
+          if ($null -eq $code) {
+            Write-Host "ERROR: process did not return an exit code (possible hang)."
+            exit 1
+          }
+          # Documented behavior: clean fallback, exit 0. If this ever changes,
+          # update this assertion to match the real code and add a comment.
+          if ($code -ne 0) {
+            Write-Host "Unexpected non-zero exit ($code) for malformed config; review entry-point behavior."
+            exit 1
+          }
+          Write-Host "Malformed-config guard OK: process exited cleanly (defaults applied, no hang)."
+
+      - name: Build portable package
+        shell: pwsh
+        run: |
+          $ver = $env:GITHUB_REF
+          if ($ver -match 'refs/tags/(.+)$') { $ver = $Matches[1] }
+          elseif ($ver -match 'refs/heads/(.+)$') { $ver = $Matches[1] -replace '[^0-9A-Za-z.\-]', '-' }
+          else { $ver = '0.1.0' }
+          $out = Join-Path $env:RUNNER_TEMP "sccbuild"
+          ./gui-revision-screenconnect-cleaner/build/Build-Portable.ps1 -OutDir $out -Version $ver -Zip $true -IncludeConfigs $true
+          $zip = Join-Path $out ("ScreenConnectCleaner-$ver-portable.zip")
+          $sidecar = ($zip + ".sha256")
+          if (-not (Test-Path -LiteralPath $zip)) { Write-Host "ERROR: zip not produced: $zip"; exit 1 }
+          if (-not (Test-Path -LiteralPath $sidecar)) { Write-Host "ERROR: sha256 sidecar not produced"; exit 1 }
+          Write-Host "Build produced: $zip"
+
+      - name: Verify package opens cleanly (Expand-Archive)
+        shell: pwsh
+        run: |
+          $ver = $env:GITHUB_REF
+          if ($ver -match 'refs/tags/(.+)$') { $ver = $Matches[1] }
+          elseif ($ver -match 'refs/heads/(.+)$') { $ver = $Matches[1] -replace '[^0-9A-Za-z.\-]', '-' }
+          else { $ver = '0.1.0' }
+          $out = Join-Path $env:RUNNER_TEMP "sccbuild"
+          $zip = Join-Path $out ("ScreenConnectCleaner-$ver-portable.zip")
+          $extract = Join-Path $env:RUNNER_TEMP "sccverify"
+          if (Test-Path -LiteralPath $extract) { Remove-Item -LiteralPath $extract -Recurse -Force }
+          New-Item -ItemType Directory -Path $extract -Force | Out-Null
+          Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force
+          $root = Join-Path $extract ("ScreenConnectCleaner-$ver")
+          $expected = @(
+            (Join-Path $root 'Scc.Cleaner.ps1'),
+            (Join-Path $root 'Start-ScreenConnectCleaner.bat'),
+            (Join-Path $root 'src'),
+            (Join-Path $root 'config'),
+            (Join-Path $root 'docs'),
+            (Join-Path $root 'SHA256SUMS.txt')
+          )
+          $missing = $expected | Where-Object { -not (Test-Path -LiteralPath $_) }
+          if (@($missing).Count -gt 0) {
+            Write-Host "ERROR: extracted package missing expected items:"
+            foreach ($m in $missing) { Write-Host "  $m" }
+            exit 1
+          }
+          Write-Host "Package verified: archive opens, expected dirs/files present."
+
+      - name: Upload package + hashes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScreenConnectCleaner-portable-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/sccbuild/ScreenConnectCleaner-*.zip
+            ${{ runner.temp }}/sccbuild/ScreenConnectCleaner-*.zip.sha256
+          if-no-files-found: error

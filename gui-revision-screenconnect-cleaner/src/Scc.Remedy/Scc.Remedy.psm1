@@ -981,7 +981,11 @@ function Invoke-SccRemediation {
 function Test-SccRestorePathSafe {
     param([string]$OriginalPath, [string]$QuarantineRoot)
     if ([string]::IsNullOrEmpty($OriginalPath)) { return $false }
-    if ($OriginalPath -like '*..*') { return $false }
+    # Reject any path containing '..' as a literal component.
+    $parts = $OriginalPath -replace '\\', '/' -split '/'
+    foreach ($p in @($parts)) {
+        if ($p -eq '..') { return $false }
+    }
     $resolved = $null
     try { $resolved = [System.IO.Path]::GetFullPath($OriginalPath) } catch { return $false }
     if ($resolved -ne $OriginalPath) { return $false }

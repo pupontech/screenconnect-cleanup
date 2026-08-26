@@ -388,18 +388,31 @@ InModuleScope Scc.Tools {
             }
         }
 
-        # Helper is defined at the InModuleScope top level (New-FakeFacts).
 
         foreach ($badStatus in @('NotTrusted', 'NotSigned', 'UnknownError', 'NotSupported', 'Error')) {
             It ('Test-SccToolIntegrity fails a binary whose signature status is ' + $badStatus) {
-                Mock Get-SccToolFacts { return (New-FakeFacts -Status $badStatus -Version '') }
+                Mock Get-SccToolFacts {
+                    return [PSCustomObject]@{
+                        Path='fake'; Exists=$true; SizeBytes=123
+                        SHA256='FAKEHASH00000000000000000000000000000000000000000000000000000000000000'
+                        FileVersion=''; Publisher=''; SignatureStatus=$badStatus
+                        LastWriteUtc=(Get-Date).ToUniversalTime()
+                    }
+                }
                 $c = Test-SccToolIntegrity -Path 'anything.exe' -Tool 'KVRT'
                 $c.Passed | Should -BeFalse
                 (@($c.Reasons) -join ';') | Should -Match 'signature'
             }
 
             It ('Resolve-SccTool refuses (Source=None + warning) a binary whose signature status is ' + $badStatus) {
-                Mock Get-SccToolFacts { return (New-FakeFacts -Status $badStatus -Version '') }
+                Mock Get-SccToolFacts {
+                    return [PSCustomObject]@{
+                        Path='fake'; Exists=$true; SizeBytes=123
+                        SHA256='FAKEHASH00000000000000000000000000000000000000000000000000000000000000'
+                        FileVersion=''; Publisher=''; SignatureStatus=$badStatus
+                        LastWriteUtc=(Get-Date).ToUniversalTime()
+                    }
+                }
                 Mock Find-SccNasFile { return $null }
                 Mock Get-SccWebDownload {
                     param([string]$Url, [string]$Dest)
@@ -413,14 +426,28 @@ InModuleScope Scc.Tools {
         }
 
         It 'Test-SccToolIntegrity still accepts NotChecked on a non-Windows host (platform limitation)' {
-            Mock Get-SccToolFacts { return (New-FakeFacts -Status 'NotChecked' -Version '') }
+            Mock Get-SccToolFacts {
+                return [PSCustomObject]@{
+                    Path='fake'; Exists=$true; SizeBytes=123
+                    SHA256='FAKEHASH00000000000000000000000000000000000000000000000000000000000000'
+                    FileVersion=''; Publisher=''; SignatureStatus='NotChecked'
+                    LastWriteUtc=(Get-Date).ToUniversalTime()
+                }
+            }
             $c = Test-SccToolIntegrity -Path 'anything.exe' -Tool 'KVRT'
             $c.Passed | Should -BeTrue
             (@($c.Reasons) -join ';') | Should -Match 'not checked'
         }
 
         It 'Test-SccToolIntegrity refuses an unversioned binary when MinVersion is set (B2)' {
-            Mock Get-SccToolFacts { return (New-FakeFacts -Status 'NotChecked' -Version '') }
+            Mock Get-SccToolFacts {
+                return [PSCustomObject]@{
+                    Path='fake'; Exists=$true; SizeBytes=123
+                    SHA256='FAKEHASH00000000000000000000000000000000000000000000000000000000000000'
+                    FileVersion=''; Publisher=''; SignatureStatus='NotChecked'
+                    LastWriteUtc=(Get-Date).ToUniversalTime()
+                }
+            }
             $c = Test-SccToolIntegrity -Path 'mb.exe' -Tool 'Malwarebytes'
             $c.Passed | Should -BeFalse
             (@($c.Reasons) -join ';') | Should -Match 'MinVersion'
@@ -439,7 +466,14 @@ InModuleScope Scc.Tools {
         }
 
         It 'Resolve-SccTool refuses an unversioned binary when MinVersion is set (B2)' {
-            Mock Get-SccToolFacts { return (New-FakeFacts -Status 'NotChecked' -Version '') }
+            Mock Get-SccToolFacts {
+                return [PSCustomObject]@{
+                    Path='fake'; Exists=$true; SizeBytes=123
+                    SHA256='FAKEHASH00000000000000000000000000000000000000000000000000000000000000'
+                    FileVersion=''; Publisher=''; SignatureStatus='NotChecked'
+                    LastWriteUtc=(Get-Date).ToUniversalTime()
+                }
+            }
             Mock Find-SccNasFile { return $null }
             Mock Get-SccWebDownload {
                 param([string]$Url, [string]$Dest)
@@ -456,7 +490,12 @@ InModuleScope Scc.Tools {
             $check = [PSCustomObject]@{
                 Passed  = $true
                 Reasons = @('signature not checked on this platform, accepted')
-                Facts   = (New-FakeFacts -Status 'NotChecked' -Version '')
+                Facts   = [PSCustomObject]@{
+                    Path='fake'; Exists=$true; SizeBytes=123
+                    SHA256='FAKEHASH00000000000000000000000000000000000000000000000000000000000000'
+                    FileVersion=''; Publisher=''; SignatureStatus='NotChecked'
+                    LastWriteUtc=(Get-Date).ToUniversalTime()
+                }
             }
             $seed = Join-Path $script:nas 'KVRT.exe'
             Set-Content -LiteralPath $seed -Value 'B3-DATA' -Encoding ASCII
