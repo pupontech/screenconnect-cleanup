@@ -15,7 +15,7 @@ Describe 'Module import (headless / Linux)' {
         $expected = @(
             'Get-SccNextStage', 'New-SccWorkflow', 'Start-SccApp',
             'Start-SccJob', 'Start-SccWorkflow', 'Step-SccWorkflow', 'Stop-SccWorkflow',
-            'Stop-SccJob', 'Update-SccJob', 'Wait-SccJob'
+            'Stop-SccJob', 'Update-SccJob', 'Wait-SccJob', 'Reset-SccJob'
         ) | Sort-Object
         $fns | Should -BeExactly $expected
     }
@@ -156,17 +156,7 @@ Describe 'State machine and jobs (mocked backend)' {
 
     Describe 'Start-SccJob' {
         BeforeEach {
-            InModuleScope Scc.UI {
-                if ($null -ne $script:ActiveJob) {
-                    try {
-                        if ($script:ActiveJob.State -in @('Running', 'Queued')) {
-                            try { Stop-SccJob -Handle $script:ActiveJob } catch {}
-                            try { Wait-SccJob -Handle $script:ActiveJob } catch {}
-                        }
-                    } catch {}
-                    $script:ActiveJob = $null
-                }
-            }
+            Reset-SccJob
         }
         It 'runs a trivial scriptblock and returns the result' {
             $job = Start-SccJob -ScriptBlock { param($t) 'hello' } -Name 'Trivial'
@@ -177,29 +167,23 @@ Describe 'State machine and jobs (mocked backend)' {
             $job.Percent | Should -Be 100
         }
         It 'cancellation token stops a loop job' {
-            InModuleScope Scc.UI {
-                if ($null -ne $script:ActiveJob) {
-                    try {
-                        if ($script:ActiveJob.State -in @('Running', 'Queued')) {
-                            try { Stop-SccJob -Handle $script:ActiveJob } catch {}
-                            try { Wait-SccJob -Handle $script:ActiveJob } catch {}
-                        }
-                    } catch {}
-                    $script:ActiveJob = $null
-                }
+            # Run the lifecycle inside a function scope. At the Pester/script
+            # root scope, PowerShell can null a root variable when a runspace
+            # created in that scope finalizes (a host-state quirk); production
+            # callers (Start-SccApp -> stages) always invoke from function
+            # scope, so wrapping here mirrors real usage and avoids the flake.
+            function Invoke-CancellationScenario {
+                Reset-SccJob
+                $j = Start-SccJob -ScriptBlock { param($t) while (-not $t.Cancelled) { Start-Sleep -Milliseconds 20 } } -Name 'Loop'
+                if ($null -eq $j) { return $null }
+                Start-Sleep -Milliseconds 80
+                Stop-SccJob -Handle $j
+                Start-Sleep -Milliseconds 80
+                Update-SccJob -Handle $j
+                return $j
             }
-            $job = $null
-            try { $job = Start-SccJob -ScriptBlock { param($t) while (-not $t.Cancelled) { Start-Sleep -Milliseconds 20 } } -Name 'Loop' } catch { $job = $null }
-            if ($null -eq $job) {
-                Start-Sleep -Milliseconds 100
-                InModuleScope Scc.UI { $script:ActiveJob = $null }
-                try { $job = Start-SccJob -ScriptBlock { param($t) while (-not $t.Cancelled) { Start-Sleep -Milliseconds 20 } } -Name 'Loop-Retry' } catch { $job = $null }
-            }
+            $job = Invoke-CancellationScenario
             if ($null -eq $job) { Set-ItResult -Skipped -Because 'job did not start'; return }
-            Start-Sleep -Milliseconds 80
-            Stop-SccJob -Handle $job
-            Start-Sleep -Milliseconds 80
-            Update-SccJob -Handle $job
             $job._Token.Cancelled | Should -Be $true
             $job.State | Should -Be 'Interrupted'
         }

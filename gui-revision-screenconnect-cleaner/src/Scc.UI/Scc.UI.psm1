@@ -16,6 +16,13 @@
 # unmet, in which case the dependent stage is Skipped).
 # ============================================================================
 
+
+# Ensure Microsoft.PowerShell.Utility cmdlets (Get-Date, New-Object, ConvertTo-Json,
+# Out-Null, Add-Member, etc.) are visible inside this module's session state on every
+# host. Without this, module functions fail with CommandNotFoundException on Windows
+# when the module is loaded through Pester or a nested session state.
+$null = Import-Module -Name 'Microsoft.PowerShell.Utility' -ErrorAction SilentlyContinue
+
 $script:CurrentWorkflow = $null
 $script:ActiveJob = $null
 
@@ -442,7 +449,18 @@ function Stop-SccWorkflow {
 
 # ---------------------------------------------------------------------------
 # Exported: background job wrapper (cooperative cancellation token)
+#
+# Design: the heavy runspace/pipeline objects live ONLY in a private
+# $script:Jobs hashtable keyed by a job Id. Start-SccJob returns a LIGHT
+# handle (Id + Token + status fields) that is a plain copy, NOT the live
+# runspace object. All Stop/Wait/Update/Reset operations resolve the real
+# runspace from $script:Jobs by Id. This fully decouples the caller's handle
+# variable from the runspace lifecycle (the previous design held the same
+# [pscustomobject] in both the caller and $script:ActiveJob, and PowerShell
+# nulled the caller's variable when the runspace finalized).
 # ---------------------------------------------------------------------------
+
+$script:Jobs = @{ }
 
 function Start-SccJob {
     [CmdletBinding()]
@@ -453,17 +471,23 @@ function Start-SccJob {
         $CancellationToken = $null
     )
 
-    if ($null -ne $script:ActiveJob -and $script:ActiveJob.State -in @('Running', 'Queued')) {
+    if ($script:Jobs.Count -gt 0) {
+        # Only one concurrent Scc job is allowed (stages are sequential by design).
         throw 'Only one concurrent Scc job is allowed (stages are sequential by design).'
     }
 
     # The token is CALLER-OWNED. The runspace may READ .Cancelled but never
     # writes to it. The runspace keeps its own final-state object and emits it
-    # as pipeline output (collected via EndInvoke). No shared mutable state
-    # between caller and runspace beyond the read-only flag.
+    # as pipeline output (collected via EndInvoke).
+    # IMPORTANT: the runspace receives its OWN token copy. Passing the same
+    # [hashtable] object that the caller's handle also references causes
+    # PowerShell to null the caller's handle variable when the runspace
+    # pipeline is finalized/garbage-collected. Keeping them separate avoids
+    # that host-state corruption.
     if ($null -eq $CancellationToken) {
         $CancellationToken = @{ Cancelled = $false }
     }
+    $runspaceToken = @{ Cancelled = $CancellationToken.Cancelled }
 
     $rs = [runspacefactory]::CreateRunspace()
     $rs.Open()
@@ -493,11 +517,23 @@ try {
 [pscustomobject]$state
 '@
 
-    $null = $ps.AddScript($wrapper).AddArgument($CancellationToken).AddArgument($ScriptBlock)
+    $null = $ps.AddScript($wrapper).AddArgument($runspaceToken).AddArgument($ScriptBlock)
     $async = $ps.BeginInvoke()
 
-    $handle = [pscustomobject]@{
-        Id       = [guid]::NewGuid().ToString()
+    $id = [guid]::NewGuid().ToString()
+    # Private store: the live runspace/pipeline, never handed to the caller.
+    $script:Jobs[$id] = [pscustomobject]@{
+        Id        = $id
+        PowerShell = $ps
+        Async     = $async
+        Token     = $CancellationToken
+        Start     = [datetime]::UtcNow
+        Done      = $false
+    }
+
+    # Light handle returned to the caller (plain copy, no live runspace ref).
+    return [pscustomobject]@{
+        Id       = $id
         Name     = $Name
         State    = 'Running'
         Result   = $null
@@ -506,83 +542,98 @@ try {
         Percent  = 0
         Elapsed  = [timespan]::Zero
         _Token   = $CancellationToken
-        _PowerShell = $ps
-        _Async   = $async
-        _Start   = [datetime]::UtcNow
         _Done    = $false
     }
-
-    $script:ActiveJob = $handle
-    return $handle
 }
 
 function Update-SccJob {
-    # Poll: refresh elapsed always; once the pipeline finished, collect the
-    # final state object exactly once via EndInvoke.
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)]$Handle)
 
-    if ($null -eq $Handle) {
-        throw 'Update-SccJob: handle is null.'
-    }
-    $Handle.Elapsed = ([datetime]::UtcNow - $Handle._Start)
-    if ($Handle._Done) { return }
+    if ($null -eq $Handle) { throw 'Update-SccJob: handle is null.' }
+    $job = $script:Jobs[$Handle.Id]
+    if ($null -eq $job) { throw ('Update-SccJob: unknown job id ' + $Handle.Id) }
+    $Handle.Elapsed = ([datetime]::UtcNow - $job.Start)
+    if ($job.Done) { $Handle.State = $Handle.State; return }
 
-    if ($null -ne $Handle._Async -and $Handle._Async.IsCompleted) {
+    if ($null -ne $job.Async -and $job.Async.IsCompleted) {
         $finalState = $null
-        try { $out = $Handle._PowerShell.EndInvoke($Handle._Async); if ($null -ne $out) { $finalState = @($out)[-1] } } catch {}
+        try { $out = $job.PowerShell.EndInvoke($job.Async); if ($null -ne $out) { $finalState = @($out)[-1] } } catch {}
         if ($null -ne $finalState) {
             $Handle.State   = $finalState.State
             $Handle.Result  = $finalState.Result
             $Handle.Error   = $finalState.Error
             $Handle.Percent = $finalState.Percent
         }
+        $job.Done = $true
         $Handle._Done = $true
     }
 }
 
 function Wait-SccJob {
-    # Block until the job finishes, collect the final state, refresh handle.
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)]$Handle)
 
-    if ($null -eq $Handle) {
-        throw 'Wait-SccJob: handle is null.'
-    }
+    if ($null -eq $Handle) { throw 'Wait-SccJob: handle is null.' }
+    $job = $script:Jobs[$Handle.Id]
+    if ($null -eq $job) { throw ('Wait-SccJob: unknown job id ' + $Handle.Id) }
     $finalState = $null
-    try { $out = $Handle._PowerShell.EndInvoke($Handle._Async); if ($null -ne $out) { $finalState = @($out)[-1] } } catch {}
+    try { $out = $job.PowerShell.EndInvoke($job.Async); if ($null -ne $out) { $finalState = @($out)[-1] } } catch {}
     if ($null -ne $finalState) {
         $Handle.State   = $finalState.State
         $Handle.Result  = $finalState.Result
         $Handle.Error   = $finalState.Error
         $Handle.Percent = $finalState.Percent
     }
+    $job.Done = $true
     $Handle._Done = $true
-    $Handle.Elapsed = ([datetime]::UtcNow - $Handle._Start)
+    $Handle.Elapsed = ([datetime]::UtcNow - $job.Start)
 }
 
 function Stop-SccJob {
-    # Cooperative cancel: set the caller-owned flag, stop the pipeline, collect
-    # the final state. Only the caller writes the token.
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)]$Handle)
 
-    if ($null -eq $Handle) {
-        throw 'Stop-SccJob: handle is null.'
-    }
-    if ($null -ne $Handle._Token) {
-        $Handle._Token.Cancelled = $true
-    }
-    try { $Handle._PowerShell.Stop() } catch {}
+    if ($null -eq $Handle) { throw 'Stop-SccJob: handle is null.' }
+    $job = $script:Jobs[$Handle.Id]
+    if ($null -eq $job) { throw ('Stop-SccJob: unknown job id ' + $Handle.Id) }
+    if ($null -ne $job.Token) { $job.Token.Cancelled = $true }
+    if ($null -ne $Handle._Token) { $Handle._Token.Cancelled = $true }
+    try { $job.PowerShell.Stop() } catch {}
     $finalState = $null
-    try { $out = $Handle._PowerShell.EndInvoke($Handle._Async); if ($null -ne $out) { $finalState = @($out)[-1] } } catch {}
+    try { $out = $job.PowerShell.EndInvoke($job.Async); if ($null -ne $out) { $finalState = @($out)[-1] } } catch {}
     if ($null -ne $finalState) {
         $Handle.State = $finalState.State
     } else {
         $Handle.State = 'Interrupted'
     }
+    $job.Done = $true
     $Handle._Done = $true
-    $Handle.Elapsed = ([datetime]::UtcNow - $Handle._Start)
+    $Handle.Elapsed = ([datetime]::UtcNow - $job.Start)
+}
+
+function Reset-SccJob {
+    # Force-clear any leaked job (e.g. between tests): stop + drain + dispose
+    # the runspace, then remove it from the private store.
+    [CmdletBinding()]
+    param()
+
+    foreach ($id in @($script:Jobs.Keys)) {
+        $job = $script:Jobs[$id]
+        try {
+            if ($null -ne $job.PowerShell) {
+                try { $job.PowerShell.Stop() } catch {}
+                try { $null = $job.PowerShell.EndInvoke($job.Async) } catch {}
+                # NOTE: do NOT call PowerShell/Runspace.Dispose() here. Disposing
+                # a runspace that is still finalizing can corrupt the caller's
+                # current scope variables (PowerShell host-state corruption),
+                # which manifests as the caller's handle variable becoming null.
+                # Leaving the disposed-by-GC runspace is safe; we just drop our
+                # reference so a new job can start.
+            }
+        } catch {}
+        $script:Jobs.Remove($id)
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -676,5 +727,6 @@ Export-ModuleMember -Function @(
     'Update-SccJob',
     'Wait-SccJob',
     'Stop-SccJob',
+    'Reset-SccJob',
     'Start-SccApp'
 )

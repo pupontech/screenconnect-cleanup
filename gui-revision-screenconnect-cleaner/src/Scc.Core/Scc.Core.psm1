@@ -8,6 +8,13 @@
 # PowerShell 5.1 compatible. Pure ASCII, no BOM. No emoji.
 # =====================================================================
 
+
+# Ensure Microsoft.PowerShell.Utility cmdlets (Get-Date, New-Object, ConvertTo-Json,
+# Out-Null, Add-Member, etc.) are visible inside this module's session state on every
+# host. Without this, module functions fail with CommandNotFoundException on Windows
+# when the module is loaded through Pester or a nested session state.
+$null = Import-Module -Name 'Microsoft.PowerShell.Utility' -ErrorAction SilentlyContinue
+
 Set-StrictMode -Version 1.0
 
 # Cache registry (per-process). Key -> { Value; ExpiresUtc }.

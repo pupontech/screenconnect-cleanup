@@ -18,6 +18,7 @@
         'Update-SccJob',
         'Wait-SccJob',
         'Stop-SccJob',
+        'Reset-SccJob',
         'Start-SccApp'
     )
     VariablesToExport      = @()

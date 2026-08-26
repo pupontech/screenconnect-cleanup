@@ -1,3 +1,10 @@
+
+# Ensure Microsoft.PowerShell.Utility cmdlets (Get-Date, New-Object, ConvertTo-Json,
+# Out-Null, Add-Member, etc.) are visible inside this module's session state on every
+# host. Without this, module functions fail with CommandNotFoundException on Windows
+# when the module is loaded through Pester or a nested session state.
+$null = Import-Module -Name 'Microsoft.PowerShell.Utility' -ErrorAction SilentlyContinue
+
 <#
   Scc.Evidence.psm1 - Snapshot collection for ScreenConnect Cleaner
 

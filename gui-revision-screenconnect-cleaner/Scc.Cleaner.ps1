@@ -34,7 +34,7 @@ function Test-SccCleanerIsAdmin {
     }
     try {
         $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-        $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+        $principal = [System.Security.Principal.WindowsPrincipal]::new($identity)
         return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     } catch {
         return $false
