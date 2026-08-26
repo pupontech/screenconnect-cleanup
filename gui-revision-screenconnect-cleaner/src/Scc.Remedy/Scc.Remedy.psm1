@@ -38,7 +38,7 @@ Set-StrictMode -Version 1.0
 # ---------------------------------------------------------------------------
 try {
     if (-not (Get-Command -Name 'Write-SccLog' -ErrorAction SilentlyContinue)) {
-        $coreMod = [System.IO.Path]::Combine($PSScriptRoot, '..') 'Scc.Core' 'Scc.Core.psd1'
+        $coreMod = [System.IO.Path]::Combine($PSScriptRoot, '..', 'Scc.Core', 'Scc.Core.psd1')
         if (Test-Path -LiteralPath $coreMod) {
             Import-Module $coreMod -Force -ErrorAction SilentlyContinue
         }
