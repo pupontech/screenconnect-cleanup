@@ -189,8 +189,8 @@ set /p GO="    Launch Malwarebytes installer/scanner? [y/N] "
 if /i "%GO%"=="y" (
     if exist "%~dp0tools\AV\MBSetup.exe" (
         echo        Launching Malwarebytes. Install if prompted, then run a scan.
-        echo        NOTE: MBSetup.exe is only the installer stub - it exits long
-        echo        before the scan finishes, which is why this waits for you
+        echo        NOTE: MBSetup.exe is an installer - it exits long before
+        echo        the scan finishes, which is why this waits for you
         echo        rather than for the process.
         start "" "%~dp0tools\AV\MBSetup.exe"
         echo.

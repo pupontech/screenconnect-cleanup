@@ -60,10 +60,11 @@ function Say {
 $kvrtPath   = Join-Path $ToolDir 'KVRT.exe'
 $adwPath    = Join-Path $ToolDir 'adwcleaner.exe'
 $eosPath    = Join-Path $ToolDir 'esetonlinescanner.exe'
+$mbPath     = Join-Path $ToolDir 'MBSetup.exe'
 
 if ($Verify) {
     $ok = $true
-    foreach ($p in @($kvrtPath, $adwPath, $eosPath)) {
+    foreach ($p in @($kvrtPath, $adwPath, $eosPath, $mbPath)) {
         if (Test-Path -LiteralPath $p) {
             Say ("  present: " + $p) 'Green'
         } else {
@@ -81,6 +82,12 @@ function Get-DownloadFile {
     try {
         Invoke-WebRequest -Uri $Url -OutFile $Dest -UseBasicParsing -ErrorAction Stop
         Say ("  OK: " + $Dest) 'Green'
+        # Report the version resource so the technician can see exactly what
+        # got staged (empty on non-Windows hosts; harmless).
+        try {
+            $ver = (Get-Item -LiteralPath $Dest).VersionInfo.FileVersion
+            if ($ver) { Say ("       version: " + $ver + "  size: " + (Get-Item -LiteralPath $Dest).Length) 'DarkGray' }
+        } catch { }
         return $true
     } catch {
         Say ("  FAILED: " + $_.Exception.Message) 'Yellow'
@@ -95,35 +102,51 @@ $null = Get-DownloadFile -Url 'https://devbuilds.s.kaspersky-labs.com/kvrt/lates
 # --- AdwCleaner: always fetch fresh from Malwarebytes' official URL -------
 # downloads.malwarebytes.com/file/adwcleaner/ 302-redirects to
 # adwcleaner.malwarebytes.com (channel=release). Endpoint verified live
-# 2026-08-26 (final HTTP 200, application/octet-stream, ~9.6 MB).
-# Invoke-WebRequest follows redirects by default.
+# 2026-08-26 (final HTTP 200, application/octet-stream).
 $null = Get-DownloadFile -Url 'https://downloads.malwarebytes.com/file/adwcleaner/' -Dest $adwPath -Label 'adwcleaner.exe (Malwarebytes AdwCleaner)'
 
 # --- ESET Online Scanner: fetch fresh from ESET's official download host --
-# GUI-only tool staged for attended technician use - not launched by the
-# pipeline. Endpoint verified live 2026-08-26 (HTTP 200, ~8.4 MB).
+# This is the exact URL behind the "One-time scan"/"Scan now" buttons on
+# https://www.eset.com/us/home/online-scanner/ (verified live 2026-08-26 in
+# a rendered browser session). The binary's FileVersion reflects the
+# bootstrapper generation; per ESET KB405 the scanner downloads its latest
+# detection-engine modules on first run, so a fresh download IS current.
+# GUI-only tool staged for attended technician use.
 $null = Get-DownloadFile -Url 'https://download.eset.com/com/eset/tools/online_scanner/latest/esetonlinescanner.exe' -Dest $eosPath -Label 'esetonlinescanner.exe (ESET Online Scanner, GUI-only)'
 
+# --- Malwarebytes: fetch fresh from Malwarebytes' official URL ------------
+# downloads.malwarebytes.com/file/mb-windows/ 302-redirects to
+# data-cdn.mbamupdates.com/web/mb5-setup-consumer/MBSetup.exe (the current
+# MB5 consumer installer). Endpoint verified live 2026-08-26 (HTTP 200,
+# FileVersion 5.6.x). GUI installer staged for attended use.
+$null = Get-DownloadFile -Url 'https://downloads.malwarebytes.com/file/mb-windows/' -Dest $mbPath -Label 'MBSetup.exe (Malwarebytes 5 consumer installer)'
+
 # --- Optional offline fallback: copy from an internal share if reachable --
+# Never overwrites a file that was just downloaded from the official URL
+# (a stale share copy must not downgrade a fresh vendor build).
 if ($InternalShare -and (Test-Path -LiteralPath $InternalShare)) {
     foreach ($pair in @(@('AV\esetonlinescanner.exe', $eosPath, 'ESET Online Scanner'), @('MBSetup.exe', (Join-Path $ToolDir 'MBSetup.exe'), 'Malwarebytes'))) {
         $src = Join-Path $InternalShare $pair[0]
-        if (Test-Path -LiteralPath $src) {
-            try {
-                Copy-Item -LiteralPath $src -Destination $pair[1] -Force -ErrorAction Stop
-                Say ("  OK (share): " + $pair[1]) 'Green'
-            } catch {
-                Say ("  FAILED to copy " + $pair[2] + ": " + $_.Exception.Message) 'Yellow'
-            }
+        if (-not (Test-Path -LiteralPath $src)) { continue }
+        if (Test-Path -LiteralPath $pair[1]) {
+            Say ("  (share) skipping " + $pair[2] + " - official download already staged.") 'DarkGray'
+            continue
+        }
+        try {
+            Copy-Item -LiteralPath $src -Destination $pair[1] -Force -ErrorAction Stop
+            Say ("  OK (share): " + $pair[1]) 'Green'
+        } catch {
+            Say ("  FAILED to copy " + $pair[2] + ": " + $_.Exception.Message) 'Yellow'
         }
     }
 }
 
 Say ''
-Say 'Done. Unattended-capable (driven by Stage 5 adapters):' 'Cyan'
-Say '  KVRT.exe       -> scanners\Invoke-KVRTScan.ps1  (-accepteula -silent)' 'Cyan'
-Say '  adwcleaner.exe -> scanners\Invoke-AdwCleanerScan.ps1  (/eula /scan)' 'Cyan'
-Say 'Attended only (GUI, no documented CLI):' 'Cyan'
-Say '  esetonlinescanner.exe -> technician double-click during Stage 5;' 'Cyan'
-Say '  the automated pipeline does not launch it.' 'Cyan'
+Say ('Done. GUI scanners staged in ' + $ToolDir + ':') 'Cyan'
+Say '  KVRT.exe, adwcleaner.exe, esetonlinescanner.exe, MBSetup.exe' 'Cyan'
+Say 'Run each one attended:' 'Cyan'
+Say '  .\Invoke-GUIScanner.ps1 -Scanner ESET          (or Malwarebytes / AdwCleaner / KVRT)' 'Cyan'
+Say 'KVRT can also run unattended via scanners\Invoke-KVRTScan.ps1 (Stage 5).' 'Cyan'
+Say 'ESET Online Scanner / Malwarebytes / AdwCleaner are GUI-only: the' 'Cyan'
+Say 'pipeline never invents silent-scan flags for them (owner decision 2026-08-26).' 'Cyan'
 exit 0
