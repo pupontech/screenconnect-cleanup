@@ -125,6 +125,34 @@ function Resolve-SccEnv {
         [string]$Text
     )
     if ([string]::IsNullOrEmpty($Text)) { return $Text }
+
+    # On non-Windows, [Environment]::ExpandEnvironmentVariables leaves
+    # Windows well-known vars (%ProgramData%, etc.) unexpanded, which can
+    # cause callers to create literal "%VAR%" directories.  Expand whatever
+    # IS defined first (custom and real env vars), then map the remaining
+    # Windows well-known vars to realistic test paths so Linux CI runs stay
+    # clean.
+    $isWindows = ($env:OS -eq 'Windows_NT')
+    if (-not $isWindows) {
+        # Use case-insensitive lookup.  List keys only once (lowercase canonical).
+        $linuxMap = @{}
+        $linuxMap['%programdata%']          = '/tmp/scc-fake-ProgramData'
+        $linuxMap['%programfiles%']         = '/tmp/scc-fake-ProgramFiles'
+        $linuxMap['%programfiles(x86)%']    = '/tmp/scc-fake-ProgramFiles-x86'
+        $linuxMap['%localappdata%']         = '/tmp/scc-fake-LocalAppData'
+        $linuxMap['%userprofile%']          = $HOME
+        $linuxMap['%systemroot%']           = '/tmp/scc-fake-Windows'
+        $linuxMap['%temp%']                 = '/tmp'
+        $linuxMap['%tmp%']                  = '/tmp'
+
+        $result = [System.Environment]::ExpandEnvironmentVariables($Text)
+        foreach ($kv in $linuxMap.GetEnumerator()) {
+            $escaped = [regex]::Escape($kv.Key)
+            $result = [regex]::Replace($result, $escaped, $kv.Value, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        }
+        return $result
+    }
+
     return [System.Environment]::ExpandEnvironmentVariables($Text)
 }
 
@@ -190,6 +218,12 @@ function Merge-SccConfig {
             }
         }
         return $Base
+    }
+    # When the override is a plain string, expand any %VAR% placeholders so
+    # config files written by Set-SccConfigValue (which may contain un-resolved
+    # placeholders like %LocalAppData%) are merged with fully-resolved values.
+    if ($Override -is [string]) {
+        return (Resolve-SccEnv -Text $Override)
     }
     return $Override
 }
@@ -495,7 +529,7 @@ function Get-SccFileFacts {
     $facts = [PSCustomObject]@{
         Path            = $Path
         Exists          = $false
-        Size            = $null
+        SizeBytes       = $null
         SHA256          = $null
         FileVersion     = ''
         ProductVersion  = ''
@@ -511,7 +545,7 @@ function Get-SccFileFacts {
         $facts.Exists = $true
         try {
             $item = Get-Item -LiteralPath $Path
-            $facts.Size = $item.Length
+            $facts.SizeBytes = $item.Length
             $facts.LastWriteUtc = $item.LastWriteTimeUtc.ToString('o')
             $facts.CreationUtc = $item.CreationTimeUtc.ToString('o')
             $vi = $item.VersionInfo
@@ -662,6 +696,10 @@ function New-SccRun {
     $runId = Get-SccRunId
     $runDir = Join-Path $ReportRoot $runId
 
+    if ([string]::IsNullOrWhiteSpace($ReportRoot)) {
+        throw 'New-SccRun: ReportRoot could not be resolved. Ensure config.paths.reportRoot is set or pass -ReportRoot.'
+    }
+
     $subDirs = @('evidence', 'snapshots', 'scanner-results', 'logs', 'quarantine-meta')
     if (-not (Test-Path -LiteralPath $runDir)) {
         $null = New-Item -ItemType Directory -Path $runDir -Force
@@ -683,15 +721,18 @@ function New-SccRun {
     }
 
     $stages = @()
+    $stageIndex = 0
     foreach ($name in $script:SccStages) {
         $stages += [PSCustomObject]@{
-            Name      = $name
-            Status    = 'Pending'
+            Index      = $stageIndex
+            Name       = $name
+            Status     = 'Pending'
             StartedUtc = $null
-            EndedUtc  = $null
-            Detail    = $null
-            Skippable = $false
+            EndedUtc   = $null
+            Detail     = $null
+            Skippable  = $false
         }
+        $stageIndex++
     }
     $runState = [PSCustomObject]@{
         RunId      = $runId

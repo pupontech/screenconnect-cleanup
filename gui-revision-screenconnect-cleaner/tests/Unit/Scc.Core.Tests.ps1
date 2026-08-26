@@ -77,7 +77,8 @@ Describe 'Get-SccPaths env-var expansion' {
         $p = Get-SccPaths
         $p.ProgramDataDir | Should -Match 'ScreenConnectCleaner'
         $p.ToolCacheDir | Should -Match 'tools$'
-        $p.ReportRoot | Should -Be '%USERPROFILE%\Documents\ScreenConnect Cleanup\Reports'
+        $p.ReportRoot | Should -Match 'Documents\\ScreenConnect Cleanup\\Reports$'
+        $p.ReportRoot | Should -Not -Match '%'
     }
 
     It 'includes run id in TempDir and QuarantineRoot when -Run given' {
@@ -167,7 +168,7 @@ Describe 'Get-SccFileFacts' {
         InModuleScope Scc.Core { $script:SccConfig = $null; $script:SccCache = @{} }
         $facts = Get-SccFileFacts -Path $script:f.FullName
         $facts.Exists | Should -BeTrue
-        $facts.Size | Should -Be (Get-Item -LiteralPath $script:f.FullName).Length
+        $facts.SizeBytes | Should -Be (Get-Item -LiteralPath $script:f.FullName).Length
         $facts.SHA256 | Should -Be $script:expectedSha
         $facts.SignatureStatus | Should -Be 'NotChecked'
     }
@@ -211,5 +212,49 @@ Describe 'Test-SccNas' {
     It 'returns Reachable false for a nonexistent path' {
         $r = Test-SccNas -NasPath $script:missing
         $r.Reachable | Should -BeFalse
+    }
+}
+
+Describe 'runstate shape (resume contract)' {
+    BeforeAll {
+        $script:rtRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('SccRt_' + [Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:rtRoot -Force | Out-Null
+        # Save/restore the user config file so this Describe does not leak
+        # its reportRoot override into other tests.
+        $script:rtCfgDir = (Get-SccPaths).ConfigUserDir
+        $script:rtCfgFile = Join-Path $script:rtCfgDir 'scc-config.json'
+        $script:rtCfgBackup = $null
+        if (Test-Path -LiteralPath $script:rtCfgFile) {
+            $script:rtCfgBackup = [System.IO.File]::ReadAllText($script:rtCfgFile)
+        }
+        Set-SccConfigValue -Name 'paths.reportRoot' -Value $script:rtRoot -UserScope
+        $script:rtRun = New-SccRun -Technician 'rt' -Client 'c'
+    }
+    AfterAll {
+        if ($null -ne $script:rtCfgBackup) {
+            [System.IO.File]::WriteAllText($script:rtCfgFile, $script:rtCfgBackup, [System.Text.Encoding]::ASCII)
+        } elseif (Test-Path -LiteralPath $script:rtCfgFile) {
+            Remove-Item -LiteralPath $script:rtCfgFile -Force -ErrorAction SilentlyContinue
+        }
+        Remove-Item $script:rtRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    It 'runstate stages carry Index, Name, Status' {
+        $state = Get-SccRunState -RunId $script:rtRun.RunId
+        $state | Should -Not -BeNullOrEmpty
+        @($state.Stages).Count | Should -Be 9
+        $state.Stages[0].Index | Should -Be 0
+        $state.Stages[0].Name | Should -Be 'Preflight'
+        $state.Stages[8].Index | Should -Be 8
+        $state.Stages[8].Name | Should -Be 'Report'
+        $state.Stages[2].Status | Should -Be 'Pending'
+    }
+    It 'Save-SccRunState updates the named stage and Get-SccRunState reads it back' {
+        Save-SccRunState -Run $script:rtRun -Stage 'Detection' -Status 'Completed' -Detail 'done'
+        $state = Get-SccRunState -RunId $script:rtRun.RunId
+        $det = $state.Stages | Where-Object { $_.Index -eq 2 }
+        $det.Status | Should -Be 'Completed'
+        $det.Detail | Should -Be 'done'
+        $det.StartedUtc | Should -Not -BeNullOrEmpty
+        $det.EndedUtc | Should -Not -BeNullOrEmpty
     }
 }

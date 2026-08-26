@@ -214,6 +214,53 @@ InModuleScope Scc.Detection {
             $inst.Confidence | Should -Be 'High'
         }
 
+        It 'F1: copies uninstall evidence onto the deduped instance' {
+            Mock -CommandName Get-SccServiceInventory { return $script:fakeServices }
+            Mock -CommandName Get-SccProcessInventory { return $script:fakeProcesses }
+            Mock -CommandName Get-SccUninstallInventory { return $script:fakeUninstall }
+            Mock -CommandName Get-SccServiceInstallEvents { return $script:fakeEvents }
+            Mock -CommandName Get-SccScDirs { return @() }
+
+            $res = Resolve-SccScInstances -Services $script:fakeServices -Processes $script:fakeProcesses `
+                      -UninstallEntries $script:fakeUninstall -Events $script:fakeEvents -Target $script:scTarget -TrustedRelays @()
+            $inst = $res.Instances[0]
+            $inst.UninstallDisplayName  | Should -Be 'ScreenConnect Client (a1b2c3d4e5f6a7b8)'
+            $inst.UninstallString       | Should -Be 'MsiExec.exe /X{abc}'
+            $inst.QuietUninstallString  | Should -Be 'MsiExec.exe /X{abc} /qn'
+            $inst.UninstallRegistryKey  | Should -Be 'HKLM:\...\Uninstall\{abc}'
+        }
+
+        It 'F3: enumerates ConfigFiles for an instance with InstallPath even when blob came from the service' {
+            $tmp = Join-Path $env:TEMP ('scc-cfg-' + [guid]::NewGuid().ToString())
+            New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+            'x' | Out-File -FilePath (Join-Path $tmp 'App_Config.config') -Encoding ascii
+
+            $svc = [PSCustomObject]@{
+                Name = 'ScreenConnect Client (cccccccccccccccc)'
+                DisplayName = 'ScreenConnect Client (cccccccccccccccc)'
+                PathName = '"C:\Windows\System32\svchost.exe" -k ScreenConnect "?e=Access&y=Guest&h=relay.example.com&p=8041&s=1111-2222&k=KEY123"'
+                State = 'Running'; StartMode = 'Auto'; StartName = 'LocalSystem'; ProcessId = 1; Description = ''
+            }
+            Mock -CommandName Get-SccServiceInventory { return @($svc) }
+            Mock -CommandName Get-SccProcessInventory { return @() }
+            Mock -CommandName Get-SccUninstallInventory { return @() }
+            Mock -CommandName Get-SccServiceInstallEvents { return @() }
+            Mock -CommandName Get-SccScDirs { return @([PSCustomObject]@{
+                Name = 'ScreenConnect Client (cccccccccccccccc)'
+                FullName = $tmp
+                CreationTimeUtc = '2026-01-01 00:00:00'
+            }) }
+
+            $res = Resolve-SccScInstances -Services @($svc) -Processes @() `
+                      -UninstallEntries @() -Events @() -Target $script:scTarget -TrustedRelays @()
+            $inst = $res.Instances[0]
+            $inst.InstallPath | Should -Be $tmp
+            $inst.ParamBlobSource | Should -Be 'service ImagePath'
+            @($inst.ConfigFiles).Count | Should -BeGreaterOrEqual 1
+
+            Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
         It 'Get-SccScreenConnect returns deduped instances from mocked inventory' {
             Mock -CommandName Get-SccServiceInventory { return $script:fakeServices }
             Mock -CommandName Get-SccProcessInventory { return $script:fakeProcesses }

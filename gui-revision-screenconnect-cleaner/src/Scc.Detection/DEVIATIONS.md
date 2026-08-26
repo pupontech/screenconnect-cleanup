@@ -82,3 +82,28 @@ are behavioral-preserving unless explicitly noted.
 - src/Scc.Detection/Scc.Detection.psd1
 - src/Scc.Detection/Scc.Detection.psm1
 - tests/Unit/Scc.Detection.Tests.ps1
+
+## Deliberate renames (contract-driven, no data loss)
+
+9. **'k' friendly name is `ServerKey`** (ARCHITECTURE.md 3.2 field "ServerKey
+   (encoded)"), not the legacy `ServerPublicKey`. The raw 'k' value is preserved
+   identically and the fingerprint is derived from it. No data loss.
+
+10. **Instance id field is named `Identifier`** (matches legacy 2.3) while
+    ARCHITECTURE.md 3.2 lists `InstanceId`. The public instance object exposes
+    `Identifier`; this is a naming choice consistent with the legacy field map and
+    not a data-loss. If the GUI contract requires `InstanceId` it should be aliased
+    at the binding layer.
+
+11. **Uninstall-evidence fields restored.** `UninstallDisplayName`,
+    `UninstallString`, `QuietUninstallString`, and `UninstallRegistryKey` are
+    copied from the matching uninstall inventory entry onto the instance slot in
+    Resolve-SccScInstances section 3. These match legacy field names exactly
+    (the AUDIT-02 2.3 data-loss regression noted in REVIEW-Scc.Detection F1 is
+    fixed).
+
+12. **ConfigFiles enumerated for every instance with an existing InstallPath.**
+    The .config file inventory is now populated regardless of whether the launch
+    parameter blob was already discovered from the service/process source (fixes
+    REVIEW-Scc.Detection F3). The blob-from-config search still only supplements
+    when no blob has been found yet.

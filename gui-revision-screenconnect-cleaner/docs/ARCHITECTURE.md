@@ -119,7 +119,7 @@ Exports:
 - `Test-SccNas [-NasPath <string>]` -> {Reachable, Path, Error} (no hang > 15s).
 - `Get-SccCache [-Key] / Set-SccCache -Key -Value [-TtlSeconds]` -> per-process cache
   registry (used for file metadata, hashes, signatures, service/process snapshots).
-- `Get-SccFileFacts -Path` -> {Path, Exists, Size, SHA256, FileVersion,
+- `Get-SccFileFacts -Path` -> {Path, Exists, SizeBytes, SHA256, FileVersion,
   ProductVersion, Publisher (SignatureSubject), SignatureStatus, SignatureCert,
   LastWriteUtc, CreationUtc, Architecture} - cached; signature check never throws,
   returns SignatureStatus = Valid|Invalid|Unsigned|NotChecked|Error.

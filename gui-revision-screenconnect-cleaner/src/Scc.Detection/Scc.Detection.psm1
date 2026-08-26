@@ -451,6 +451,10 @@ function New-ScInstanceTemplate {
         CustomProperties    = [ordered]@{}
         ParserWarnings      = New-Object System.Collections.ArrayList
         ParseIssue          = $null
+        UninstallDisplayName    = $null
+        UninstallString         = $null
+        QuietUninstallString    = $null
+        UninstallRegistryKey    = $null
         Persistence         = New-Object System.Collections.ArrayList
         AssociatedProcesses = New-Object System.Collections.ArrayList
         NetworkConnections  = @()
@@ -565,6 +569,10 @@ function Resolve-SccScInstances {
         if (-not $slot.InstallPath -and $u.InstallLocation) { $slot.InstallPath = $u.InstallLocation }
         $slot.Publisher            = $u.Publisher
         $slot.DisplayVersion       = $u.DisplayVersion
+        $slot.UninstallDisplayName = $u.DisplayName
+        $slot.UninstallString      = $u.UninstallString
+        $slot.QuietUninstallString = $u.QuietUninstallString
+        $slot.UninstallRegistryKey = $u.RegistryKey
         $slot.InstallTimestampUtc  = if (-not $slot.InstallTimestampUtc) { $u.InstallDate } else { $slot.InstallTimestampUtc }
     }
 
@@ -597,7 +605,7 @@ function Resolve-SccScInstances {
     # --- 5. Config files + file facts ------------------------------------
     foreach ($key in @($instances.Keys)) {
         $slot = $instances[$key]
-        if (-not $slot.RawLaunchParameters -and $slot.InstallPath -and (Test-Path -LiteralPath $slot.InstallPath)) {
+        if ($slot.InstallPath -and (Test-Path -LiteralPath $slot.InstallPath)) {
             $configs = @(Get-ChildItem -LiteralPath $slot.InstallPath -Filter "*.config" -ErrorAction SilentlyContinue)
             foreach ($cfg in $configs) {
                 $text = $null
