@@ -10,7 +10,7 @@ name: windows-ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, gui-revision-screenconnect-cleaner]
   pull_request:
   workflow_dispatch:
 
@@ -102,3 +102,71 @@ jobs:
             ${{ runner.temp }}/synth-after.json
             ${{ runner.temp }}/synth-diff.json
           if-no-files-found: ignore
+
+  gui-revision-tests:
+    name: GUI revision Pester (gui-revision-screenconnect-cleaner)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Pester
+        shell: pwsh
+        run: Install-Module -Name Pester -RequiredVersion 6.1.0 -Force -SkipPublisherCheck -Scope CurrentUser
+
+      - name: House rules - gui-revision
+        shell: pwsh
+        run: ./gui-revision-screenconnect-cleaner/tests/ci/Test-HouseRules.ps1
+
+      - name: Parse all scripts - gui-revision
+        shell: pwsh
+        run: ./gui-revision-screenconnect-cleaner/tests/ci/Test-Parse.ps1
+
+      - name: Pester unit tests - gui-revision
+        shell: pwsh
+        run: |
+          $res = Invoke-Pester -Path './gui-revision-screenconnect-cleaner/tests/Unit' -PassThru
+          if ($res.FailedCount -gt 0) { Write-Host "Pester unit failures: $($res.FailedCount)"; exit 1 }
+          Write-Host "Pester unit passed: $($res.PassedCount)"
+
+      - name: Module self-tests - gui-revision
+        shell: pwsh
+        run: ./gui-revision-screenconnect-cleaner/tests/ci/Test-SelfTests.ps1
+
+      - name: Headless smoke - DetectOnly (read-only, deterministic)
+        shell: pwsh
+        run: |
+          $tmp = Join-Path $env:RUNNER_TEMP "sccsmoke"
+          New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+          $cfg = Join-Path $tmp "scc-config.json"
+          $json = @{ SchemaVersion = 1; paths = @{ reportRoot = $tmp } } | ConvertTo-Json -Depth 10
+          Set-Content -Path $cfg -Value $json -Encoding UTF8
+          $entry = "./gui-revision-screenconnect-cleaner/Scc.Cleaner.ps1"
+          & pwsh -NoProfile -File $entry -Headless -Mode DetectOnly -SkipScanners -Config $cfg
+          if ($LASTEXITCODE -ne 0) { Write-Host "Headless smoke failed: $LASTEXITCODE"; exit 1 }
+          Write-Host "Headless DetectOnly smoke completed (exit 0)."
+
+      - name: Build portable package
+        shell: pwsh
+        run: |
+          $ver = "ci-${{ github.run_number }}"
+          $out = Join-Path $env:RUNNER_TEMP "sccbuild"
+          ./gui-revision-screenconnect-cleaner/build/Build-Portable.ps1 -OutDir $out -Version $ver -Zip $true -IncludeConfigs $true
+          $zip = Join-Path $out ("ScreenConnectCleaner-$ver-portable.zip")
+          if (-not (Test-Path -LiteralPath $zip)) { Write-Host "ERROR: zip not produced"; exit 1 }
+          Write-Host "Build produced: $zip"
+
+      - name: Upload package + hashes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScreenConnectCleaner-portable-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/sccbuild/ScreenConnectCleaner-*.zip
+            ${{ runner.temp }}/sccbuild/ScreenConnectCleaner-*.zip.sha256
+          if-no-files-found: error
