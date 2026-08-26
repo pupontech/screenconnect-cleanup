@@ -367,21 +367,21 @@ function New-SccReport {
     }
 
     # Load inputs
-    $runStateFile = Read-SccJsonFile (Join-Path $runDir 'runstate.json')
-    $findingsFile = Read-SccJsonFile (Join-Path $runDir 'findings.json')
-    $planFile = Read-SccJsonFile (Join-Path $runDir 'plan.json')
-    $remediationFile = Read-SccJsonFile (Join-Path $runDir 'remediation.json')
-    $toolProvFile = Read-SccJsonFile (Join-Path $runDir 'tool-provenance.json')
-    $beforeFile = Read-SccJsonFile (Join-Path $runDir 'snapshots/before.json')
-    $afterFile = Read-SccJsonFile (Join-Path $runDir 'snapshots/after.json')
-    $diffFile = Read-SccJsonFile (Join-Path $runDir 'snapshots/diff.json')
+    $runStateFile = Read-SccJsonFile ([System.IO.Path]::Combine($runDir, 'runstate.json'))
+    $findingsFile = Read-SccJsonFile ([System.IO.Path]::Combine($runDir, 'findings.json'))
+    $planFile = Read-SccJsonFile ([System.IO.Path]::Combine($runDir, 'plan.json'))
+    $remediationFile = Read-SccJsonFile ([System.IO.Path]::Combine($runDir, 'remediation.json'))
+    $toolProvFile = Read-SccJsonFile ([System.IO.Path]::Combine($runDir, 'tool-provenance.json'))
+    $beforeFile = Read-SccJsonFile ([System.IO.Path]::Combine($runDir, 'snapshots/before.json'))
+    $afterFile = Read-SccJsonFile ([System.IO.Path]::Combine($runDir, 'snapshots/after.json'))
+    $diffFile = Read-SccJsonFile ([System.IO.Path]::Combine($runDir, 'snapshots/diff.json'))
     # Also try alternate diff path snapshots/diff.json is canonical; also check root diff
     if (-not $diffFile.Exists) {
-        $alt = Read-SccJsonFile (Join-Path $runDir 'diff.json')
+        $alt = Read-SccJsonFile ([System.IO.Path]::Combine($runDir, 'diff.json'))
         if ($alt.Exists) { $diffFile = $alt }
     }
 
-    $scannerDir = Join-Path $runDir 'scanner-results'
+    $scannerDir = [System.IO.Path]::Combine($runDir, 'scanner-results')
     $scannerResults = [System.Collections.ArrayList]::new()
     if (Test-Path -LiteralPath $scannerDir) {
         $files = @(Get-ChildItem -LiteralPath $scannerDir -File -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object -Property Name)
@@ -391,7 +391,7 @@ function New-SccReport {
         }
     }
 
-    $masterLogPath = Join-Path $runDir 'logs/master.log'
+    $masterLogPath = [System.IO.Path]::Combine($runDir, 'logs/master.log')
     $masterLogExists = Test-Path -LiteralPath $masterLogPath
     $masterLogContent = $null
     if ($masterLogExists) {
@@ -476,8 +476,8 @@ function New-SccReport {
             if ($null -ne $qm) { $quarantinedCount = @(Get-SccSafeItems $qm).Count }
         }
         # also check quarantine-manifest.json
-        $qManifestPath = Join-Path $runDir 'quarantine-manifest.json'
-        $qMetaPath = Join-Path $runDir 'quarantine-meta/quarantine-manifest.json'
+        $qManifestPath = [System.IO.Path]::Combine($runDir, 'quarantine-manifest.json')
+        $qMetaPath = [System.IO.Path]::Combine($runDir, 'quarantine-meta/quarantine-manifest.json')
         $qm2 = Read-SccJsonFile $qManifestPath
         if ($qm2.Exists -and $null -ne $qm2.Data) {
             if ($qm2.Data -is [System.Array]) { $quarantinedCount = @($qm2.Data).Count }
@@ -1105,9 +1105,9 @@ $rows
     $qManifestData = $null
     $qManifestReason = 'Not collected / not applicable - quarantine-manifest.json not found'
     $qPathsToTry = @(
-        (Join-Path $runDir 'quarantine-manifest.json'),
-        (Join-Path $runDir 'quarantine-meta/quarantine-manifest.json'),
-        (Join-Path $outDir 'quarantine-manifest.json')
+        ([System.IO.Path]::Combine($runDir, 'quarantine-manifest.json')),
+        ([System.IO.Path]::Combine($runDir, 'quarantine-meta/quarantine-manifest.json')),
+        ([System.IO.Path]::Combine($outDir, 'quarantine-manifest.json'))
     )
     foreach ($qp in $qPathsToTry) {
         $qr = Read-SccJsonFile $qp
@@ -1457,9 +1457,9 @@ $bodyHtml
     # but verify we did not include event handlers in static HTML
     # Write outputs deterministically: sort json keys? Use ordered hashtables
 
-    $htmlPath = Join-Path $outDir 'report.html'
-    $jsonPath = Join-Path $outDir 'report.json'
-    $txtPath = Join-Path $outDir 'technician-summary.txt'
+    $htmlPath = [System.IO.Path]::Combine($outDir, 'report.html')
+    $jsonPath = [System.IO.Path]::Combine($outDir, 'report.json')
+    $txtPath = [System.IO.Path]::Combine($outDir, 'technician-summary.txt')
 
     # report.json
     $summaryObj = [ordered]@{

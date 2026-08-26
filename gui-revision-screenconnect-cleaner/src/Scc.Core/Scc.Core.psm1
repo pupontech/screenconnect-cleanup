@@ -254,11 +254,11 @@ function Get-SccConfig {
 
     # Machine file (lowest precedence of the file overrides).
     $machineDir = Join-Path (Resolve-SccEnv -Text '%ProgramData%\ScreenConnectCleaner') 'config'
-    $files += (Join-Path $machineDir 'scc-config.json')
+    $files += ([System.IO.Path]::Combine($machineDir, 'scc-config.json'))
 
     # User file.
     $userDir = Join-Path (Resolve-SccEnv -Text '%LocalAppData%\ScreenConnectCleaner') 'config'
-    $files += (Join-Path $userDir 'scc-config.json')
+    $files += ([System.IO.Path]::Combine($userDir, 'scc-config.json'))
 
     # Explicit -Path (highest precedence).
     if ($Path) { $files += $Path }
@@ -279,7 +279,7 @@ function Get-SccConfig {
     }
 
     # Try to load a real trusted-relays.json if present (override embedded).
-    foreach ($tr in @((Join-Path $userDir 'trusted-relays.json'), (Join-Path $machineDir 'trusted-relays.json'))) {
+    foreach ($tr in @(([System.IO.Path]::Combine($userDir, 'trusted-relays.json')), ([System.IO.Path]::Combine($machineDir, 'trusted-relays.json')))) {
         if (Test-Path -LiteralPath $tr) {
             try {
                 $trp = ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($tr))
@@ -327,10 +327,10 @@ function Set-SccConfigValue {
 
     if ($MachineScope) {
         $dir = Join-Path (Resolve-SccEnv -Text '%ProgramData%\ScreenConnectCleaner') 'config'
-        $file = Join-Path $dir 'scc-config.json'
+        $file = [System.IO.Path]::Combine($dir, 'scc-config.json')
     } else {
         $dir = Join-Path (Resolve-SccEnv -Text '%LocalAppData%\ScreenConnectCleaner') 'config'
-        $file = Join-Path $dir 'scc-config.json'
+        $file = [System.IO.Path]::Combine($dir, 'scc-config.json')
     }
 
     if (-not (Test-Path -LiteralPath $dir)) {
@@ -362,17 +362,17 @@ function Get-SccPaths {
         ProgramDataDir  = $programDataDir
         UserDataDir     = $userDataDir
         ReportRoot      = $reportRoot
-        ToolCacheDir    = Join-Path $userDataDir 'tools'
-        ConfigUserDir   = Join-Path $userDataDir 'config'
-        ConfigMachineDir = Join-Path $programDataDir 'config'
-        LogRoot         = Join-Path $programDataDir 'logs'
+        ToolCacheDir    = [System.IO.Path]::Combine($userDataDir, 'tools')
+        ConfigUserDir   = [System.IO.Path]::Combine($userDataDir, 'config')
+        ConfigMachineDir = [System.IO.Path]::Combine($programDataDir, 'config')
+        LogRoot         = [System.IO.Path]::Combine($programDataDir, 'logs')
         TempDir         = Join-Path (Resolve-SccEnv -Text '%TEMP%\ScreenConnectCleaner') ''
-        QuarantineRoot  = Join-Path $programDataDir 'Quarantine'
+        QuarantineRoot  = [System.IO.Path]::Combine($programDataDir, 'Quarantine')
     }
 
     if ($Run -and $Run.RunId) {
-        $obj.TempDir = Join-Path $obj.TempDir $Run.RunId
-        $obj.QuarantineRoot = Join-Path $obj.QuarantineRoot $Run.RunId
+        $obj.TempDir = [System.IO.Path]::Combine($obj.TempDir, $Run.RunId)
+        $obj.QuarantineRoot = [System.IO.Path]::Combine($obj.QuarantineRoot, $Run.RunId)
     }
 
     return $obj
@@ -635,7 +635,7 @@ function Write-SccLog {
     }
 
     if ($Run -and $Run.RunDir) {
-        $logDir = Join-Path $Run.RunDir 'logs'
+        $logDir = [System.IO.Path]::Combine($Run.RunDir, 'logs')
     } else {
         $logDir = Join-Path (Resolve-SccEnv -Text '%ProgramData%\ScreenConnectCleaner') 'logs'
     }
@@ -643,8 +643,8 @@ function Write-SccLog {
         try { $null = New-Item -ItemType Directory -Path $logDir -Force } catch { return }
     }
 
-    $jsonlFile = Join-Path $logDir ($Stage + '.jsonl')
-    $masterFile = Join-Path $logDir 'master.log'
+    $jsonlFile = [System.IO.Path]::Combine($logDir, ($Stage) + '.jsonl')
+    $masterFile = [System.IO.Path]::Combine($logDir, 'master.log')
 
     $plain = ('{0} [{1}] {2}/{3}/{4}: {5}' -f $ts, $Level, $Stage, $Component, $Operation, $Message)
     try {
@@ -702,7 +702,7 @@ function New-SccRun {
     $ReportRoot = Resolve-SccEnv -Text $ReportRoot
 
     $runId = Get-SccRunId
-    $runDir = Join-Path $ReportRoot $runId
+    $runDir = [System.IO.Path]::Combine($ReportRoot, $runId)
 
     if ([string]::IsNullOrWhiteSpace($ReportRoot)) {
         throw 'New-SccRun: ReportRoot could not be resolved. Ensure config.paths.reportRoot is set or pass -ReportRoot.'
@@ -713,7 +713,7 @@ function New-SccRun {
         $null = New-Item -ItemType Directory -Path $runDir -Force
     }
     foreach ($s in $subDirs) {
-        $null = New-Item -ItemType Directory -Path (Join-Path $runDir $s) -Force
+        $null = New-Item -ItemType Directory -Path ([System.IO.Path]::Combine($runDir, $s)) -Force
     }
 
     if (-not $IncidentDate) { $IncidentDate = ([datetime]::UtcNow).ToString('yyyy-MM-dd') }
@@ -747,7 +747,7 @@ function New-SccRun {
         CreatedUtc = $run.CreatedUtc
         Stages     = $stages
     }
-    $stateFile = Join-Path $runDir 'runstate.json'
+    $stateFile = [System.IO.Path]::Combine($runDir, 'runstate.json')
     [System.IO.File]::WriteAllText($stateFile, (ConvertTo-SccJson -InputObject $runState -Depth 10), [System.Text.Encoding]::ASCII)
 
     return $run
@@ -769,7 +769,7 @@ function Save-SccRunState {
         [string]$Detail
     )
 
-    $stateFile = Join-Path $Run.RunDir 'runstate.json'
+    $stateFile = [System.IO.Path]::Combine($Run.RunDir, 'runstate.json')
     if (-not (Test-Path -LiteralPath $stateFile)) { return }
     $state = ConvertFrom-SccJson -Path $stateFile
     if (-not $state) { return }
@@ -802,7 +802,7 @@ function Get-SccRunState {
         [string]$ReportRoot
     )
     $root = if ($ReportRoot) { Resolve-SccEnv -Text $ReportRoot } else { Resolve-SccEnv -Text (Get-SccPaths).ReportRoot }
-    $stateFile = Join-Path (Join-Path $root $RunId) 'runstate.json'
+    $stateFile = Join-Path ([System.IO.Path]::Combine($root, $RunId)) 'runstate.json'
     if (-not (Test-Path -LiteralPath $stateFile)) { return $null }
     return (ConvertFrom-SccJson -Path $stateFile)
 }
@@ -820,13 +820,13 @@ function Find-SccRecentRuns {
     $cutoff = ([datetime]::UtcNow).AddDays(-$MaxAgeDays)
     try {
         $dirs = Get-ChildItem -LiteralPath $root -Directory -ErrorAction Stop |
-            Where-Object { $_.Name -like 'SC-*' -and (Test-Path -LiteralPath (Join-Path $_.FullName 'runstate.json')) }
+            Where-Object { $_.Name -like 'SC-*' -and (Test-Path -LiteralPath ([System.IO.Path]::Combine($_.FullName, 'runstate.json'))) }
     } catch { return $results }
 
     foreach ($d in $dirs) {
         $created = $d.CreationTimeUtc
         if ($created -lt $cutoff) { continue }
-        $state = ConvertFrom-SccJson -Path (Join-Path $d.FullName 'runstate.json')
+        $state = ConvertFrom-SccJson -Path ([System.IO.Path]::Combine($d.FullName, 'runstate.json'))
         $overall = 'Pending'
         if ($state -and $state.Stages) {
             $last = $null

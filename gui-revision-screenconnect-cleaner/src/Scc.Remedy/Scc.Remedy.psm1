@@ -38,7 +38,7 @@ Set-StrictMode -Version 1.0
 # ---------------------------------------------------------------------------
 try {
     if (-not (Get-Command -Name 'Write-SccLog' -ErrorAction SilentlyContinue)) {
-        $coreMod = Join-Path $PSScriptRoot '..' 'Scc.Core' 'Scc.Core.psd1'
+        $coreMod = [System.IO.Path]::Combine($PSScriptRoot, '..') 'Scc.Core' 'Scc.Core.psd1'
         if (Test-Path -LiteralPath $coreMod) {
             Import-Module $coreMod -Force -ErrorAction SilentlyContinue
         }
@@ -96,11 +96,11 @@ function Get-SccRemedyQuarantineRoot {
     # F4 fix: use platform check (not % heuristic) - on non-Windows always
     # fall back to RunDir\Quarantine so the module is testable on Linux.
     if (-not $isWindows) {
-        if ($Run -and $Run.RunDir) { $qBase = Join-Path $Run.RunDir 'Quarantine' }
+        if ($Run -and $Run.RunDir) { $qBase = [System.IO.Path]::Combine($Run.RunDir, 'Quarantine') }
         else { $qBase = Join-Path (Get-Location).Path 'Quarantine' }
     }
     if ([string]::IsNullOrEmpty($qBase) -or $qBase -like '*%*') {
-        if ($Run -and $Run.RunDir) { $qBase = Join-Path $Run.RunDir 'Quarantine' }
+        if ($Run -and $Run.RunDir) { $qBase = [System.IO.Path]::Combine($Run.RunDir, 'Quarantine') }
         else { $qBase = Join-Path (Get-Location).Path 'Quarantine' }
     }
     if (-not (Test-Path -LiteralPath $qBase)) {
@@ -145,7 +145,7 @@ function Write-SccRemedyRemediationFile {
     param($Run)
     $path = $script:remediationPath
     if (-not $path) {
-        if ($Run -and $Run.RunDir) { $path = Join-Path $Run.RunDir 'remediation.json' }
+        if ($Run -and $Run.RunDir) { $path = [System.IO.Path]::Combine($Run.RunDir, 'remediation.json') }
     }
     if (-not $path) { return }
     try {
@@ -162,7 +162,7 @@ function Write-SccRemedyRemediationFile {
 function Get-SccQuarantineManifest {
     param($Run)
     $qBase = Get-SccRemedyQuarantineRoot -Run $Run
-    $mp = Join-Path $qBase 'quarantine-manifest.json'
+    $mp = [System.IO.Path]::Combine($qBase, 'quarantine-manifest.json')
     if (-not (Test-Path -LiteralPath $mp)) { return @() }
     try {
         $raw = [System.IO.File]::ReadAllText($mp)
@@ -175,7 +175,7 @@ function Get-SccQuarantineManifest {
 function Add-SccQuarantineManifestEntry {
     param($Run, $Entry)
     $qBase = Get-SccRemedyQuarantineRoot -Run $Run
-    $mp = Join-Path $qBase 'quarantine-manifest.json'
+    $mp = [System.IO.Path]::Combine($qBase, 'quarantine-manifest.json')
     $list = @(Get-SccQuarantineManifest -Run $Run)
     $list = $list + @($Entry)
     try {
@@ -186,7 +186,7 @@ function Add-SccQuarantineManifestEntry {
 function Remove-SccQuarantineManifestEntry {
     param($Run, [string]$ItemId)
     $qBase = Get-SccRemedyQuarantineRoot -Run $Run
-    $mp = Join-Path $qBase 'quarantine-manifest.json'
+    $mp = [System.IO.Path]::Combine($qBase, 'quarantine-manifest.json')
     $all = @(Get-SccQuarantineManifest -Run $Run)
     $list = @($all | Where-Object { [string]$_.ItemId -ne $ItemId })
     try {
@@ -268,7 +268,7 @@ function Test-SccScreenConnectTarget {
         $exeOk = $false
         if ($mainExe -like '*ScreenConnect*') {
             if (-not [string]::IsNullOrEmpty($dir)) {
-                $exePath = Join-Path $dir $mainExe
+                $exePath = [System.IO.Path]::Combine($dir, $mainExe)
                 if (Test-Path -LiteralPath $exePath) { $exeOk = $true }
             }
         }
@@ -643,7 +643,7 @@ function Write-SccResumeMarker {
             UpdatedUtc  = ([datetime]::UtcNow).ToUniversalTime().ToString('o')
             PendingMoves = @($PendingMoves)
         }
-        $mp = Join-Path $Run.RunDir 'resume-marker.json'
+        $mp = [System.IO.Path]::Combine($Run.RunDir, 'resume-marker.json')
         [System.IO.File]::WriteAllText($mp, (ConvertTo-SccJson -InputObject $marker -Depth 10), [System.Text.Encoding]::ASCII)
     } catch { }
 }
@@ -658,13 +658,13 @@ function Move-SccTargetToQuarantine {
             return $true
         }
         $qBase = Get-SccRemedyQuarantineRoot -Run $Run
-        $qDir  = Join-Path $qBase 'q'
+        $qDir  = [System.IO.Path]::Combine($qBase, 'q')
         if (-not (Test-Path -LiteralPath $qDir)) { New-Item -ItemType Directory -Path $qDir -Force | Out-Null }
         $leaf = [System.IO.Path]::GetFileName($SourcePath)
-        $dest = Join-Path $qDir $leaf
+        $dest = [System.IO.Path]::Combine($qDir, $leaf)
         if (Test-Path -LiteralPath $dest) {
             $suffix = (Get-SccSha256Hex -Text $SourcePath).Substring(0, 8)
-            $dest = Join-Path $qDir ($suffix + '-' + $leaf)
+            $dest = [System.IO.Path]::Combine($qDir, ($suffix) + '-' + $leaf)
         }
         $isDirectory = $false
         try { $isDirectory = (Get-Item -LiteralPath $SourcePath -Force).PSIsContainer } catch { }
@@ -851,7 +851,7 @@ function New-SccPlan {
     if ($Run -and $Run.RunDir) {
         try {
             if (-not (Test-Path -LiteralPath $Run.RunDir)) { New-Item -ItemType Directory -Path $Run.RunDir -Force | Out-Null }
-            $planPath = Join-Path $Run.RunDir 'plan.json'
+            $planPath = [System.IO.Path]::Combine($Run.RunDir, 'plan.json')
             [System.IO.File]::WriteAllText($planPath, (ConvertTo-SccJson -InputObject $plan -Depth 10), [System.Text.Encoding]::ASCII)
         } catch {
             Write-SccRemedyLog -Level WARNING -Stage 'Remedy' -Message ('Could not write plan.json: ' + $_.Exception.Message)
@@ -894,7 +894,7 @@ function Invoke-SccRemediation {
 
     $script:remediationActions = @()
     $script:remediationPath    = $null
-    if ($Run -and $Run.RunDir) { $script:remediationPath = Join-Path $Run.RunDir 'remediation.json' }
+    if ($Run -and $Run.RunDir) { $script:remediationPath = [System.IO.Path]::Combine($Run.RunDir, 'remediation.json') }
 
     $preview = @(Get-SccPlanPreview -Plan $p)
 
@@ -1059,9 +1059,9 @@ function Clear-SccQuarantine {
         throw [System.InvalidOperationException]::new('Clear-SccQuarantine refused: both -Approved and -ConfirmText "PERMANENTLY DELETE" are required (never automatic).')
     }
     $qBase = Get-SccRemedyQuarantineRoot -Run $Run
-    $qDir  = Join-Path $qBase 'q'
+    $qDir  = [System.IO.Path]::Combine($qBase, 'q')
     if (Test-Path -LiteralPath $qDir) { Remove-Item -LiteralPath $qDir -Recurse -Force -ErrorAction Stop }
-    $mp = Join-Path $qBase 'quarantine-manifest.json'
+    $mp = [System.IO.Path]::Combine($qBase, 'quarantine-manifest.json')
     if (Test-Path -LiteralPath $mp) { Remove-Item -LiteralPath $mp -Force -ErrorAction Stop }
     Write-SccRemedyLog -Level WARNING -Stage 'Remedy' -Message 'Quarantine permanently deleted.'
     return $true

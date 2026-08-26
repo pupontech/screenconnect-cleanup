@@ -377,8 +377,8 @@ function Get-SccScDirs {
 function Get-SccModuleConfigDirs {
     # user -> machine -> new-tree config, in that order.
     $dirs = [System.Collections.ArrayList]::new()
-    if ($env:LocalAppData) { [void]$dirs.Add((Join-Path $env:LocalAppData 'ScreenConnectCleaner\config')) }
-    if ($env:ProgramData) { [void]$dirs.Add((Join-Path $env:ProgramData 'ScreenConnectCleaner\config')) }
+    if ($env:LocalAppData) { [void]$dirs.Add(([System.IO.Path]::Combine($env:LocalAppData, 'ScreenConnectCleaner\config'))) }
+    if ($env:ProgramData) { [void]$dirs.Add(([System.IO.Path]::Combine($env:ProgramData, 'ScreenConnectCleaner\config'))) }
     # new-tree config dir relative to this module file.
     $tree = Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'config'
     [void]$dirs.Add($tree)
@@ -389,7 +389,7 @@ function Get-SccTargets {
     param([string]$TargetsFile)
     if (-not $TargetsFile) {
         foreach ($d in (Get-SccModuleConfigDirs)) {
-            $cand = Join-Path $d 'targets.json'
+            $cand = [System.IO.Path]::Combine($d, 'targets.json')
             if (Test-Path -LiteralPath $cand) { $TargetsFile = $cand; break }
         }
     }
@@ -409,7 +409,7 @@ function Get-SccTrustedRelays {
     if ($null -ne $Config) { return $Config }
     $file = $null
     foreach ($d in (Get-SccModuleConfigDirs)) {
-        $cand = Join-Path $d 'trusted-relays.json'
+        $cand = [System.IO.Path]::Combine($d, 'trusted-relays.json')
         if (Test-Path -LiteralPath $cand) { $file = $cand; break }
     }
     if ($file) {
@@ -936,7 +936,7 @@ function Invoke-SccDetection {
     }
 
     if ($Run -and $Run.PSObject.Properties['RunDir'] -and (Test-Path -LiteralPath $Run.RunDir)) {
-        $jsonPath = Join-Path $Run.RunDir 'findings.json'
+        $jsonPath = [System.IO.Path]::Combine($Run.RunDir, 'findings.json')
         try {
             $findings | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $jsonPath -Encoding UTF8
         } catch { }

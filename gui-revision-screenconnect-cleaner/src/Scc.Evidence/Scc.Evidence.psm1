@@ -30,10 +30,18 @@ function Add-CollectionError {
         [string]$Section,
         [string]$ErrorText
     )
-    $ErrorList.Add([PSCustomObject]@{
-        Section = $Section
-        Error   = $ErrorText
-    })
+    # Thread-safe: List[T] is not safe for concurrent Add across runspaces.
+    # Lock on the list instance to serialize writes.
+    [System.Threading.Monitor]::Enter($ErrorList)
+    try {
+        $ErrorList.Add([PSCustomObject]@{
+            Section = $Section
+            Error   = $ErrorText
+        })
+    }
+    finally {
+        [System.Threading.Monitor]::Exit($ErrorList)
+    }
 }
 
 function Invoke-Section {

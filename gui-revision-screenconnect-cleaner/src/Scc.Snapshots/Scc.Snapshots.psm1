@@ -271,11 +271,11 @@ function Compare-SccSnapshots {
             $runDir = $Run.RunDir
         }
         if ($runDir) {
-            $snapshotsDir = Join-Path $runDir 'snapshots'
+            $snapshotsDir = [System.IO.Path]::Combine($runDir, 'snapshots')
             if (-not (Test-Path -LiteralPath $snapshotsDir)) {
                 New-Item -ItemType Directory -Path $snapshotsDir -Force | Out-Null
             }
-            $diffFile = Join-Path $snapshotsDir 'diff.json'
+            $diffFile = [System.IO.Path]::Combine($snapshotsDir, 'diff.json')
             $json = $result | ConvertTo-Json -Depth 8
             $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
             [System.IO.File]::WriteAllText($diffFile, $json, $utf8NoBom)
