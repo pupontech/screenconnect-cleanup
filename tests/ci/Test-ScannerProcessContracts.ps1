@@ -42,7 +42,6 @@ $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $scannerDir = Join-Path $repoRoot 'scanners'
 
 $adapterFiles = @(
-    (Join-Path $scannerDir 'Invoke-DefenderScan.ps1'),
     (Join-Path $scannerDir 'Invoke-ESETScan.ps1'),
     (Join-Path $scannerDir 'Invoke-KVRTScan.ps1')
 )

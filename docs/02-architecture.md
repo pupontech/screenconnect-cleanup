@@ -41,8 +41,6 @@ sc-cleanup.ps1  [flags]          <- top-level runner, BUILT (wires Stages 0-8)
 |    everything moved to \quarantine\ - NOTHING deleted
 |
 +- STAGE 5  SCANNERS                   [skip: -sa]   <- sequential, long
-|    Defender MpCmdRun  (always available, zero licensing risk - do this first)
-|    AdwCleaner         (REMOVED from scope 2026-08-26 - owner decision)
 |    KVRT               (approved, see D2)
 |    ESET               (approved, see D3)
 |    MSERT              (free Microsoft second opinion)

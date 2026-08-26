@@ -725,13 +725,13 @@ $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 'sa' -St
     $logsDir = Join-Path $WorkDir 'logs'
     $null = New-Item -ItemType Directory -Path $logsDir -Force
 
-    # All three adapters share one contract: they never throw, and report
+    # All adapters share one contract: they never throw, and report
     # Status='NotInstalled' when the scanner is absent, so an unconditional
-    # loop is safe. GUI-only scanners (ESET Online Scanner, Malwarebytes)
-    # are launched for attended use by Invoke-GUIScanner.ps1 after this
-    # stage; MSERT has no adapter yet.
+    # loop is safe. Microsoft Defender was removed from the line-up on
+    # 2026-08-26 (owner decision). GUI-only scanners (ESET Online Scanner,
+    # Malwarebytes) are launched for attended use by Invoke-GUIScanner.ps1
+    # after this stage; MSERT has no adapter yet.
     $scannerAdapters = @(
-        @{ Script = 'Invoke-DefenderScan.ps1'; Name = 'Defender'; LogSubDir = 'MicrosoftDefender' },
         @{ Script = 'Invoke-KVRTScan.ps1';     Name = 'KVRT';     LogSubDir = 'KVRT' },
         @{ Script = 'Invoke-ESETScan.ps1';     Name = 'ESET';     LogSubDir = 'ESET' }
     )

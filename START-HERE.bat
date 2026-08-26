@@ -134,22 +134,7 @@ echo  STEP 6 of 9: Antivirus scans. Each scanner is asked for separately and
 echo    runs to completion before the next one starts.
 
 echo.
-echo    -- 6a: Microsoft Defender (built in) --
-set /p GO="    Run Defender scan? [Y/n] "
-if /i not "%GO%"=="n" (
-    set /p DRY="       Dry-run only (just print the command line)? [y/N] "
-    if /i "!DRY!"=="y" (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scanners\Invoke-DefenderScan.ps1" -WhatIf
-    ) else (
-        echo        Running Defender scan - this can take a while.
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scanners\Invoke-DefenderScan.ps1"
-    )
-    set DRY=
-)
-set GO=
-
-echo.
-echo    -- 6b: Kaspersky Virus Removal Tool (KVRT), interactive GUI --
+echo    -- 6a: Kaspersky Virus Removal Tool (KVRT), interactive GUI --
 set /p GO="    Launch KVRT? [Y/n] "
 if /i not "%GO%"=="n" (
     if exist "%~dp0tools\AV\KVRT.exe" (
@@ -167,7 +152,7 @@ if /i not "%GO%"=="n" (
 set GO=
 
 echo.
-echo    -- 6c: ESET Online Scanner (interactive GUI) --
+echo    -- 6b: ESET Online Scanner (interactive GUI) --
 set /p GO="    Launch ESET Online Scanner? [y/N] "
 if /i "%GO%"=="y" (
     if exist "%~dp0tools\AV\esetonlinescanner.exe" (
@@ -184,7 +169,7 @@ if /i "%GO%"=="y" (
 set GO=
 
 echo.
-echo    -- 6d: Malwarebytes (interactive GUI) --
+echo    -- 6c: Malwarebytes (interactive GUI) --
 set /p GO="    Launch Malwarebytes installer/scanner? [y/N] "
 if /i "%GO%"=="y" (
     if exist "%~dp0tools\AV\MBSetup.exe" (

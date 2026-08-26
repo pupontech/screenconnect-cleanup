@@ -12,7 +12,7 @@ in order.
 A Windows technician tool for investigating and cleaning up **unauthorized remote-access
 software** on client PCs — typically after a tech-support scam where the client was
 talked into letting a stranger remote in. It is architected like the **Tron script**: a
-staged orchestrator that drives **existing tools** (Sysinternals, Defender, KVRT, ESET,
+staged orchestrator that drives **existing tools** (Sysinternals, KVRT, ESET,
 Procmon) rather than reimplementing them. Roughly 90% orchestration, 10% original code.
 The original code is the ScreenConnect detection module, because no existing tool answers
 the question that matters.
@@ -39,7 +39,7 @@ carried in the client's launch parameters (`h=` host, `k=` server key, `e=` sess
 Two corollaries that shape the whole design:
 
 1. **No malware scanner will flag ScreenConnect.** It is legitimate signed software.
-   KVRT / ESET / Defender walk straight past it. The scanners exist to catch the
+   KVRT / ESET walk straight past it. The scanners exist to catch the
    *commodity malware that came along with it* — a separate job. Neither half substitutes
    for the other.
 2. **Removing the agent is not remediating the incident.** If someone had an interactive
@@ -62,7 +62,7 @@ Two corollaries that shape the whole design:
 | **2 Detection** | **ScreenConnect instance identity + other RAT presence** | **BUILT + TESTED** |
 | 3 Technician review | approval gate — nothing removed without it | built (interactive y/n, was "not started") |
 | 4 Remove / quarantine | stop, uninstall, quarantine, clean persistence | **built, dry-run default** (was "not started") |
-| 5 Scanners | Defender, KVRT, ESET, MSERT (AdwCleaner removed 2026-08-26) | built (3 adapters; MSERT not built) |
+| 5 Scanners | KVRT, ESET, MSERT (Defender + AdwCleaner removed 2026-08-26) | built (2 adapters; MSERT not built) |
 | 6 Procmon (targeted) | "something reinstalled it — what?" | stub (opt-in only) |
 | 7 Snapshot (after) + diff | prove removal, catch resurrections | built |
 | 8 Report | HTML + JSON + tech summary | built (XSS + empty-case verified) |
@@ -90,7 +90,7 @@ screenconnect-cleanup/
   remove-screenconnect.ps1        Stage 4 removal/containment. BUILT, dry-run default.
   diff-snapshots.ps1              Stage 7 before/after diff. BUILT.
   New-InvestigationReport.ps1     Stage 8 report. BUILT (XSS + empty-case verified).
-  scanners/                       Stage 5 adapters (Defender/KVRT/ESET). BUILT.
+  scanners/                       Stage 5 adapters (KVRT/ESET). BUILT.
   targets.json                    What to look for. 15 products, toggleable.
   START-HERE.bat                  Guided 9-step launcher (Step 7 Tikun = opt-in destructive).
   RUN-REMOVAL-TEST.bat            Lab-only -ExecuteRemoval test launcher.

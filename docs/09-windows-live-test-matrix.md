@@ -81,12 +81,12 @@ hold", "Scanner-process contracts OK", removal runtime contracts OK, integration
     it reaches detect-remote-access.ps1 after elevation (SCC_ARGS env forwarding).
 4.4 Confirm fltmc privilege probe and default KEEP prompt semantics are unchanged.
 
-## 5. Scanner adapters (Stage 5, Defender/ESET/KVRT)
+## 5. Scanner adapters (Stage 5, ESET/KVRT)
 
-5.1 WhatIf: all three adapters with -WhatIf must return Skipped without spawning a
+5.1 WhatIf: both adapters with -WhatIf must return Skipped without spawning a
     process.
 5.2 Chatty scanner (synthetic stand-in binary flooding stdout+stderr): no deadlock,
-    output captured, exit-code mapping unchanged (Defender 0/2, ESET 0/50/10/100,
+    output captured, exit-code mapping unchanged (ESET 0/50/10/100,
     KVRT report-file detection).
 5.3 Hung scanner (synthetic stand-in that never exits): TimeoutMinutes respected,
     Status=Timeout with the new error string, process terminated, no orphan.

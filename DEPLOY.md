@@ -20,7 +20,6 @@ Run-DetectRemoteAccess.bat
 targets.json
 New-InvestigationReport.ps1
 scanners\
-  Invoke-DefenderScan.ps1
   Invoke-KVRTScan.ps1
   Invoke-ESETScan.ps1
 tools\Get-ToolPack.ps1          <- downloader ONLY; do NOT copy tools\* exes
@@ -120,7 +119,7 @@ owner tests live). In priority order:
 2. Run collect-snapshot.ps1 twice ~30s apart; diff must show only volatile
    sections (processes/connections), no ordering churn.
 3. One smoke run of each scanner adapter (-WhatIf at minimum, then a real
-   Defender quick scan).
+   KVRT scan). Defender was removed from the line-up (owner, 2026-08-26).
 4. Confirm Get-ToolPack downloads complete on the target's network.
 
 Nothing destructive ships: Stage 4 (removal) is a stub behind the review gate.
