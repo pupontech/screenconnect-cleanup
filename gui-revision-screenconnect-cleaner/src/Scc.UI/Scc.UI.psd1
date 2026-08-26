@@ -14,6 +14,9 @@
         'Get-SccNextStage',
         'Stop-SccWorkflow',
         'Start-SccJob',
+        'Update-SccJob',
+        'Wait-SccJob',
+        'Stop-SccJob',
         'Start-SccApp'
     )
     VariablesToExport      = @()

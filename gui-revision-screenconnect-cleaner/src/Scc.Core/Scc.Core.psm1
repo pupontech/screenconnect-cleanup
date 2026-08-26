@@ -139,17 +139,13 @@ function ConvertTo-SccJson {
         [int]$Depth = 10
     )
     # Always serialize via -InputObject so single-element arrays stay arrays
-    # (the classic PowerShell pipeline-unwrap bug is avoided).
-    $opts = @{
-        InputObject = $InputObject
-        Depth       = $Depth
-        Compress    = $true
-    }
-    if ($PSVersionTable.PSVersion.Major -ge 3) {
-        $opts['MaxJsonLength'] = 33554432
-    }
+    # (the classic PowerShell pipeline-unwrap bug is avoided). We call
+    # ConvertTo-Json directly (not via a splat) because splatting an array
+    # value for -InputObject unrolls it. -MaxJsonLength is intentionally
+    # omitted: it exists in Windows PowerShell 5.1 but not in PowerShell
+    # (Core); the 2 MB default is ample for our payloads.
     try {
-        return (ConvertTo-Json @opts)
+        return (ConvertTo-Json -InputObject $InputObject -Depth $Depth -Compress)
     } catch {
         # Last-resort fallback: stringify.
         return (ConvertTo-Json -InputObject ([string]$InputObject) -Compress -Depth 1)
@@ -230,7 +226,11 @@ function Get-SccConfig {
         try {
             $text = [System.IO.File]::ReadAllText($f)
             $parsed = ConvertFrom-Json -InputObject $text
-            Merge-SccConfig -Base $config -Override $parsed
+            if ($parsed -is [PSCustomObject]) {
+                $config = Merge-SccConfig -Base $config -Override $parsed
+            } else {
+                Write-SccLog -Level WARNING -Stage 'Core' -Component 'Scc.Core' -Operation 'Get-SccConfig' -Message ("Config file is not a JSON object; ignored, using defaults: $f")
+            }
         } catch {
             Write-SccLog -Level WARNING -Stage 'Core' -Component 'Scc.Core' -Operation 'Get-SccConfig' -Message ("Malformed config JSON ignored, using defaults: {0} ({1})" -f $f, $_.Exception.Message)
         }
@@ -721,7 +721,8 @@ function Save-SccRunState {
     )
 
     $stateFile = Join-Path $Run.RunDir 'runstate.json'
-    $state = Get-SccRunState -RunId $Run.RunId
+    if (-not (Test-Path -LiteralPath $stateFile)) { return }
+    $state = ConvertFrom-SccJson -Path $stateFile
     if (-not $state) { return }
 
     foreach ($st in $state.Stages) {
@@ -748,10 +749,11 @@ function Get-SccRunState {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [string]$RunId
+        [string]$RunId,
+        [string]$ReportRoot
     )
-    $paths = Get-SccPaths
-    $stateFile = Join-Path (Join-Path $paths.ReportRoot $RunId) 'runstate.json'
+    $root = if ($ReportRoot) { Resolve-SccEnv -Text $ReportRoot } else { Resolve-SccEnv -Text (Get-SccPaths).ReportRoot }
+    $stateFile = Join-Path (Join-Path $root $RunId) 'runstate.json'
     if (-not (Test-Path -LiteralPath $stateFile)) { return $null }
     return (ConvertFrom-SccJson -Path $stateFile)
 }
@@ -759,10 +761,10 @@ function Get-SccRunState {
 function Find-SccRecentRuns {
     [CmdletBinding()]
     param(
-        [int]$MaxAgeDays = 7
+        [int]$MaxAgeDays = 7,
+        [string]$ReportRoot
     )
-    $paths = Get-SccPaths
-    $root = $paths.ReportRoot
+    $root = if ($ReportRoot) { Resolve-SccEnv -Text $ReportRoot } else { Resolve-SccEnv -Text (Get-SccPaths).ReportRoot }
     $results = @()
     if (-not (Test-Path -LiteralPath $root)) { return $results }
 

@@ -300,8 +300,10 @@ Exports:
 - `Start-SccApp [-Config] [-ResumeRunId]` -> main entry; builds WPF window, shows
   Dashboard, owns the stage workflow state machine.
 - `Start-SccJob -ScriptBlock -Name [-OnProgress scriptblock] [-CancellationToken]`
-  -> runs block in a background runspace; returns job handle {Id, State, Result,
-  Error, Progress, Percent, Elapsed, Cancel()}. UI polls at 200ms via dispatcher
+  -> runs block in a background runspace; returns a plain data handle {Id, Name,
+  State, Result, Error, Progress, Percent, Elapsed}. Companion functions:
+  `Update-SccJob -Handle` (refresh fields), `Wait-SccJob -Handle` (block to end),
+  `Stop-SccJob -Handle` (cooperative cancel). UI polls at 200ms via dispatcher
   timer. Max concurrent background jobs: 1 (stages are sequential by design).
 - Views (XAML + code-behind):
   Dashboard.xaml        - system info, admin status, internet, NAS, tool status,

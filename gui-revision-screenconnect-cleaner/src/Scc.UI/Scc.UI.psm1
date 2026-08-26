@@ -114,37 +114,88 @@ function Test-SccStageApplicable {
 }
 
 # ---------------------------------------------------------------------------
-# Stage bodies (pure logic, call backend modules by name)
-# ---------------------------------------------------------------------------
+# Stage bodies call private wrapper functions. The wrappers exist INSIDE this
+# module so they are individually mockable for tests; at runtime they assert the
+# real backend cmdlet is present and delegate to it (graceful degradation: a
+# missing backend makes the stage Fail with a clear Detail).
+
+function Invoke-SccBackendPreflight {
+    Assert-SccBackendFn -Function 'Get-SccComputerInfo' -Module 'Scc.Core'
+    $out = [ordered]@{}
+    $out.ComputerInfo = Get-SccComputerInfo
+    if (Get-Command -Name Test-SccInternet -ErrorAction SilentlyContinue) { $out.Internet = Test-SccInternet }
+    if (Get-Command -Name Test-SccNas -ErrorAction SilentlyContinue) { $out.Nas = Test-SccNas }
+    return $out
+}
+
+function Invoke-SccBackendSnapshot {
+    param($Run, $Label, $Days)
+    Assert-SccBackendFn -Function 'New-SccSnapshot' -Module 'Scc.Evidence'
+    return (New-SccSnapshot -Run $Run -Label $Label -IncidentWindowDays $Days)
+}
+
+function Invoke-SccBackendDetection {
+    param($Run)
+    Assert-SccBackendFn -Function 'Invoke-SccDetection' -Module 'Scc.Detection'
+    return (Invoke-SccDetection -Run $Run)
+}
+
+function Invoke-SccBackendRemediation {
+    param($Run, $Plan)
+    Assert-SccBackendFn -Function 'Invoke-SccRemediation' -Module 'Scc.Remedy'
+    if (Get-Command -Name Test-SccPlan -ErrorAction SilentlyContinue) {
+        $null = Test-SccPlan -Run $Run -Plan $Plan
+    }
+    return (Invoke-SccRemediation -Run $Run -Plan $Plan)
+}
+
+function Invoke-SccBackendScanners {
+    param($Run, $Timeout)
+    Assert-SccBackendFn -Function 'Invoke-SccScanner' -Module 'Scc.Scanners'
+    $list = @()
+    if (Get-Command -Name Get-SccScannerList -ErrorAction SilentlyContinue) {
+        $list = Get-SccScannerList -EnabledOnly
+    }
+    $results = @()
+    foreach ($s in $list) {
+        $name = $s.Name
+        if (-not $name) { $name = $s }
+        $results += Invoke-SccScanner -Name $name -Run $Run -TimeoutMinutes $Timeout
+    }
+    return $results
+}
+
+function Invoke-SccBackendCompare {
+    param($Before, $After, $Run)
+    Assert-SccBackendFn -Function 'Compare-SccSnapshots' -Module 'Scc.Snapshots'
+    return (Compare-SccSnapshots -Before $Before -After $After -Run $Run)
+}
+
+function Invoke-SccBackendReport {
+    param($Run)
+    Assert-SccBackendFn -Function 'New-SccReport' -Module 'Scc.Report'
+    return (New-SccReport -Run $Run)
+}
 
 function Invoke-SccStageBody {
     param($Workflow, $Stage)
 
     switch ($Stage.Index) {
         0 {
-            # Preflight
-            Assert-SccBackendFn -Function 'Get-SccComputerInfo' -Module 'Scc.Core'
-            $Workflow.Data.ComputerInfo = Get-SccComputerInfo
-            if (Get-Command -Name Test-SccInternet -ErrorAction SilentlyContinue) {
-                $Workflow.Data.Internet = Test-SccInternet
-            }
-            if (Get-Command -Name Test-SccNas -ErrorAction SilentlyContinue) {
-                $Workflow.Data.Nas = Test-SccNas
-            }
+            $r = Invoke-SccBackendPreflight
+            $Workflow.Data.ComputerInfo = $r.ComputerInfo
+            $Workflow.Data.Internet = $r.Internet
+            $Workflow.Data.Nas = $r.Nas
             $Stage.Detail = 'Preflight checks collected'
             $Stage.Status = 'Completed'
         }
         1 {
-            # SnapshotBefore
-            Assert-SccBackendFn -Function 'New-SccSnapshot' -Module 'Scc.Evidence'
-            $Workflow.Data.SnapshotBefore = New-SccSnapshot -Run $Workflow.Run -Label before -IncidentWindowDays $Workflow.IncidentWindowDays
+            $Workflow.Data.SnapshotBefore = Invoke-SccBackendSnapshot -Run $Workflow.Run -Label before -Days $Workflow.IncidentWindowDays
             $Stage.Detail = 'Snapshot (before) collected'
             $Stage.Status = 'Completed'
         }
         2 {
-            # Detection (READ-ONLY)
-            Assert-SccBackendFn -Function 'Invoke-SccDetection' -Module 'Scc.Detection'
-            $Workflow.Data.Findings = Invoke-SccDetection -Run $Workflow.Run
+            $Workflow.Data.Findings = Invoke-SccBackendDetection -Run $Workflow.Run
             $Stage.Detail = 'Detection complete'
             $Stage.Status = 'Completed'
         }
@@ -167,54 +218,31 @@ function Invoke-SccStageBody {
             $Stage.Detail = 'Awaiting remediation plan approval (headless stops here; provide -PlanPath or approve in GUI)'
         }
         4 {
-            # Remediate (requires plan from stage 3)
-            Assert-SccBackendFn -Function 'Invoke-SccRemediation' -Module 'Scc.Remedy'
             $plan = $Workflow.Data.Plan
             if ($null -eq $plan) { $plan = Get-SccPlanFromRun -Workflow $Workflow }
             if ($null -eq $plan) { throw 'No remediation plan available for stage 4 (Remediate).' }
-            if (Get-Command -Name Test-SccPlan -ErrorAction SilentlyContinue) {
-                $Workflow.Data.PlanTest = Test-SccPlan -Run $Workflow.Run -Plan $plan
-            }
             # Without -Execute this is a dry run only (safe, non-destructive).
-            $Workflow.Data.Remediation = Invoke-SccRemediation -Run $Workflow.Run -Plan $plan
+            $Workflow.Data.Remediation = Invoke-SccBackendRemediation -Run $Workflow.Run -Plan $plan
             $Stage.Detail = 'Remediation executed (dry-run unless plan carried -Execute)'
             $Stage.Status = 'Completed'
         }
         5 {
-            # Scanners (sequential, non-fatal failures)
-            Assert-SccBackendFn -Function 'Invoke-SccScanner' -Module 'Scc.Scanners'
-            $list = @()
-            if (Get-Command -Name Get-SccScannerList -ErrorAction SilentlyContinue) {
-                $list = Get-SccScannerList -EnabledOnly
-            }
-            $results = @()
-            foreach ($s in $list) {
-                $name = $s.Name
-                if (-not $name) { $name = $s }
-                $results += Invoke-SccScanner -Name $name -Run $Workflow.Run -TimeoutMinutes $Workflow.ScannerTimeout
-            }
-            $Workflow.Data.ScannerResults = $results
-            $Stage.Detail = ('Scanners run: ' + @($results).Count)
+            $Workflow.Data.ScannerResults = Invoke-SccBackendScanners -Run $Workflow.Run -Timeout $Workflow.ScannerTimeout
+            $Stage.Detail = ('Scanners run: ' + @($Workflow.Data.ScannerResults).Count)
             $Stage.Status = 'Completed'
         }
         6 {
-            # SnapshotAfter
-            Assert-SccBackendFn -Function 'New-SccSnapshot' -Module 'Scc.Evidence'
-            $Workflow.Data.SnapshotAfter = New-SccSnapshot -Run $Workflow.Run -Label after -IncidentWindowDays $Workflow.IncidentWindowDays
+            $Workflow.Data.SnapshotAfter = Invoke-SccBackendSnapshot -Run $Workflow.Run -Label after -Days $Workflow.IncidentWindowDays
             $Stage.Detail = 'Snapshot (after) collected'
             $Stage.Status = 'Completed'
         }
         7 {
-            # Compare
-            Assert-SccBackendFn -Function 'Compare-SccSnapshots' -Module 'Scc.Snapshots'
-            $Workflow.Data.Diff = Compare-SccSnapshots -Before $Workflow.Data.SnapshotBefore -After $Workflow.Data.SnapshotAfter -Run $Workflow.Run
+            $Workflow.Data.Diff = Invoke-SccBackendCompare -Before $Workflow.Data.SnapshotBefore -After $Workflow.Data.SnapshotAfter -Run $Workflow.Run
             $Stage.Detail = 'Before/After comparison complete'
             $Stage.Status = 'Completed'
         }
         8 {
-            # Report
-            Assert-SccBackendFn -Function 'New-SccReport' -Module 'Scc.Report'
-            $Workflow.Data.Report = New-SccReport -Run $Workflow.Run
+            $Workflow.Data.Report = Invoke-SccBackendReport -Run $Workflow.Run
             $Stage.Detail = 'Report generated'
             $Stage.Status = 'Completed'
         }
@@ -425,19 +453,16 @@ function Start-SccJob {
         $CancellationToken = $null
     )
 
-    if ($null -ne $script:ActiveJob -and $script:ActiveJob._Token.State -in @('Running', 'Queued')) {
+    if ($null -ne $script:ActiveJob -and $script:ActiveJob.State -in @('Running', 'Queued')) {
         throw 'Only one concurrent Scc job is allowed (stages are sequential by design).'
     }
 
+    # The token is CALLER-OWNED. The runspace may READ .Cancelled but never
+    # writes to it. The runspace keeps its own final-state object and emits it
+    # as pipeline output (collected via EndInvoke). No shared mutable state
+    # between caller and runspace beyond the read-only flag.
     if ($null -eq $CancellationToken) {
-        $CancellationToken = @{
-            Cancelled = $false
-            Percent   = 0
-            Progress  = @()
-            State     = 'Running'
-            Result    = $null
-            Error     = $null
-        }
+        $CancellationToken = @{ Cancelled = $false }
     }
 
     $rs = [runspacefactory]::CreateRunspace()
@@ -446,26 +471,29 @@ function Start-SccJob {
     $ps.Runspace = $rs
 
     $wrapper = @'
-param($ScriptBlock, $OnProgress)
+param($Token, $ScriptBlock)
+$state = New-Object 'System.Collections.Specialized.OrderedDictionary'
+$state['State'] = 'Running'
+$state['Result'] = $null
+$state['Error'] = $null
+$state['Percent'] = 0
 try {
-    $token = $__SccToken
-    $token.State = 'Running'
-    $result = & $ScriptBlock $token
-    $token.State = 'Completed'
-    $token.Result = $result
-    if ($token.Percent -lt 100) { $token.Percent = 100 }
+    $result = & $ScriptBlock $Token
+    $state['State'] = 'Completed'
+    $state['Result'] = $result
+    $state['Percent'] = 100
 } catch {
     if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) {
-        $token.State = 'Interrupted'
+        $state['State'] = 'Interrupted'
     } else {
-        $token.State = 'Failed'
-        $token.Error = $_
+        $state['State'] = 'Failed'
+        $state['Error'] = ($_ | Out-String)
     }
 }
+[pscustomobject]$state
 '@
 
-    $rs.SessionStateProxy.SetVariable('__SccToken', $CancellationToken)
-    $null = $ps.AddScript($wrapper).AddArgument($ScriptBlock).AddArgument($OnProgress)
+    $null = $ps.AddScript($wrapper).AddArgument($CancellationToken).AddArgument($ScriptBlock)
     $async = $ps.BeginInvoke()
 
     $handle = [pscustomobject]@{
@@ -474,38 +502,87 @@ try {
         State    = 'Running'
         Result   = $null
         Error    = $null
-        Progress = $CancellationToken.Progress
+        Progress = $null
         Percent  = 0
         Elapsed  = [timespan]::Zero
         _Token   = $CancellationToken
         _PowerShell = $ps
         _Async   = $async
         _Start   = [datetime]::UtcNow
-    }
-
-    $handle | Add-Member -MemberType ScriptMethod -Name 'Refresh' -Value {
-        $this.State = $this._Token.State
-        $this.Result = $this._Token.Result
-        $this.Error = $this._Token.Error
-        $this.Percent = $this._Token.Percent
-        $this.Elapsed = ([datetime]::UtcNow - $this._Start)
-    }
-
-    $handle | Add-Member -MemberType ScriptMethod -Name 'Wait' -Value {
-        try { $this._PowerShell.EndInvoke($this._Async) } catch {}
-        $this.Refresh()
-    }
-
-    $handle | Add-Member -MemberType ScriptMethod -Name 'Cancel' -Value {
-        $this._Token.Cancelled = $true
-        try { $this._PowerShell.Stop() } catch {}
-        $this._Token.State = 'Interrupted'
-        $this.State = 'Interrupted'
-        $this.Refresh()
+        _Done    = $false
     }
 
     $script:ActiveJob = $handle
     return $handle
+}
+
+function Update-SccJob {
+    # Poll: refresh elapsed always; once the pipeline finished, collect the
+    # final state object exactly once via EndInvoke.
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)]$Handle)
+
+    if ($null -eq $Handle) {
+        throw 'Update-SccJob: handle is null.'
+    }
+    $Handle.Elapsed = ([datetime]::UtcNow - $Handle._Start)
+    if ($Handle._Done) { return }
+
+    if ($null -ne $Handle._Async -and $Handle._Async.IsCompleted) {
+        $finalState = $null
+        try { $out = $Handle._PowerShell.EndInvoke($Handle._Async); if ($null -ne $out) { $finalState = @($out)[-1] } } catch {}
+        if ($null -ne $finalState) {
+            $Handle.State   = $finalState.State
+            $Handle.Result  = $finalState.Result
+            $Handle.Error   = $finalState.Error
+            $Handle.Percent = $finalState.Percent
+        }
+        $Handle._Done = $true
+    }
+}
+
+function Wait-SccJob {
+    # Block until the job finishes, collect the final state, refresh handle.
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)]$Handle)
+
+    if ($null -eq $Handle) {
+        throw 'Wait-SccJob: handle is null.'
+    }
+    $finalState = $null
+    try { $out = $Handle._PowerShell.EndInvoke($Handle._Async); if ($null -ne $out) { $finalState = @($out)[-1] } } catch {}
+    if ($null -ne $finalState) {
+        $Handle.State   = $finalState.State
+        $Handle.Result  = $finalState.Result
+        $Handle.Error   = $finalState.Error
+        $Handle.Percent = $finalState.Percent
+    }
+    $Handle._Done = $true
+    $Handle.Elapsed = ([datetime]::UtcNow - $Handle._Start)
+}
+
+function Stop-SccJob {
+    # Cooperative cancel: set the caller-owned flag, stop the pipeline, collect
+    # the final state. Only the caller writes the token.
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)]$Handle)
+
+    if ($null -eq $Handle) {
+        throw 'Stop-SccJob: handle is null.'
+    }
+    if ($null -ne $Handle._Token) {
+        $Handle._Token.Cancelled = $true
+    }
+    try { $Handle._PowerShell.Stop() } catch {}
+    $finalState = $null
+    try { $out = $Handle._PowerShell.EndInvoke($Handle._Async); if ($null -ne $out) { $finalState = @($out)[-1] } } catch {}
+    if ($null -ne $finalState) {
+        $Handle.State = $finalState.State
+    } else {
+        $Handle.State = 'Interrupted'
+    }
+    $Handle._Done = $true
+    $Handle.Elapsed = ([datetime]::UtcNow - $Handle._Start)
 }
 
 # ---------------------------------------------------------------------------
@@ -577,7 +654,7 @@ function Start-SccApp {
     $timer = New-Object System.Windows.Threading.DispatcherTimer
     $timer.Interval = [TimeSpan]::FromMilliseconds(200)
     $timer.Add_Tick({
-        if ($null -ne $script:ActiveJob) { $script:ActiveJob.Refresh() }
+        if ($null -ne $script:ActiveJob) { Update-SccJob -Handle $script:ActiveJob }
     })
     $timer.Start()
 
@@ -596,5 +673,8 @@ Export-ModuleMember -Function @(
     'Get-SccNextStage',
     'Stop-SccWorkflow',
     'Start-SccJob',
+    'Update-SccJob',
+    'Wait-SccJob',
+    'Stop-SccJob',
     'Start-SccApp'
 )

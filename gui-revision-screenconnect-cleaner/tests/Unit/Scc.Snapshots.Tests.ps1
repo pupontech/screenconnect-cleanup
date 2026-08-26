@@ -345,8 +345,13 @@ Describe 'Scc.Snapshots Module' {
                     break
                 }
             }
-            # StillPresent should be sorted
-            @($svcDiff.StillPresent) | Should -Be @(Sort-Object @($svcDiff.StillPresent))
+            # StillPresent should be sorted alphabetically
+            $stillPresent = @($svcDiff.StillPresent)
+            $sorted = @($stillPresent | Sort-Object)
+            $stillPresent.Count | Should -Be $sorted.Count
+            for ($i = 0; $i -lt $stillPresent.Count; $i++) {
+                $stillPresent[$i] | Should -Be $sorted[$i]
+            }
         }
     }
 
@@ -378,9 +383,9 @@ Describe 'Scc.Snapshots Module' {
             $beforeFile = Join-Path $runDir 'snapshots' 'before.json'
             $afterFile = Join-Path $afterDir 'snapshots' 'after.json'
             $diff = Compare-SccSnapshots -Before $beforeFile -After $afterFile
-            $diff.PSObject.Properties['SchemaVersion'] | Should -Not -BeNullOrEmpty
-            $diff.PSObject.Properties['Summary'] | Should -Not -BeNullOrEmpty
-            $diff.PSObject.Properties['Sections'] | Should -Not -BeNullOrEmpty
+            $diff.SchemaVersion | Should -Not -BeNullOrEmpty
+            $diff.Summary | Should -Not -BeNullOrEmpty
+            $diff.Sections | Should -Not -BeNullOrEmpty
         }
     }
 }

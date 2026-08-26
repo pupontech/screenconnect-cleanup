@@ -1,6 +1,17 @@
 # Scc.Core unit tests (Pester 6, Linux, no network)
 # Pure ASCII. Covers the required test matrix from the module contract.
 
+BeforeAll {
+    if (-not $env:TEMP) { $env:TEMP = [System.IO.Path]::GetTempPath() }
+    # Control user/machine config discovery so no stray config pollutes defaults.
+    $env:LocalAppData = Join-Path $env:TEMP ('scc-la-' + [guid]::NewGuid().ToString())
+    $env:ProgramData = Join-Path $env:TEMP ('scc-pd-' + [guid]::NewGuid().ToString())
+    $null = New-Item -ItemType Directory -Path $env:LocalAppData -Force
+    $null = New-Item -ItemType Directory -Path $env:ProgramData -Force
+    $modulePath = '/root/screenconnect-cleanup/gui-revision-screenconnect-cleaner/src/Scc.Core/Scc.Core.psd1'
+    Import-Module -Name $modulePath -Force
+}
+
 Describe 'Scc.Core configuration' {
 
     It 'returns embedded defaults when no file present' {
@@ -14,26 +25,25 @@ Describe 'Scc.Core configuration' {
     }
 
     It 'merges a user file override via -Path' {
-        $tmp = New-TemporaryFile | Rename-Item -NewName { $_ -replace '\.tmp$', '.json' } -PassThru
-        $tmp.FullName
-        Set-Content -Path $tmp.FullName -Value '{"logging":{"level":"DEBUG"},"safety":{"serverOsRefusal":false}}' -Encoding ASCII
-        $cfg = Get-SccConfig -Path $tmp.FullName
+        $tmp = Join-Path $env:TEMP ('scc-cfg-' + [guid]::NewGuid().ToString() + '.json')
+        Set-Content -Path $tmp -Value '{"logging":{"level":"DEBUG"},"safety":{"serverOsRefusal":false}}' -Encoding ASCII
+        $cfg = Get-SccConfig -Path $tmp
         $cfg.logging.level | Should -Be 'DEBUG'
         $cfg.safety.serverOsRefusal | Should -BeFalse
         # untouched sections keep defaults
         $cfg.safety.dryRunDefault | Should -BeTrue
-        Remove-Item -LiteralPath $tmp.FullName -Force
+        Remove-Item -LiteralPath $tmp -Force
     }
 
     It 'falls back to defaults + warning on malformed JSON' {
         Mock -ModuleName Scc.Core Write-SccLog {} -ParameterFilter { $Level -eq 'WARNING' }
-        $tmp = New-TemporaryFile | Rename-Item -NewName { $_ -replace '\.tmp$', '.json' } -PassThru
-        Set-Content -Path $tmp.FullName -Value '{ this is not valid json ,,,' -Encoding ASCII
-        $cfg = Get-SccConfig -Path $tmp.FullName
+        $tmp = Join-Path $env:TEMP ('scc-cfg-' + [guid]::NewGuid().ToString() + '.json')
+        Set-Content -Path $tmp -Value '{ this is not valid json ,,,' -Encoding ASCII
+        $cfg = Get-SccConfig -Path $tmp
         $cfg.logging.level | Should -Be 'INFO'
         $cfg.safety.serverOsRefusal | Should -BeTrue
         Should -Invoke -ModuleName Scc.Core Write-SccLog -ParameterFilter { $Level -eq 'WARNING' } -Times 1
-        Remove-Item -LiteralPath $tmp.FullName -Force
+        Remove-Item -LiteralPath $tmp -Force
     }
 }
 
@@ -94,7 +104,7 @@ Describe 'New-SccRun and run state' {
         foreach ($s in @('evidence','snapshots','scanner-results','logs','quarantine-meta')) {
             Test-Path -LiteralPath (Join-Path $run.RunDir $s) | Should -BeTrue
         }
-        $state = Get-SccRunState -RunId $run.RunId
+        $state = Get-SccRunState -RunId $run.RunId -ReportRoot $script:reportRoot
         @($state.Stages).Count | Should -Be 9
         foreach ($st in $state.Stages) { $st.Status | Should -Be 'Pending' }
         $script:runId = $run.RunId
@@ -102,14 +112,14 @@ Describe 'New-SccRun and run state' {
 
     It 'Find-SccRecentRuns finds the created run, newest first' {
         Start-Sleep -Milliseconds 50
-        $runs = Find-SccRecentRuns -MaxAgeDays 7
+        $runs = Find-SccRecentRuns -MaxAgeDays 7 -ReportRoot $script:reportRoot
         @($runs | Where-Object { $_.RunId -eq $script:runId }).Count | Should -Be 1
     }
 
     It 'Save-SccRunState updates a stage status' {
         $run = [PSCustomObject]@{ RunId = $script:runId; RunDir = (Join-Path $script:reportRoot $script:runId) }
         Save-SccRunState -Run $run -Stage 'Detection' -Status Completed -Detail 'ok'
-        $state = Get-SccRunState -RunId $script:runId
+        $state = Get-SccRunState -RunId $script:runId -ReportRoot $script:reportRoot
         ($state.Stages | Where-Object { $_.Name -eq 'Detection' }).Status | Should -Be 'Completed'
     }
 }
@@ -127,8 +137,8 @@ Describe 'Write-SccLog' {
     It 'applies level threshold (TRACE filtered out at DEBUG)' {
         Write-SccLog -Run $script:run -Level TRACE -Stage 'Detect' -Component 'X' -Operation 'Y' -Message 'should-be-filtered'
         Write-SccLog -Run $script:run -Level INFO -Stage 'Detect' -Component 'X' -Operation 'Y' -Message 'keep-me' -Data ([PSCustomObject]@{ n = 1 })
-        $jsonl = Join-Path $script:run.RunDir 'logs\Detect.jsonl'
-        $lines = Get-Content -LiteralPath $jsonl
+        $jsonl = Join-Path (Join-Path $script:run.RunDir 'logs') 'Detect.jsonl'
+        $lines = @(Get-Content -LiteralPath $jsonl)
         $lines.Count | Should -Be 1
         $lines[0] | Should -Match 'keep-me'
         $parsed = $lines[0] | ConvertFrom-Json
@@ -137,7 +147,7 @@ Describe 'Write-SccLog' {
     }
 
     It 'writes a plain line to master.log' {
-        $master = Join-Path $script:run.RunDir 'logs\master.log'
+        $master = Join-Path (Join-Path $script:run.RunDir 'logs') 'master.log'
         Test-Path -LiteralPath $master | Should -BeTrue
         Get-Content -LiteralPath $master | Should -Match '\[INFO\]'
     }
@@ -157,7 +167,7 @@ Describe 'Get-SccFileFacts' {
         InModuleScope Scc.Core { $script:SccConfig = $null; $script:SccCache = @{} }
         $facts = Get-SccFileFacts -Path $script:f.FullName
         $facts.Exists | Should -BeTrue
-        $facts.Size | Should -Be (('hello scc').Length)
+        $facts.Size | Should -Be (Get-Item -LiteralPath $script:f.FullName).Length
         $facts.SHA256 | Should -Be $script:expectedSha
         $facts.SignatureStatus | Should -Be 'NotChecked'
     }
@@ -174,7 +184,7 @@ Describe 'ConvertTo-SccJson single-element array' {
         $json = ConvertTo-SccJson -InputObject @(42)
         $json | Should -Match '^\[42\]$'
         $back = ConvertFrom-Json -InputObject $json
-        $back -is [System.Array] | Should -BeTrue
+        # pwsh may unroll on read; assert the serialized form is an array.
         @($back).Count | Should -Be 1
     }
 

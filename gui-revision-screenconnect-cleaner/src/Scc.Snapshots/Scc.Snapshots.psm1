@@ -127,12 +127,17 @@ function Compare-SccObjectSection {
         if ($changed.Count -eq 0) { $changed = @('value') }
     }
 
+    $resultChanged = @()
+    if ($changed.Count -gt 0) {
+        $resultChanged = @([PSCustomObject]@{ Key = '<object>'; Fields = $changed })
+    }
+
     return [PSCustomObject]@{
         Section  = $SectionName
         Removed  = @()
         StillPresent = @()
         New      = @()
-        Changed  = @([PSCustomObject]@{ Key = '<object>'; Fields = $changed })
+        Changed  = $resultChanged
     }
 }
 

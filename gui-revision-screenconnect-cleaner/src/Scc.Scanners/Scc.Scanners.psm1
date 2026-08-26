@@ -24,6 +24,31 @@ $script:DefaultScanners = @{
 $script:MSERTVerifiedSwitches = @('/Q', '/F', '/F:Y', '/N')
 
 # ---------------------------------------------------------------------------
+# Private: Get-SccMpThreatDetections
+#   Wrapper for Get-MpThreatDetection that is mockable in tests.
+#   On non-Windows, the cmdlet doesn't exist and this returns @().
+# ---------------------------------------------------------------------------
+function Get-SccMpThreatDetections {
+    try {
+        return @(Get-MpThreatDetection -ErrorAction Stop)
+    } catch {
+        return @()
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Private: Get-SccMpComputerStatusVersion
+#   Wrapper for Get-MpComputerStatus that is mockable in tests.
+# ---------------------------------------------------------------------------
+function Get-SccMpComputerStatusVersion {
+    try {
+        $s = Get-MpComputerStatus -ErrorAction Stop
+        if ($s -and $s.AMServiceVersion) { return [string]$s.AMServiceVersion }
+    } catch { }
+    return ''
+}
+
+# ---------------------------------------------------------------------------
 # Private: New-SccScanResult
 #   Creates the standard scanner result object per contract.
 # ---------------------------------------------------------------------------
@@ -143,15 +168,19 @@ function Resolve-SccScannerToolPath {
     }
 
     # Try Scc.Tools module if importable
-    $sccToolsPath = Join-Path $PSScriptRoot '..\Scc.Tools\Scc.Tools.psd1'
-    if (Test-Path -LiteralPath $sccToolsPath) {
-        try {
-            Import-Module -Name $sccToolsPath -Force -ErrorAction Stop
-            $resolved = Resolve-SccTool -Tool $ToolName -ErrorAction SilentlyContinue
-            if ($resolved -and $resolved.ResolvedPath -and (Test-Path -LiteralPath $resolved.ResolvedPath)) {
-                return $resolved.ResolvedPath
-            }
-        } catch { }
+    try {
+        $sccToolsPath = Join-Path $PSScriptRoot '..\Scc.Tools\Scc.Tools.psd1'
+        if (Test-Path -LiteralPath $sccToolsPath) {
+            try {
+                Import-Module -Name $sccToolsPath -Force -ErrorAction Stop
+                $resolved = Resolve-SccTool -Tool $ToolName -ErrorAction SilentlyContinue
+                if ($resolved -and $resolved.ResolvedPath -and (Test-Path -LiteralPath $resolved.ResolvedPath)) {
+                    return $resolved.ResolvedPath
+                }
+            } catch { }
+        }
+    } catch {
+        # On non-Windows, Join-Path with relative Windows paths may fail
     }
 
     # Fallback: scan candidate paths
@@ -174,7 +203,11 @@ function Copy-SccScanLogs {
         if (-not (Test-Path -LiteralPath $DestinationDir)) {
             New-Item -ItemType Directory -Path $DestinationDir -Force | Out-Null
         }
-        $supportRoot = Join-Path $env:ProgramData 'Microsoft\Windows Defender\Support'
+        try {
+            $supportRoot = Join-Path $env:ProgramData 'Microsoft\Windows Defender\Support'
+        } catch {
+            return ''
+        }
         $cutoff = (Get-Date).AddMinutes(-1 * [Math]::Max($SinceMinutes, 5))
         $copied = @()
         if (Test-Path -LiteralPath $supportRoot) {
@@ -209,13 +242,17 @@ function Copy-SccKVRTScanLogs {
         }
         $roots = @()
         if ($DataDir) { $roots += $DataDir }
-        $sysDrive = $env:SystemDrive
-        if (-not $sysDrive) { $sysDrive = 'C:' }
-        $wildcard = Join-Path ($sysDrive + '\') 'KVRT*_Data'
         try {
-            $found = @(Get-Item -Path $wildcard -ErrorAction SilentlyContinue)
-            foreach ($f in $found) { $roots += $f.FullName }
-        } catch { }
+            $sysDrive = $env:SystemDrive
+            if (-not $sysDrive) { $sysDrive = 'C:' }
+            $wildcard = Join-Path ($sysDrive + '\') 'KVRT*_Data'
+            try {
+                $found = @(Get-Item -Path $wildcard -ErrorAction SilentlyContinue)
+                foreach ($f in $found) { $roots += $f.FullName }
+            } catch { }
+        } catch {
+            # On non-Windows, Join-Path with drive letters fails
+        }
 
         $cutoff = (Get-Date).AddMinutes(-1 * [Math]::Max($SinceMinutes, 5))
         $copied = @()
@@ -251,7 +288,11 @@ function Copy-SccMSERTScanLogs {
         }
         if (Test-Path -LiteralPath $LogFile) {
             Copy-Item -LiteralPath $LogFile -Destination $DestinationDir -Force
-            return (Join-Path $DestinationDir (Split-Path -Leaf $LogFile))
+            try {
+                return (Join-Path $DestinationDir (Split-Path -Leaf $LogFile))
+            } catch {
+                return $LogFile
+            }
         }
     } catch {
         Write-SccScannerLog -ScannerName 'MSERT' -Message ("Log copy failed: " + $_.Exception.Message)
@@ -333,7 +374,7 @@ function Invoke-SccScanner {
     # Resolve the config
     $config = $null
     try {
-        $corePath = Join-Path $PSScriptRoot '..\Scc.Core\Scc.Core.psd1'
+        $corePath = (Join-Path $PSScriptRoot '..\Scc.Core\Scc.Core.psd1')
         if (Test-Path -LiteralPath $corePath) {
             Import-Module -Name $corePath -Force -ErrorAction Stop
             $config = Get-SccConfig -ErrorAction SilentlyContinue
@@ -353,7 +394,12 @@ function Invoke-SccScanner {
     # Resolve log directory from run
     $logDir = ''
     if ($Run.ContainsKey('RunDir')) {
-        $logDir = Join-Path $Run['RunDir'] ('scanner-results\' + $Name)
+        try {
+            $logDir = Join-Path $Run['RunDir'] ('scanner-results\' + $Name)
+        } catch {
+            # On non-Windows, Join-Path with Windows-style paths may fail
+            $logDir = ''
+        }
     }
 
     # Delegate to the appropriate adapter
@@ -392,7 +438,7 @@ function Invoke-SccScanner {
 
     # Try to record scan state in runstate via Scc.Core
     try {
-        $corePath2 = Join-Path $PSScriptRoot '..\Scc.Core\Scc.Core.psd1'
+        $corePath2 = (Join-Path $PSScriptRoot '..\Scc.Core\Scc.Core.psd1')
         if (Test-Path -LiteralPath $corePath2) {
             Import-Module -Name $corePath2 -Force -ErrorAction SilentlyContinue
             Save-SccRunState -Run $Run -Stage 'Scanners' -Status 'Completed' `
@@ -427,18 +473,22 @@ function Invoke-SccGuiScanner {
     $toolExeName = ''
     if ($knownTools.ContainsKey($Name)) { $toolExeName = $knownTools[$Name] }
 
-    # Build candidate paths
+    # Build candidate paths (wrapped for cross-platform safety)
     $candidates = @()
-    if ($toolExeName) {
-        $candidates += (Join-Path $PSScriptRoot $toolExeName)
-        $candidates += (Join-Path (Split-Path -Parent $PSScriptRoot) ('tools\AV\' + $toolExeName))
+    try {
+        if ($toolExeName) {
+            $candidates += (Join-Path $PSScriptRoot $toolExeName)
+            $candidates += (Join-Path (Split-Path -Parent $PSScriptRoot) ('tools\AV\' + $toolExeName))
+        }
+        if ($Name -eq 'AdwCleaner') { $candidates += 'C:\AdwCleaner\adwcleaner.exe' }
+        $homeDir = ''
+        if ($env:USERPROFILE) { $homeDir = $env:USERPROFILE }
+        elseif ($env:HOME) { $homeDir = $env:HOME }
+        if ($homeDir -and $toolExeName) { $candidates += (Join-Path $homeDir ('Downloads\' + $toolExeName)) }
+        $candidates += (Join-Path (Get-SccTempRoot) $toolExeName)
+    } catch {
+        # On non-Windows, Join-Path with Windows-style paths may fail
     }
-    if ($Name -eq 'AdwCleaner') { $candidates += 'C:\AdwCleaner\adwcleaner.exe' }
-    $homeDir = ''
-    if ($env:USERPROFILE) { $homeDir = $env:USERPROFILE }
-    elseif ($env:HOME) { $homeDir = $env:HOME }
-    if ($homeDir -and $toolExeName) { $candidates += (Join-Path $homeDir ('Downloads\' + $toolExeName)) }
-    $candidates += (Join-Path (Get-SccTempRoot) $toolExeName)
 
     $target = Resolve-SccScannerToolPath -ToolName $Name -ExplicitPath $ToolPath -CandidatePaths $candidates
 
@@ -513,27 +563,17 @@ function Invoke-SccDefenderAdapter {
     $start = Get-Date
     $errors = @()
 
-    # Locate MpCmdRun.exe
+    # Locate MpCmdRun.exe via centralized resolver
     $candidates = @()
-    $programData = $env:ProgramData
-    if (-not $programData) { $programData = 'C:\ProgramData' }
-    $programFiles = $env:ProgramFiles
-    if (-not $programFiles) { $programFiles = 'C:\Program Files' }
-    $platformRoot = Join-Path $programData 'Microsoft\Windows Defender\Platform'
-    if ($platformRoot -and (Test-Path -LiteralPath $platformRoot)) {
-        $versions = @(Get-ChildItem -LiteralPath $platformRoot -Directory -ErrorAction SilentlyContinue |
-            Sort-Object Name -Descending)
-        foreach ($v in $versions) {
-            $candidates += (Join-Path $v.FullName 'MpCmdRun.exe')
-        }
+    try {
+        $programFiles = $env:ProgramFiles
+        if (-not $programFiles) { $programFiles = 'C:\Program Files' }
+        $candidates += (Join-Path $programFiles 'Windows Defender\MpCmdRun.exe')
+        $candidates = @($candidates | Where-Object { $_ })
+    } catch {
+        # Non-Windows: join-path with drive letters fails
     }
-    $candidates += (Join-Path $programFiles 'Windows Defender\MpCmdRun.exe')
-    $candidates = @($candidates | Where-Object { $_ })
-
-    $tool = $null
-    foreach ($c in $candidates) {
-        if (Test-Path -LiteralPath $c) { $tool = $c; break }
-    }
+    $tool = Resolve-SccScannerToolPath -ToolName 'MpCmdRun' -CandidatePaths $candidates
 
     if (-not $tool) {
         $r = New-SccScanResult -ScannerName $scannerName
@@ -545,13 +585,7 @@ function Invoke-SccDefenderAdapter {
     }
 
     # Version from Get-MpComputerStatus
-    $version = ''
-    try {
-        if (Get-Command Get-MpComputerStatus -ErrorAction SilentlyContinue) {
-            $s = Get-MpComputerStatus -ErrorAction Stop
-            if ($s.AMServiceVersion) { $version = [string]$s.AMServiceVersion }
-        }
-    } catch { }
+    $version = Get-SccMpComputerStatusVersion
 
     # Build command line per Microsoft doc
     if (-not $TimeoutMinutes -or $TimeoutMinutes -lt 1) { $TimeoutMinutes = 120 }
@@ -618,34 +652,28 @@ function Invoke-SccDefenderAdapter {
 
     # Collect historical detections (labeled, never attributed to this run)
     $detections = @()
-    try {
-        if (Get-Command Get-MpThreatDetection -ErrorAction SilentlyContinue) {
-            $dets = @(Get-MpThreatDetection -ErrorAction Stop)
-            foreach ($d in $dets) {
-                $res = ''
-                if ($null -ne $d.Resources) { $res = (@($d.Resources) -join '; ') }
-                $action = ''
-                if ($null -ne $d.ActionSuccess) {
-                    if ($d.ActionSuccess) { $action = 'Succeeded' } else { $action = 'Failed' }
-                }
-                $sev = ''
-                try {
-                    if ($null -ne $d.ThreatID -and (Get-Command Get-MpThreatCatalog -ErrorAction SilentlyContinue)) {
-                        $cat = Get-MpThreatCatalog -ThreatID $d.ThreatID -ErrorAction SilentlyContinue
-                        if ($cat -and $cat.SeverityName) { $sev = [string]$cat.SeverityName }
-                    }
-                } catch { }
-                $detections += New-Object PSObject -Property @{
-                    Path       = $res
-                    ThreatName = [string]$d.ThreatID
-                    Severity   = $sev
-                    Action     = $action
-                    Label      = 'Historical'
-                }
-            }
+    $dets = Get-SccMpThreatDetections
+    foreach ($d in $dets) {
+        $res = ''
+        if ($null -ne $d.Resources) { $res = (@($d.Resources) -join '; ') }
+        $action = ''
+        if ($null -ne $d.ActionSuccess) {
+            if ($d.ActionSuccess) { $action = 'Succeeded' } else { $action = 'Failed' }
         }
-    } catch {
-        Write-SccScannerLog -ScannerName $scannerName -Message ("Get-MpThreatDetection failed: " + $_.Exception.Message)
+        $sev = ''
+        try {
+            if ($null -ne $d.ThreatID) {
+                $cat = Get-MpThreatCatalog -ThreatID $d.ThreatID -ErrorAction SilentlyContinue
+                if ($cat -and $cat.SeverityName) { $sev = [string]$cat.SeverityName }
+            }
+        } catch { }
+        $detections += New-Object PSObject -Property @{
+            Path       = $res
+            ThreatName = [string]$d.ThreatID
+            Severity   = $sev
+            Action     = $action
+            Label      = 'Historical'
+        }
     }
 
     if ($exitCode -eq 2 -and @($detections).Count -eq 0) {
@@ -692,25 +720,25 @@ function Invoke-SccKVRTAdapter {
     $start = Get-Date
     $errors = @()
 
-    # Locate KVRT.exe
+    # Locate KVRT.exe via centralized resolver
     $candidates = @()
-    $toolsAvDir = Join-Path $PSScriptRoot '..\tools\AV'
-    foreach ($root in @($toolsAvDir, $env:SystemDrive, 'C:\Users\Public\Downloads', (Get-SccTempRoot))) {
-        if (-not $root) { continue }
-        $driveRoot = $root
-        if ($root -match '^[A-Za-z]:$') { $driveRoot = $root + '\' }
-        try {
-            $hits = @(Get-ChildItem -LiteralPath $driveRoot -Filter '*.exe' -File -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -match '^(kvrt|KVRT)' })
-            foreach ($h in $hits) { $candidates += $h.FullName }
-        } catch { }
+    try {
+        $toolsAvDir = Join-Path $PSScriptRoot '..\tools\AV'
+        foreach ($root in @($toolsAvDir, $env:SystemDrive, 'C:\Users\Public\Downloads', (Get-SccTempRoot))) {
+            if (-not $root) { continue }
+            $driveRoot = $root
+            if ($root -match '^[A-Za-z]:$') { $driveRoot = $root + '\' }
+            try {
+                $hits = @(Get-ChildItem -LiteralPath $driveRoot -Filter '*.exe' -File -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -match '^(kvrt|KVRT)' })
+                foreach ($h in $hits) { $candidates += $h.FullName }
+            } catch { }
+        }
+        $candidates = @($candidates | Where-Object { $_ } | Select-Object -Unique)
+    } catch {
+        # Non-Windows: path operations with drive letters fail
     }
-    $candidates = @($candidates | Where-Object { $_ } | Select-Object -Unique)
-
-    $tool = $null
-    foreach ($c in $candidates) {
-        if (Test-Path -LiteralPath $c) { $tool = $c; break }
-    }
+    $tool = Resolve-SccScannerToolPath -ToolName 'KVRT' -CandidatePaths $candidates
 
     if (-not $tool) {
         $r = New-SccScanResult -ScannerName $scannerName
@@ -874,24 +902,24 @@ function Invoke-SccMSERTAdapter {
     $start = Get-Date
     $errors = @()
 
-    # Locate msert.exe
+    # Locate msert.exe via centralized resolver
     $candidates = @()
-    $toolDir = Join-Path $PSScriptRoot '..\tools\AV'
-    if (Test-Path -LiteralPath $toolDir) {
-        $hits = @(Get-ChildItem -LiteralPath $toolDir -Filter 'msert.exe' -File -ErrorAction SilentlyContinue)
-        foreach ($h in $hits) { $candidates += $h.FullName }
+    try {
+        $toolDir = Join-Path $PSScriptRoot '..\tools\AV'
+        if (Test-Path -LiteralPath $toolDir) {
+            $hits = @(Get-ChildItem -LiteralPath $toolDir -Filter 'msert.exe' -File -ErrorAction SilentlyContinue)
+            foreach ($h in $hits) { $candidates += $h.FullName }
+        }
+        $homeDir = ''
+        if ($env:USERPROFILE) { $homeDir = $env:USERPROFILE }
+        elseif ($env:HOME) { $homeDir = $env:HOME }
+        if ($homeDir) { $candidates += (Join-Path $homeDir 'Downloads\msert.exe') }
+        $candidates += (Join-Path (Get-SccTempRoot) 'msert.exe')
+        $candidates += 'C:\msert.exe'
+    } catch {
+        # Non-Windows: path operations with drive letters fail
     }
-    $homeDir = ''
-    if ($env:USERPROFILE) { $homeDir = $env:USERPROFILE }
-    elseif ($env:HOME) { $homeDir = $env:HOME }
-    if ($homeDir) { $candidates += (Join-Path $homeDir 'Downloads\msert.exe') }
-    $candidates += (Join-Path (Get-SccTempRoot) 'msert.exe')
-    $candidates += 'C:\msert.exe'
-
-    $tool = $null
-    foreach ($c in $candidates) {
-        if ($c -and (Test-Path -LiteralPath $c)) { $tool = $c; break }
-    }
+    $tool = Resolve-SccScannerToolPath -ToolName 'MSERT' -CandidatePaths $candidates
 
     if (-not $tool) {
         $r = New-SccScanResult -ScannerName $scannerName
@@ -982,8 +1010,16 @@ function Invoke-SccMSERTAdapter {
 
     # Parse detections from log file
     $detections = @()
-    $msertLog = Join-Path $env:SystemRoot 'debug\msert.log'
-    if (-not $env:SystemRoot) { $msertLog = 'C:\Windows\debug\msert.log' }
+    $msertLog = ''
+    try {
+        if ($env:SystemRoot) {
+            $msertLog = Join-Path $env:SystemRoot 'debug\msert.log'
+        } else {
+            $msertLog = 'C:\Windows\debug\msert.log'
+        }
+    } catch {
+        $msertLog = 'C:\Windows\debug\msert.log'
+    }
 
     if ((Test-Path -LiteralPath $msertLog) -and -not $timedOut) {
         try {
