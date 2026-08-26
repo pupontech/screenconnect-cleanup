@@ -1332,12 +1332,26 @@ foreach ($inst in $scInstancesArray) {
         $uninstallSuccess = $false
         if ($uninstallEntry) {
             $uninstallSuccess = Run-VendorUninstaller -UninstallEntry $uninstallEntry -InstanceId $instanceId -InstallDir $installDir
+            # FIX (StrictMode): the direct $uninstallEntry.UninstallString reads
+            # below THREW on PS 5.1 under Set-StrictMode -Version 2.0 whenever
+            # the registration carries only QuietUninstallString (or neither
+            # value), aborting the instance AFTER the uninstaller decision was
+            # already made and recording a bogus ProcessInstance failure. Read
+            # the audit-trail target through the StrictMode-safe helper,
+            # falling back to QuietUninstallString for reporting only. This is
+            # display-only: execution stays inside Run-VendorUninstaller's
+            # validated, no-shell path, which never runs a registry command
+            # string via cmd.exe.
+            $reportTarget = Get-EntryPropertySafe -Instance $uninstallEntry -PropertyName 'UninstallString'
+            if (-not $reportTarget) {
+                $reportTarget = Get-EntryPropertySafe -Instance $uninstallEntry -PropertyName 'QuietUninstallString'
+            }
             if ($uninstallSuccess) {
                 Write-Log "  Vendor uninstaller reported success"
-                Add-ManifestEntry -InstanceId $instanceId -Action 'Uninstall' -Target ($uninstallEntry.UninstallString) -Result 'Success'
+                Add-ManifestEntry -InstanceId $instanceId -Action 'Uninstall' -Target $reportTarget -Result 'Success'
             } else {
                 Write-Log "  Vendor uninstaller failed or returned no success signal" 'Warn'
-                Add-ManifestEntry -InstanceId $instanceId -Action 'Uninstall' -Target ($uninstallEntry.UninstallString) -Result 'Failed' -Details 'Falling back to manual surgery + quarantine'
+                Add-ManifestEntry -InstanceId $instanceId -Action 'Uninstall' -Target $reportTarget -Result 'Failed' -Details 'Falling back to manual surgery + quarantine'
             }
         } else {
             Write-Log "  No uninstall entry found, will proceed to manual surgery" 'Warn'
