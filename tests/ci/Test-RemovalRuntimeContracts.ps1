@@ -81,6 +81,7 @@ if ($funcMatch.Success) {
 } else {
     Assert-True $false "Could not extract Run-BoundedProcess function"
 }
+Assert-True ($scriptContent -match 'timed out after 300s and was killed') "Timeout failure records an explicit killed manifest entry"
 
 # ---------------------------------------------------------------------------
 # TEST 4: exit code 3010 returns a RebootRequired result

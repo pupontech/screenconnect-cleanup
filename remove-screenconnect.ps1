@@ -1057,7 +1057,11 @@ function Run-VendorUninstaller {
                 # Return special marker for 3010 so caller knows to defer completion
                 return @{ Success = $true; RebootRequired = $true; ExitCode = 3010 }
             } else {
-                Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target $displayName -Result 'Failed' -Details "Exit code ${exitCode}: $stderr" -ExitCode $exitCode
+                if ($timedOut) {
+                    Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target $displayName -Result 'Failed' -Details 'Uninstaller timed out after 300s and was killed (no exit code)' -ExitCode -1
+                } else {
+                    Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target $displayName -Result 'Failed' -Details ("Exit code ${exitCode}: " + $stderr) -ExitCode $exitCode
+                }
                 return $false
             }
         } catch {

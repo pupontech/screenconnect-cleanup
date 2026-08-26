@@ -7,6 +7,9 @@
 #      no registry change) AND that a smuggled foreign entry is rejected.
 #   2. report XSS escape: hostile findings.json -> 0 raw <script> in HTML.
 #   3. sc-cleanup.ps1 -WhatIf parses and gates every stage.
+#   4. registry entries missing UninstallString dry-run cleanly (d71d40a).
+#   5. Run-VendorUninstaller execution shape: async pipe drain (no
+#      deadlock), honored 5-minute bound, kill-on-timeout, Failed entry.
 #
 # Exit codes: 0 = all pass, 1 = any failure. PS 5.1 compatible, ASCII, no BOM.
 # =====================================================================
@@ -371,6 +374,357 @@ try {
         }
     } catch { }
 }
+
+# ---------------------------------------------------------------------
+# 5. Run-VendorUninstaller execution shape: no pipe deadlock, honored
+#    5-minute bound, kill-on-timeout, clear Failed manifest entry.
+#
+#    Regression for the old sequential synchronous drain:
+#        $stdout = $proc.StandardOutput.ReadToEnd()
+#        $stderr = $proc.StandardError.ReadToEnd()
+#        $proc.WaitForExit(300000)      # timeout result ignored
+#        $exitCode = $proc.ExitCode
+#    which deadlocked when the child filled either pipe while we were
+#    blocked reading the other, never enforced its own timeout, and read
+#    ExitCode off a possibly still-running process.
+#
+#    Three layers, all inert (no ScreenConnect or vendor binary is ever
+#    installed, downloaded, or executed; every child below is a stub this
+#    test generates itself; cmd.exe is never invoked):
+#
+#    5a. STATIC parse pins on the real remove-screenconnect.ps1: both
+#        redirected pipes drained via ReadToEndAsync BEFORE the bounded
+#        wait, WaitForExit(300000)'s RESULT captured, Kill() on the
+#        timeout path, and a Failed manifest entry recorded there.
+#
+#    5b. DYNAMIC proof of the execution shape: a stub child floods about
+#        2 MB to STDERR (far past any pipe buffer) and only then writes
+#        stdout and exits 7. Through the fixed async shape this must
+#        complete; through the old sequential sync pair it deadlocks by
+#        construction (child blocks writing stderr forever, so stdout
+#        never closes and the first ReadToEnd() never returns), which is
+#        exactly why completion is the regression signal.
+#
+#    5c. DYNAMIC end-to-end through the REAL function body: the
+#        FunctionDefinitionAst for Run-VendorUninstaller is extracted
+#        with the language parser, ONLY the timeout literal is patched
+#        (300000 -> 3000 ms so CI pays seconds instead of five minutes),
+#        minimal shims stand in for Write-Log / Add-ManifestEntry /
+#        Get-EntryPropertySafe, and the function runs against two
+#        compiled stub executables (one exits cleanly, one floods
+#        stderr then hangs holding both pipes open). The literal patch
+#        is required because the product hardcodes the 5-minute
+#        constant; everything else - the vendor-uninstaller allowlist
+#        gate, the verified-install-dir gate, the no-cmd.exe rule,
+#        manifest recording - runs unmodified. The stub leaf name
+#        unins000.exe rides the EXISTING allowlist branch
+#        (^unins[0-9]*\.exe$) inside a ScreenConnect-named install dir,
+#        so the verification gates are exercised as-is, not weakened.
+#
+#    Why the shipped function is not driven live end-to-end with its own
+#    constant: that would burn a real 5+ minutes of runner budget per
+#    case per edition, and the function hardcodes Arguments='' so any
+#    stock runner executable would misbehave unpredictably with zero
+#    arguments. Compiling our own inert stubs keeps child behavior
+#    deterministic; the 5a static pins guarantee the file on disk still
+#    carries the exact fixed shape.
+# ---------------------------------------------------------------------
+$productScript = Join-Path $repoRoot 'remove-screenconnect.ps1'
+$tok5 = $null; $err5 = $null
+$prodAst = [System.Management.Automation.Language.Parser]::ParseFile($productScript, [ref]$tok5, [ref]$err5)
+Check '5a: remove-screenconnect.ps1 parses' ($err5.Count -eq 0)
+
+$fdefs5 = @($prodAst.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))
+$ruv5 = $fdefs5 | Where-Object { $_.Name -eq 'Run-VendorUninstaller' } | Select-Object -First 1
+
+if ($ruv5) {
+    $src5 = $ruv5.Extent.Text
+    $rbp5 = $fdefs5 | Where-Object { $_.Name -eq 'Run-BoundedProcess' } | Select-Object -First 1
+    if ($rbp5) {
+        $runc5 = $rbp5.Extent.Text
+        $iOutA = $runc5.IndexOf('$proc.StandardOutput.ReadToEndAsync()')
+        $iErrA = $runc5.IndexOf('$proc.StandardError.ReadToEndAsync()')
+        $iWait = $runc5.IndexOf('$proc.WaitForExit($TimeoutMs)')
+        $iKill = $runc5.IndexOf('$proc.Kill()')
+
+        Check '5a: both pipes drained via ReadToEndAsync' (($iOutA -ge 0) -and ($iErrA -ge 0))
+        Check '5a: no synchronous pipe ReadToEnd left' ((-not $runc5.Contains('$proc.StandardOutput.ReadToEnd()')) -and (-not $runc5.Contains('$proc.StandardError.ReadToEnd()')))
+        Check '5a: async drains precede the bounded wait' (($iOutA -ge 0) -and ($iErrA -ge 0) -and ($iWait -gt $iOutA) -and ($iWait -gt $iErrA))
+        Check '5a: bounded WaitForExit($TimeoutMs) present' ($iWait -ge 0)
+        Check '5a: exactly one bounded wait literal' (@([regex]::Matches($runc5, 'WaitForExit\(\$TimeoutMs\)')).Count -eq 1)
+        Check '5a: Kill() sits on the timeout path' (($iKill -gt $iWait))
+        Check '5a: uninstaller uses the bounded runner with the 5-minute bound' ((@([regex]::Matches($src5, 'Run-BoundedProcess')).Count -ge 1) -and $src5.Contains('-TimeoutMs 300000'))
+        if ($iKill -gt 0) {
+            $tail5 = $runc5.Substring($iKill)
+            Check '5a: timeout path reaps the process' ($tail5 -match 'WaitForExit\(1000\)')
+            Check '5a: timeout records clear Failed manifest entry' (($src5 -match 'timed out after 300s and was killed') -and ($src5 -match "Result 'Failed'"))
+        } else {
+            Check '5a: timeout records clear Failed manifest entry' $false 'Kill() not found'
+        }
+    } else {
+        Check '5a: Run-BoundedProcess found for static pins' $false
+    }
+} else {
+    Check '5a: Run-VendorUninstaller found for static pins' $false
+}
+
+# --- 5b: stub child floods stderr then writes stdout, via the fixed shape ---
+$shapeCmd = '$line=(''x'' * 500); for($i=0;$i -lt 4000;$i++){[Console]::Error.WriteLine($line)}; [Console]::Error.Flush(); [Console]::Out.WriteLine(''SC-SHAPE-STDOUT-MARKER''); [Console]::Out.Flush(); exit 7'
+$shapeEnc = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($shapeCmd))
+$shapeHost = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source
+if (-not $shapeHost) { $shapeHost = (Get-Command pwsh -ErrorAction SilentlyContinue).Source }
+if (-not $shapeHost) { $shapeHost = 'pwsh' }
+
+$psi5 = New-Object System.Diagnostics.ProcessStartInfo
+$psi5.FileName = $shapeHost
+$psi5.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + $shapeEnc
+$psi5.UseShellExecute = $false
+$psi5.RedirectStandardOutput = $true
+$psi5.RedirectStandardError = $true
+$psi5.CreateNoWindow = $true
+
+try {
+    $shapeProc = [System.Diagnostics.Process]::Start($psi5)
+    # The FIXED shape under test (mirrors remove-screenconnect.ps1): drain
+    # both pipes asynchronously, then ONE bounded wait, kill on timeout.
+    $shapeOutTask = $shapeProc.StandardOutput.ReadToEndAsync()
+    $shapeErrTask = $shapeProc.StandardError.ReadToEndAsync()
+    $shapeExited = $shapeProc.WaitForExit(20000)
+    if (-not $shapeExited) {
+        try { $shapeProc.Kill(); $null = $shapeProc.WaitForExit(5000) } catch { }
+        Check '5b: stderr-flood stub completed without deadlock' $false '20s timeout hit'
+    } else {
+        $shapeStdout = $shapeOutTask.Result
+        $shapeStderr = $shapeErrTask.Result
+        $shapeRc = $shapeProc.ExitCode
+        Check '5b: stderr-flood stub completed without deadlock' $true
+        Check '5b: exit code propagated through bounded wait' ($shapeRc -eq 7) "rc=$shapeRc"
+        Check '5b: stdout survived after 2MB stderr flood' ($shapeStdout.Contains('SC-SHAPE-STDOUT-MARKER'))
+        Check '5b: stderr fully drained (>1MB captured)' ($shapeStderr.Length -gt 1000000) ("got $($shapeStderr.Length) chars")
+    }
+} catch {
+    Check '5b: stderr-flood stub completed without deadlock' $false $_.Exception.Message
+}
+
+# --- 5c: real function body (timeout literal patched) vs compiled stubs ---
+$csOk = @'
+using System;
+public static class ScStubOk {
+    public static void Main() {
+        string line = new string('x', 500);
+        for (int i = 0; i < 4000; i++) { Console.Error.WriteLine(line); }
+        Console.Error.Flush();
+        Console.Out.WriteLine("SC-STUB-STDOUT-MARKER");
+        Console.Out.Flush();
+    }
+}
+'@
+$csHang = @'
+using System;
+using System.Threading;
+public static class ScStubHang {
+    public static void Main() {
+        string line = new string('x', 500);
+        for (int i = 0; i < 4000; i++) { Console.Error.WriteLine(line); }
+        Console.Error.Flush();
+        Console.Out.WriteLine("SC-STUB-STDOUT-MARKER");
+        Console.Out.Flush();
+        Thread.Sleep(Timeout.Infinite);
+    }
+}
+'@
+
+$stubRoot5 = Join-Path $tmp 'pipe-stub'
+$okDir5 = Join-Path $stubRoot5 'ScreenConnect Client (pipe-ok)'
+$hangDir5 = Join-Path $stubRoot5 'ScreenConnect Client (pipe-hang)'
+New-Item -ItemType Directory -Path $okDir5 -Force | Out-Null
+New-Item -ItemType Directory -Path $hangDir5 -Force | Out-Null
+$okExe5 = Join-Path $okDir5 'unins000.exe'
+$hangExe5 = Join-Path $hangDir5 'unins000.exe'
+
+# Compile one stub exe from C# source. Prefer the Windows .NET Framework
+# compiler when present: its exes always run on the runner. pwsh 7's
+# Add-Type -OutputAssembly has emitted non-runnable output on the
+# Windows runners, so it is only a fallback for hosts without csc.exe.
+function Compile-PipeStub5 {
+    param([string]$CSharpSource, [string]$ExePath)
+    $csFile = Join-Path $tmp ('stub-' + [Guid]::NewGuid().ToString('N') + '.cs')
+    Set-Content -LiteralPath $csFile -Value $CSharpSource -Encoding Ascii
+    try {
+        $csc = $null
+        if (-not [string]::IsNullOrEmpty($env:windir)) {
+            $cscCandidate = Join-Path $env:windir 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+            if (Test-Path -LiteralPath $cscCandidate) { $csc = $cscCandidate }
+        }
+        if ($csc) {
+            # Native tool under $ErrorActionPreference='Stop' (set at the top
+            # of this harness): any stderr line from csc.exe would become a
+            # terminating NativeCommandError on Windows PowerShell 5.1, so
+            # drop EAP locally and restore it afterwards.
+            $prevEap5 = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = 'Continue'
+                $cscOut = & $csc /nologo /target:exe "/out:$ExePath" $csFile 2>&1
+            } finally {
+                $ErrorActionPreference = $prevEap5
+            }
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $ExePath)) {
+                Write-Host ("5c stub csc.exe failed ({0}): rc={1} output: {2}" -f (Split-Path -Leaf $ExePath), $LASTEXITCODE, (($cscOut | Out-String).Trim()))
+                return $false
+            }
+            return $true
+        }
+        Add-Type -TypeDefinition $CSharpSource -OutputAssembly $ExePath -ErrorAction Stop
+        return (Test-Path -LiteralPath $ExePath)
+    } catch {
+        Write-Host ("5c stub compile failed ({0}): {1}" -f (Split-Path -Leaf $ExePath), $_.Exception.Message)
+        return $false
+    } finally {
+        Remove-Item -LiteralPath $csFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
+$compiledOk = Compile-PipeStub5 -CSharpSource $csOk -ExePath $okExe5
+$compiledHang = Compile-PipeStub5 -CSharpSource $csHang -ExePath $hangExe5
+Check '5c: pipe-ok stub compiled' ($compiledOk -and (Test-Path -LiteralPath $okExe5))
+Check '5c: pipe-hang stub compiled' ($compiledHang -and (Test-Path -LiteralPath $hangExe5))
+
+# Sanity self-run of the compiled ok stub BEFORE trusting it end-to-end: if
+# the compiler produced something the OS cannot execute, the two real-function
+# cases below would fail with misleading function-result errors, so prove the
+# binary actually runs first.
+$sanityOk5 = $false
+$sanityDetail5 = ''
+if ($compiledOk) {
+    try {
+        $sanityPsi5 = New-Object System.Diagnostics.ProcessStartInfo
+        $sanityPsi5.FileName = $okExe5
+        $sanityPsi5.UseShellExecute = $false
+        $sanityPsi5.RedirectStandardOutput = $true
+        $sanityPsi5.RedirectStandardError = $true
+        $sanityPsi5.CreateNoWindow = $true
+        $sanityProc5 = [System.Diagnostics.Process]::Start($sanityPsi5)
+        # Same async-drain shape as 5b/the product: the stub floods ~2MB of
+        # stderr, so synchronous reads here would deadlock the sanity run.
+        $sanityOutTask5 = $sanityProc5.StandardOutput.ReadToEndAsync()
+        $null = $sanityProc5.StandardError.ReadToEndAsync()
+        if (-not $sanityProc5.WaitForExit(10000)) {
+            try { $sanityProc5.Kill(); $null = $sanityProc5.WaitForExit(5000) } catch { }
+            $sanityDetail5 = 'stub did not exit within 10 seconds (killed)'
+        } else {
+            $sanityRc5 = $sanityProc5.ExitCode
+            $sanityStdout5 = $sanityOutTask5.Result
+            $markerSeen5 = $sanityStdout5.Contains('SC-STUB-STDOUT-MARKER')
+            if ($sanityRc5 -eq 0 -and $markerSeen5) {
+                $sanityOk5 = $true
+            } else {
+                $sanityDetail5 = ("exit code {0}, stdout marker seen: {1}" -f $sanityRc5, $markerSeen5)
+            }
+        }
+    } catch {
+        $sanityDetail5 = $_.Exception.Message
+    }
+} else {
+    $sanityDetail5 = 'ok stub was not compiled'
+}
+Check '5c: compiled stub is runnable' $sanityOk5 $sanityDetail5
+
+if ($ruv5 -and $rbp5 -and $compiledOk -and $compiledHang -and $sanityOk5) {
+    $fnSrc5 = $ruv5.Extent.Text
+    if ($fnSrc5.Contains('-TimeoutMs 300000')) {
+        # Patch ONLY the timeout constant so CI pays ~3 seconds, not five
+        # minutes. Everything else in the function body stays verbatim.
+        $fnPatched5 = $fnSrc5.Replace('-TimeoutMs 300000', '-TimeoutMs 3000')
+
+        # Minimal shims for the helpers the functions call. They mirror
+        # the product implementations; Write-Log captures so we can prove the
+        # drained STDOUT actually flowed through the function.
+        $harnessLog5 = New-Object System.Collections.ArrayList
+        $harnessManifest5 = New-Object System.Collections.ArrayList
+        function Write-Log {
+            param([string]$Message, [string]$Level = 'Info', [switch]$NoConsole)
+            [void]$script:harnessLog5.Add([pscustomobject]@{ Level = $Level; Message = $Message })
+        }
+        function Add-ManifestEntry {
+            param([string]$InstanceId, [string]$Action, [string]$Target, [string]$Result, [string]$Details = '', [int]$ExitCode = 0)
+            [void]$script:harnessManifest5.Add([pscustomobject]@{
+                TimestampUtc = (Get-Date).ToUniversalTime().ToString('o')
+                InstanceId   = $InstanceId
+                Action       = $Action
+                Target       = $Target
+                Result       = $Result
+                Details      = $Details
+                ExitCode     = $ExitCode
+            })
+        }
+        function Get-EntryPropertySafe {
+            param($Instance, [string]$PropertyName)
+            if ($null -eq $Instance) { return $null }
+            try {
+                $pp = $Instance.PSObject.Properties[$PropertyName]
+                if ($pp) { return $pp.Value }
+            } catch { }
+            return $null
+        }
+
+        # The real Run-VendorUninstaller delegates to Run-BoundedProcess, so
+        # evaluate the production bounded runner first (pure function: process
+        # start/wait/kill plus Write-Log only, no registry/service/removal).
+        Invoke-Expression $runc5
+        Invoke-Expression $fnPatched5
+        $Execute = $true
+
+        # Case 1: well-behaved stub - floods ~2MB stderr, writes stdout, exits 0.
+        $entryOk5 = [pscustomobject]@{
+            DisplayName          = 'ScreenConnect Client (pipe-ok)'
+            QuietUninstallString = ('"' + $okExe5 + '"')
+            PSPath               = 'Microsoft.PowerShell.Core\Registry::HKEY_CURRENT_USER\Software\RIT-SCC-CI\pipe-ok-fake'
+        }
+        $swOk5 = [System.Diagnostics.Stopwatch]::StartNew()
+        $okResult5 = Run-VendorUninstaller -UninstallEntry $entryOk5 -InstanceId 'pipe-ok' -InstallDir $okDir5
+        $swOk5.Stop()
+
+        Check '5c: well-behaved uninstaller reported Success' ($okResult5 -eq $true) "result=$okResult5"
+        $okUninst5 = @($harnessManifest5 | Where-Object { $_.Action -eq 'Uninstall' -and $_.InstanceId -eq 'pipe-ok' })
+        Check '5c: Success manifest entry with exit code 0' (@($okUninst5 | Where-Object { $_.Result -eq 'Success' -and $_.ExitCode -eq 0 }).Count -ge 1)
+        Check '5c: drained stdout flowed through the function' (@($harnessLog5 | Where-Object { $_.Message -like '*SC-STUB-STDOUT-MARKER*' }).Count -ge 1)
+        Check '5c: well-behaved case finished well inside bound' ($swOk5.ElapsedMilliseconds -lt 60000) "took $($swOk5.ElapsedMilliseconds) ms"
+
+        # Case 2: hung stub - floods stderr, writes stdout, sleeps forever
+        # holding BOTH pipes open. The old code blocked forever here; the
+        # fixed code must enforce its wait, kill the child, record Failed,
+        # and return promptly.
+        $entryHang5 = [pscustomobject]@{
+            DisplayName          = 'ScreenConnect Client (pipe-hang)'
+            QuietUninstallString = ('"' + $hangExe5 + '"')
+            PSPath               = 'Microsoft.PowerShell.Core\Registry::HKEY_CURRENT_USER\Software\RIT-SCC-CI\pipe-hang-fake'
+        }
+        $swHang5 = [System.Diagnostics.Stopwatch]::StartNew()
+        $hangResult5 = Run-VendorUninstaller -UninstallEntry $entryHang5 -InstanceId 'pipe-hang' -InstallDir $hangDir5
+        $swHang5.Stop()
+
+        Check '5c: hung uninstaller reported Failure' ($hangResult5 -eq $false) "result=$hangResult5"
+        $hangFail5 = @($harnessManifest5 | Where-Object {
+            $_.InstanceId -eq 'pipe-hang' -and
+            $_.Action -eq 'Uninstall' -and
+            $_.Result -eq 'Failed' -and
+            $_.Details -match 'timed out' -and
+            $_.Details -match 'killed'
+        })
+        Check '5c: hung uninstaller recorded clear Failed entry' ($hangFail5.Count -ge 1)
+        Check '5c: hung child killed, call returned promptly' ($swHang5.ElapsedMilliseconds -lt 60000) "took $($swHang5.ElapsedMilliseconds) ms"
+
+        Remove-Item -LiteralPath $okExe5, $hangExe5 -Force -ErrorAction SilentlyContinue
+    } else {
+        Check '5c: real function body exercised end-to-end' $false 'timeout literal missing from extracted function'
+    }
+} else {
+    Check '5c: real function body exercised end-to-end' $false 'function, compiled stubs, or passed stub sanity run unavailable'
+}
+
+# Defensive: make sure no stub survived anywhere (they are our own builds,
+# never vendor binaries).
+Get-Process -Name 'unins000' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
 # ---------------------------------------------------------------------
 # Cleanup
