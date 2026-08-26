@@ -39,7 +39,7 @@ Set-StrictMode -Version 1.0
 try {
     if (-not (Get-Command -Name 'Write-SccLog' -ErrorAction SilentlyContinue)) {
         $coreMod = [System.IO.Path]::Combine($PSScriptRoot, '..', 'Scc.Core', 'Scc.Core.psd1')
-        if (Test-Path -LiteralPath $coreMod) {
+        if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $coreMod) {
             Import-Module $coreMod -Force -ErrorAction SilentlyContinue
         }
     }
@@ -97,14 +97,14 @@ function Get-SccRemedyQuarantineRoot {
     # fall back to RunDir\Quarantine so the module is testable on Linux.
     if (-not $isWindows) {
         if ($Run -and $Run.RunDir) { $qBase = [System.IO.Path]::Combine($Run.RunDir, 'Quarantine') }
-        else { $qBase = Join-Path (Get-Location).Path 'Quarantine' }
+        else { $qBase = Join-Path (Microsoft.PowerShell.Management\Get-Location).Path 'Quarantine' }
     }
     if ([string]::IsNullOrEmpty($qBase) -or $qBase -like '*%*') {
         if ($Run -and $Run.RunDir) { $qBase = [System.IO.Path]::Combine($Run.RunDir, 'Quarantine') }
-        else { $qBase = Join-Path (Get-Location).Path 'Quarantine' }
+        else { $qBase = Join-Path (Microsoft.PowerShell.Management\Get-Location).Path 'Quarantine' }
     }
-    if (-not (Test-Path -LiteralPath $qBase)) {
-        try { New-Item -ItemType Directory -Path $qBase -Force | Out-Null } catch { }
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $qBase)) {
+        try { Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $qBase -Force | Out-Null } catch { }
     }
     return $qBase
 }
@@ -150,7 +150,7 @@ function Write-SccRemedyRemediationFile {
     if (-not $path) { return }
     try {
         $dir = Split-Path -Parent $path
-        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $dir)) { Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $dir -Force | Out-Null }
         [System.IO.File]::WriteAllText($path, (ConvertTo-SccJson -InputObject $script:remediationActions -Depth 10), [System.Text.Encoding]::ASCII)
     } catch { }
 }
@@ -163,7 +163,7 @@ function Get-SccQuarantineManifest {
     param($Run)
     $qBase = Get-SccRemedyQuarantineRoot -Run $Run
     $mp = [System.IO.Path]::Combine($qBase, 'quarantine-manifest.json')
-    if (-not (Test-Path -LiteralPath $mp)) { return @() }
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $mp)) { return @() }
     try {
         $raw = [System.IO.File]::ReadAllText($mp)
         if ([string]::IsNullOrWhiteSpace($raw)) { return @() }
@@ -201,7 +201,7 @@ function Remove-SccQuarantineManifestEntry {
 function Resolve-SccPlan {
     param($Plan)
     if ($Plan -is [string]) {
-        if (-not (Test-Path -LiteralPath $Plan)) { throw [System.InvalidOperationException]::new(('Plan file not found: ' + $Plan)) }
+        if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $Plan)) { throw [System.InvalidOperationException]::new(('Plan file not found: ' + $Plan)) }
         $parsed = $null
         try { $parsed = ConvertFrom-SccJson -Path $Plan } catch { $parsed = $null }
         if ($null -eq $parsed) {
@@ -254,14 +254,14 @@ function Test-SccScreenConnectTarget {
     if ($hasSvc) {
         $svcOk = $false
         try {
-            $s = Get-Service -Name $svc -ErrorAction SilentlyContinue
+            $s = Microsoft.PowerShell.Management\Get-Service -Name $svc -ErrorAction SilentlyContinue
             if ($null -ne $s -and $s.Name -like 'ScreenConnect*') { $svcOk = $true }
         } catch { }
         if (-not $svcOk) { return $false }
     }
     if ($hasDir) {
         $dirOk = $false
-        if ($dir -like '*\ScreenConnect*' -and (Test-Path -LiteralPath $dir)) { $dirOk = $true }
+        if ($dir -like '*\ScreenConnect*' -and (Microsoft.PowerShell.Management\Test-Path -LiteralPath $dir)) { $dirOk = $true }
         if (-not $dirOk) { return $false }
     }
     if ($hasExe) {
@@ -269,14 +269,14 @@ function Test-SccScreenConnectTarget {
         if ($mainExe -like '*ScreenConnect*') {
             if (-not [string]::IsNullOrEmpty($dir)) {
                 $exePath = [System.IO.Path]::Combine($dir, $mainExe)
-                if (Test-Path -LiteralPath $exePath) { $exeOk = $true }
+                if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $exePath) { $exeOk = $true }
             }
         }
         if (-not $exeOk) { return $false }
     }
     if ((-not $hasSvc) -and (-not $hasDir) -and (-not $hasExe)) {
         try {
-            $s = Get-Service -Name 'ScreenConnect*' -ErrorAction SilentlyContinue
+            $s = Microsoft.PowerShell.Management\Get-Service -Name 'ScreenConnect*' -ErrorAction SilentlyContinue
             if ($null -ne $s) { return $true }
         } catch { }
         return $false
@@ -295,7 +295,7 @@ function Stop-SccTargetService {
     $cmd = ('Stop-Service -Name "{0}" -Force' -f $ServiceName)
     try {
         $svc = $null
-        try { $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue } catch { }
+        try { $svc = Microsoft.PowerShell.Management\Get-Service -Name $ServiceName -ErrorAction SilentlyContinue } catch { }
         if ($null -eq $svc) {
             Add-RemediationAction -Run $Run -Action 'StopService' -Target $ServiceName -Command $cmd -Result 'Skipped' -Error 'service not present' -StartedUtc $started
             return $true
@@ -321,7 +321,7 @@ function Get-SccAncestorPids {
         $chain.Add([int]$walk)
         $parent = $null
         try {
-            $pObj = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$walk" -ErrorAction SilentlyContinue
+            $pObj = Microsoft.PowerShell.Management\Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$walk" -ErrorAction SilentlyContinue
             if ($pObj) { $parent = $pObj.ParentProcessId }
         } catch { }
         if (-not $parent -or $chain.Contains([int]$parent)) { break }
@@ -337,13 +337,13 @@ function Stop-SccTargetProcesses {
     try {
         $pids = @()
         try {
-            $procs = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue |
+            $procs = Microsoft.PowerShell.Management\Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue |
                 Where-Object { $_.ExecutablePath -and $_.ExecutablePath -like ($InstallDir + '\*') }
             foreach ($p in @($procs)) { $pids += $p.ProcessId }
         } catch { }
         if (@($pids).Count -eq 0 -and $ServiceName) {
             try {
-                $s = Get-CimInstance -ClassName Win32_Service -Filter ("Name='" + $ServiceName + "'") -ErrorAction SilentlyContinue
+                $s = Microsoft.PowerShell.Management\Get-CimInstance -ClassName Win32_Service -Filter ("Name='" + $ServiceName + "'") -ErrorAction SilentlyContinue
                 if ($s -and $s.ProcessId) { $pids += $s.ProcessId }
             } catch { }
         }
@@ -381,7 +381,7 @@ function Get-SccTargetUninstallData {
     $resolved = $key
     if ($resolved -match '^HKEY_') { $resolved = 'Registry::' + $resolved }
     $entry = $null
-    try { $entry = Get-ItemProperty -LiteralPath $resolved -ErrorAction Stop } catch { return $null }
+    try { $entry = Microsoft.PowerShell.Management\Get-ItemProperty -LiteralPath $resolved -ErrorAction Stop } catch { return $null }
     return [PSCustomObject]@{
         UninstallString       = [string](Get-Prop $entry 'UninstallString')
         QuietUninstallString  = [string](Get-Prop $entry 'QuietUninstallString')
@@ -431,7 +431,7 @@ function Test-SccUninstallExeValid {
     $underInstall = $false
     if ($ExePath -like ($InstallDir + '*')) { $underInstall = $true }
     if (-not $underInstall) { return $false }
-    if (-not (Test-Path -LiteralPath $ExePath)) { return $false }
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $ExePath)) { return $false }
     return $true
 }
 
@@ -495,7 +495,7 @@ function Test-SccTargetRemoved {
     $removed = $true
     try {
         if ($svc) {
-            $s = Get-Service -Name $svc -ErrorAction SilentlyContinue
+            $s = Microsoft.PowerShell.Management\Get-Service -Name $svc -ErrorAction SilentlyContinue
             if ($s) { $removed = $false }
         }
     } catch { }
@@ -577,8 +577,8 @@ function Remove-SccTargetRunKey {
         )
         $removed = $false
         foreach ($rk in $runKeys) {
-            if (-not (Test-Path -LiteralPath $rk)) { continue }
-            $vals = Get-ItemProperty -LiteralPath $rk -ErrorAction SilentlyContinue
+            if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $rk)) { continue }
+            $vals = Microsoft.PowerShell.Management\Get-ItemProperty -LiteralPath $rk -ErrorAction SilentlyContinue
             if ($null -eq $vals) { continue }
             foreach ($prop in $vals.PSObject.Properties) {
                 if ($prop.Name -eq 'PSPath' -or $prop.Name -eq 'PSParentPath' -or $prop.Name -eq 'PSChildName' -or $prop.Name -eq 'PSDrive' -or $prop.Name -eq 'PSProvider') { continue }
@@ -653,21 +653,21 @@ function Move-SccTargetToQuarantine {
     $fid = [string](Get-Prop $PlanItem 'FindingId')
     $started = ([datetime]::UtcNow).ToUniversalTime().ToString('o')
     try {
-        if (-not (Test-Path -LiteralPath $SourcePath)) {
+        if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $SourcePath)) {
             Add-RemediationAction -Run $Run -Action 'Quarantine' -Target $SourcePath -Command '' -Result 'Skipped' -Error 'source not found' -StartedUtc $started
             return $true
         }
         $qBase = Get-SccRemedyQuarantineRoot -Run $Run
         $qDir  = [System.IO.Path]::Combine($qBase, 'q')
-        if (-not (Test-Path -LiteralPath $qDir)) { New-Item -ItemType Directory -Path $qDir -Force | Out-Null }
+        if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $qDir)) { Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $qDir -Force | Out-Null }
         $leaf = [System.IO.Path]::GetFileName($SourcePath)
         $dest = [System.IO.Path]::Combine($qDir, $leaf)
-        if (Test-Path -LiteralPath $dest) {
+        if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $dest) {
             $suffix = (Get-SccSha256Hex -Text $SourcePath).Substring(0, 8)
             $dest = [System.IO.Path]::Combine($qDir, ($suffix) + '-' + $leaf)
         }
         $isDirectory = $false
-        try { $isDirectory = (Get-Item -LiteralPath $SourcePath -Force).PSIsContainer } catch { }
+        try { $isDirectory = (Microsoft.PowerShell.Management\Get-Item -LiteralPath $SourcePath -Force).PSIsContainer } catch { }
         $sha  = $null
         $size = $null
         $hashNote = ''
@@ -677,7 +677,7 @@ function Move-SccTargetToQuarantine {
             $rows = [System.Collections.ArrayList]::new()
             $reparseSkipped = 0
             try {
-                $children = @(Get-ChildItem -LiteralPath $SourcePath -File -Recurse -Force -ErrorAction SilentlyContinue)
+                $children = @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $SourcePath -File -Recurse -Force -ErrorAction SilentlyContinue)
                 foreach ($f in @($children)) {
                     $isReparse = $false
                     try { $attrs = $f.Attributes; $isReparse = [bool]($attrs -band [System.IO.FileAttributes]::ReparsePoint) } catch { }
@@ -702,13 +702,13 @@ function Move-SccTargetToQuarantine {
             } catch { }
         } else {
             try { $sha = (Get-FileHash -LiteralPath $SourcePath -Algorithm SHA256 -ErrorAction Stop).Hash } catch { }
-            try { $size = (Get-Item -LiteralPath $SourcePath -Force).Length } catch { }
+            try { $size = (Microsoft.PowerShell.Management\Get-Item -LiteralPath $SourcePath -Force).Length } catch { }
         }
         # F7: try Move-Item; on failure (in-use file), record resume marker
         # + pending move instead of silently losing the artifact.
         $moveOk = $false
         try {
-            Move-Item -LiteralPath $SourcePath -Destination $dest -Force -ErrorAction Stop
+            Microsoft.PowerShell.Management\Move-Item -LiteralPath $SourcePath -Destination $dest -Force -ErrorAction Stop
             $moveOk = $true
         } catch {
             # F7: record resume marker + pending move for reboot-resume.
@@ -734,7 +734,7 @@ function Move-SccTargetToQuarantine {
                 RestoreInstructions = ('Pending reboot - move failed (in-use): ' + $_.Exception.Message)
             }
             Add-SccQuarantineManifestEntry -Run $Run -Entry $entry
-            Add-RemediationAction -Run $Run -Action 'Quarantine' -Target $SourcePath -Command ('Move-Item -> ' + $dest) -Result 'PendingReboot' -Error $_.Exception.Message -StartedUtc $started
+            Add-RemediationAction -Run $Run -Action 'Quarantine' -Target $SourcePath -Command ('Microsoft.PowerShell.Management\Move-Item -> ' + $dest) -Result 'PendingReboot' -Error $_.Exception.Message -StartedUtc $started
             return $true
         }
         # ACL hardening: lock down on Windows; best-effort chmod on Linux.
@@ -758,7 +758,7 @@ function Move-SccTargetToQuarantine {
             RestoreInstructions = ('Restore by moving ''' + $dest + ''' back to ''' + $SourcePath + ''' (Restore-SccQuarantineItem -Run <RunId> -ItemId ' + $itemId + ').')
         }
         Add-SccQuarantineManifestEntry -Run $Run -Entry $entry
-        Add-RemediationAction -Run $Run -Action 'Quarantine' -Target $SourcePath -Command ('Move-Item -> ' + $dest) -Result 'Succeeded' -Error '' -StartedUtc $started
+        Add-RemediationAction -Run $Run -Action 'Quarantine' -Target $SourcePath -Command ('Microsoft.PowerShell.Management\Move-Item -> ' + $dest) -Result 'Succeeded' -Error '' -StartedUtc $started
         return $true
     } catch {
         Add-RemediationAction -Run $Run -Action 'Quarantine' -Target $SourcePath -Command '' -Result 'Failed' -Error $_.Exception.Message -StartedUtc $started
@@ -850,7 +850,7 @@ function New-SccPlan {
 
     if ($Run -and $Run.RunDir) {
         try {
-            if (-not (Test-Path -LiteralPath $Run.RunDir)) { New-Item -ItemType Directory -Path $Run.RunDir -Force | Out-Null }
+            if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $Run.RunDir)) { Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $Run.RunDir -Force | Out-Null }
             $planPath = [System.IO.Path]::Combine($Run.RunDir, 'plan.json')
             [System.IO.File]::WriteAllText($planPath, (ConvertTo-SccJson -InputObject $plan -Depth 10), [System.Text.Encoding]::ASCII)
         } catch {
@@ -968,7 +968,7 @@ function Invoke-SccRemediation {
             $arts = @()
             $qp = Get-Prop $item 'QuarantinePaths'
             if ($null -ne $qp) { $arts = @($qp) }
-            elseif ($dir -and (Test-Path -LiteralPath $dir)) { $arts = @($dir) }
+            elseif ($dir -and (Microsoft.PowerShell.Management\Test-Path -LiteralPath $dir)) { $arts = @($dir) }
             foreach ($a in $arts) {
                 if (-not (Move-SccTargetToQuarantine -SourcePath ([string]$a) -PlanItem $item -Run $Run -Reason 'remaining artifact after ScreenConnect remediation' -ActionType 'File')) {
                     $itemHadFailure = $true
@@ -1031,17 +1031,17 @@ function Restore-SccQuarantineItem {
     if (-not (Test-SccRestorePathSafe -OriginalPath $dst -QuarantineRoot $qRoot)) {
         throw [System.InvalidOperationException]::new(('Refusing to restore: OriginalPath is unsafe (traversal, non-absolute, or escapes quarantine scope): ' + $dst))
     }
-    if (-not (Test-Path -LiteralPath $src)) {
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $src)) {
         throw [System.InvalidOperationException]::new(('Quarantine file not present: ' + $src))
     }
-    if (Test-Path -LiteralPath $dst) {
+    if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $dst) {
         throw [System.InvalidOperationException]::new(('Refusing to restore: destination already exists (no overwrite): ' + $dst))
     }
     $parent = Split-Path -Parent $dst
-    if (-not [string]::IsNullOrEmpty($parent) -and -not (Test-Path -LiteralPath $parent)) {
-        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    if (-not [string]::IsNullOrEmpty($parent) -and -not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $parent)) {
+        Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $parent -Force | Out-Null
     }
-    Move-Item -LiteralPath $src -Destination $dst -Force -ErrorAction Stop
+    Microsoft.PowerShell.Management\Move-Item -LiteralPath $src -Destination $dst -Force -ErrorAction Stop
     Remove-SccQuarantineManifestEntry -Run $Run -ItemId $ItemId
     Write-SccRemedyLog -Level INFO -Stage 'Remedy' -Message ('Restored quarantine item ' + $ItemId + ' to ' + $dst)
     return $true
@@ -1060,9 +1060,9 @@ function Clear-SccQuarantine {
     }
     $qBase = Get-SccRemedyQuarantineRoot -Run $Run
     $qDir  = [System.IO.Path]::Combine($qBase, 'q')
-    if (Test-Path -LiteralPath $qDir) { Remove-Item -LiteralPath $qDir -Recurse -Force -ErrorAction Stop }
+    if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $qDir) { Microsoft.PowerShell.Management\Remove-Item -LiteralPath $qDir -Recurse -Force -ErrorAction Stop }
     $mp = [System.IO.Path]::Combine($qBase, 'quarantine-manifest.json')
-    if (Test-Path -LiteralPath $mp) { Remove-Item -LiteralPath $mp -Force -ErrorAction Stop }
+    if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $mp) { Microsoft.PowerShell.Management\Remove-Item -LiteralPath $mp -Force -ErrorAction Stop }
     Write-SccRemedyLog -Level WARNING -Stage 'Remedy' -Message 'Quarantine permanently deleted.'
     return $true
 }

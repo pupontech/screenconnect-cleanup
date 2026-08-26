@@ -74,18 +74,18 @@ function Save-SccStageState {
 
 function ConvertFrom-SccJsonFile {
     param([string]$Path)
-    $raw = Get-Content -Path $Path -Raw -ErrorAction Stop
+    $raw = Microsoft.PowerShell.Management\Get-Content -Path $Path -Raw -ErrorAction Stop
     return ($raw | ConvertFrom-Json)
 }
 
 function Get-SccPlanFromRun {
     param($Workflow)
-    if ($Workflow.PlanPath -and (Test-Path -Path $Workflow.PlanPath)) {
+    if ($Workflow.PlanPath -and (Microsoft.PowerShell.Management\Test-Path -Path $Workflow.PlanPath)) {
         return (ConvertFrom-SccJsonFile -Path $Workflow.PlanPath)
     }
-    if ($Workflow.Run -and $Workflow.Run.RunDir -and (Test-Path -Path $Workflow.Run.RunDir)) {
+    if ($Workflow.Run -and $Workflow.Run.RunDir -and (Microsoft.PowerShell.Management\Test-Path -Path $Workflow.Run.RunDir)) {
         $candidate = Join-Path -Path $Workflow.Run.RunDir -ChildPath 'plan.json'
-        if (Test-Path -Path $candidate) {
+        if (Microsoft.PowerShell.Management\Test-Path -Path $candidate) {
             return (ConvertFrom-SccJsonFile -Path $candidate)
         }
     }
@@ -649,7 +649,7 @@ function Get-SccViewPath {
 
 function Import-SccXaml {
     param([string]$Path)
-    [xml]$xaml = Get-Content -Path $Path
+    [xml]$xaml = Microsoft.PowerShell.Management\Get-Content -Path $Path
     $reader = [System.Xml.XmlNodeReader]::new($xaml)
     return [System.Windows.Markup.XamlReader]::Load($reader)
 }

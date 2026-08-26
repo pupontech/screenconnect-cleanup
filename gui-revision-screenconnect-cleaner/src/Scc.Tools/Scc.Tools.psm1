@@ -275,7 +275,7 @@ function Get-SccToolRuntimeConfig {
 
     try {
         $corePath = Join-Path $PSScriptRoot '..\Scc.Core\Scc.Core.psd1'
-        if (Test-Path -LiteralPath $corePath) {
+        if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $corePath) {
             Import-Module -Name $corePath -Force -ErrorAction Stop
             $paths = Get-SccPaths -ErrorAction Stop
             $config = Get-SccConfig -ErrorAction SilentlyContinue
@@ -351,11 +351,11 @@ function Get-SccToolFacts {
         LastWriteUtc    = $null
     }
 
-    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $facts }
+    if (-not $Path -or -not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $Path)) { return $facts }
 
     $facts.Exists = $true
     try {
-        $item = Get-Item -LiteralPath $Path -ErrorAction Stop
+        $item = Microsoft.PowerShell.Management\Get-Item -LiteralPath $Path -ErrorAction Stop
         $facts.SizeBytes = $item.Length
         $facts.LastWriteUtc = $item.LastWriteTimeUtc
         try {
@@ -396,8 +396,8 @@ function Get-SccCacheManifest {
     param()
     $cfg = Get-SccToolRuntimeConfig
     $path = Join-Path $cfg.ToolCacheDir 'tool-cache-manifest.json'
-    if (-not (Test-Path -LiteralPath $path)) { return @() }
-    $raw = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $path)) { return @() }
+    $raw = Microsoft.PowerShell.Management\Get-Content -LiteralPath $path -Raw -ErrorAction Stop
     if ($null -eq $raw -or $raw.Trim() -eq '') { return @() }
     $obj = ConvertFrom-Json -InputObject $raw -ErrorAction Stop
     if ($null -eq $obj) { return @() }
@@ -429,12 +429,12 @@ function Write-SccCacheManifest {
     param($Entries)
     $cfg = Get-SccToolRuntimeConfig
     $dir = $cfg.ToolCacheDir
-    if (-not (Test-Path -LiteralPath $dir)) {
-        $null = New-Item -ItemType Directory -Path $dir -Force
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $dir)) {
+        $null = Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $dir -Force
     }
     $path = Join-Path $dir 'tool-cache-manifest.json'
     $json = ConvertTo-Json -InputObject @($Entries) -Depth 8
-    Set-Content -LiteralPath $path -Value $json -Encoding UTF8
+    Microsoft.PowerShell.Management\Set-Content -LiteralPath $path -Value $json -Encoding UTF8
 }
 
 <#
@@ -453,13 +453,13 @@ function Find-SccNasFile {
     )
     $pTool = Join-Path $NasRoot (Join-Path $Tool $FileName)
     $pFlat = Join-Path $NasRoot $FileName
-    if (Test-Path -LiteralPath $pTool) { return $pTool }
-    if (Test-Path -LiteralPath $pFlat) { return $pFlat }
+    if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $pTool) { return $pTool }
+    if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $pFlat) { return $pFlat }
 
     foreach ($container in @((Join-Path $NasRoot $Tool), $NasRoot)) {
-        if (-not (Test-Path -LiteralPath $container)) { continue }
+        if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $container)) { continue }
         try {
-            $hit = @(Get-ChildItem -LiteralPath $container -File -ErrorAction SilentlyContinue |
+            $hit = @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $container -File -ErrorAction SilentlyContinue |
                 Where-Object { $_.Name -ieq $FileName } |
                 Select-Object -First 1)
             if ($hit.Count -gt 0) { return $hit[0].FullName }
@@ -481,16 +481,16 @@ function Expand-SccZipAndFind {
     )
     $dir = Split-Path -Parent $ZipPath
     $extract = Join-Path $dir ((Split-Path -Leaf $ZipPath) + '.d')
-    if (Test-Path -LiteralPath $extract) {
-        Remove-Item -LiteralPath $extract -Recurse -Force -ErrorAction SilentlyContinue
+    if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $extract) {
+        Microsoft.PowerShell.Management\Remove-Item -LiteralPath $extract -Recurse -Force -ErrorAction SilentlyContinue
     }
-    $null = New-Item -ItemType Directory -Path $extract -Force
+    $null = Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $extract -Force
     try {
         Expand-Archive -LiteralPath $ZipPath -DestinationPath $extract -Force -ErrorAction Stop
     } catch {
         return $null
     }
-    $hit = @(Get-ChildItem -LiteralPath $extract -File -Recurse -ErrorAction SilentlyContinue |
+    $hit = @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $extract -File -Recurse -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -ieq $FileName } |
         Select-Object -First 1)
     if ($hit.Count -gt 0) { return $hit[0].FullName }
@@ -740,11 +740,11 @@ function Save-SccToolToCache {
     $cat = Get-SccCatalogEntry -Tool $Tool
     $cfg = Get-SccToolRuntimeConfig
     $destDir = Join-Path $cfg.ToolCacheDir $Tool
-    if (-not (Test-Path -LiteralPath $destDir)) {
-        $null = New-Item -ItemType Directory -Path $destDir -Force
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $destDir)) {
+        $null = Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $destDir -Force
     }
     $dest = Join-Path $destDir $cat.FileName
-    Copy-Item -LiteralPath $Path -Destination $dest -Force
+    Microsoft.PowerShell.Management\Copy-Item -LiteralPath $Path -Destination $dest -Force
 
     $entry = [PSCustomObject]@{
         Name            = $Tool
@@ -814,7 +814,7 @@ function Resolve-SccTool {
             'local' {
                 $cacheFile = Join-Path $cfg.ToolCacheDir (Join-Path $Tool $cat.FileName)
                 $prov.CandidatesTried += 'local cache: ' + $cacheFile
-                if ((Test-Path -LiteralPath $cacheFile) -and (-not $ForceRefresh)) {
+                if ((Microsoft.PowerShell.Management\Test-Path -LiteralPath $cacheFile) -and (-not $ForceRefresh)) {
                     $check = Test-SccToolIntegrity -Path $cacheFile -Tool $Tool
                     $prov.Warnings += $check.Reasons
                     if ($check.Passed) {
@@ -829,7 +829,7 @@ function Resolve-SccTool {
             'nas' {
                 if ($cfg.NasEnabled -and $cfg.NasPath) {
                     $prov.CandidatesTried += 'nas: ' + $cfg.NasPath
-                    if (-not (Test-Path -LiteralPath $cfg.NasPath)) {
+                    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $cfg.NasPath)) {
                         $prov.Warnings += 'NAS unreachable (nas.path not found); proceeding to next source'
                     } else {
                         $nasFile = Find-SccNasFile -NasRoot $cfg.NasPath -Tool $Tool -FileName $cat.FileName
@@ -867,8 +867,8 @@ function Resolve-SccTool {
                 $tempRoot = $env:TEMP
                 if (-not $tempRoot) { $tempRoot = '/tmp' }
                 $tempDir = Join-Path $tempRoot 'ScreenConnectCleaner'
-                if (-not (Test-Path -LiteralPath $tempDir)) {
-                    $null = New-Item -ItemType Directory -Path $tempDir -Force
+                if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $tempDir)) {
+                    $null = Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $tempDir -Force
                 }
                 $tempFile = Join-Path $tempDir ((Split-Path -Leaf $cat.OfficialUrl) -replace '[\?&=]', '_')
 
@@ -879,8 +879,8 @@ function Resolve-SccTool {
                 if (-not $down.Success) {
                     $prov.Warnings += 'official download failed: ' + $down.Error
                     $prov.CandidatesTried += 'official: FAILED (' + $down.Error + ')'
-                    if (Test-Path -LiteralPath $down.LocalPath) {
-                        Remove-Item -LiteralPath $down.LocalPath -Force -ErrorAction SilentlyContinue
+                    if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $down.LocalPath) {
+                        Microsoft.PowerShell.Management\Remove-Item -LiteralPath $down.LocalPath -Force -ErrorAction SilentlyContinue
                     }
                     break
                 }
@@ -912,12 +912,12 @@ function Resolve-SccTool {
                 }
 
                 # Clean up the temp download (and any extraction dir).
-                if (Test-Path -LiteralPath $down.LocalPath) {
-                    Remove-Item -LiteralPath $down.LocalPath -Force -ErrorAction SilentlyContinue
+                if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $down.LocalPath) {
+                    Microsoft.PowerShell.Management\Remove-Item -LiteralPath $down.LocalPath -Force -ErrorAction SilentlyContinue
                 }
                 $extractDir = $down.LocalPath + '.d'
-                if (Test-Path -LiteralPath $extractDir) {
-                    Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+                if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $extractDir) {
+                    Microsoft.PowerShell.Management\Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
                 }
             }
         }
@@ -942,7 +942,7 @@ function Resolve-SccTool {
 <#
 .SYNOPSIS
   Dashboard status for every catalog tool. No network calls: the NAS check is a
-  Test-Path only (fast).
+  Microsoft.PowerShell.Management\Test-Path only (fast).
 #>
 function Get-SccToolStatus {
     [CmdletBinding()]
@@ -953,7 +953,7 @@ function Get-SccToolStatus {
 
     foreach ($cat in $catalog) {
         $cacheFile = Join-Path $cfg.ToolCacheDir (Join-Path $cat.Name $cat.FileName)
-        $cached = (Test-Path -LiteralPath $cacheFile)
+        $cached = (Microsoft.PowerShell.Management\Test-Path -LiteralPath $cacheFile)
         $cacheVerified = $false
         $cachedVersion = $null
         if ($cached) {
@@ -971,7 +971,7 @@ function Get-SccToolStatus {
         $nasReachable = $false
         $nasPathFound = $false
         if ($cfg.NasEnabled -and $cfg.NasPath) {
-            $nasReachable = (Test-Path -LiteralPath $cfg.NasPath)
+            $nasReachable = (Microsoft.PowerShell.Management\Test-Path -LiteralPath $cfg.NasPath)
             if ($nasReachable) {
                 $nasPathFound = [bool](Find-SccNasFile -NasRoot $cfg.NasPath -Tool $cat.Name -FileName $cat.FileName)
             }
@@ -1036,7 +1036,7 @@ function Write-SccToolProvenance {
         if (-not $runDir) {
             try {
                 $corePath = Join-Path $PSScriptRoot '..\Scc.Core\Scc.Core.psd1'
-                if (Test-Path -LiteralPath $corePath) {
+                if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $corePath) {
                     Import-Module -Name $corePath -Force -ErrorAction Stop
                     $paths = Get-SccPaths -Run $Run -ErrorAction SilentlyContinue
                     if ($paths -and $paths.ToolCacheDir) { $runDir = $paths.ToolCacheDir }
@@ -1053,12 +1053,12 @@ function Write-SccToolProvenance {
     }
 
     $dir = Split-Path -Parent $target
-    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
-        $null = New-Item -ItemType Directory -Path $dir -Force
+    if ($dir -and -not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $dir)) {
+        $null = Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $dir -Force
     }
 
     $json = ConvertTo-Json -InputObject @($Tools) -Depth 8
-    Set-Content -LiteralPath $target -Value $json -Encoding UTF8
+    Microsoft.PowerShell.Management\Set-Content -LiteralPath $target -Value $json -Encoding UTF8
     return $target
 }
 

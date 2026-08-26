@@ -61,13 +61,13 @@ function Read-SccJsonFile {
         Error = $null
         Reason = ''
     }
-    if (-not (Test-Path -LiteralPath $Path)) {
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $Path)) {
         $result.Reason = 'Not collected / not applicable - file not found: ' + $Path
         return $result
     }
     $result.Exists = $true
     try {
-        $raw = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
+        $raw = Microsoft.PowerShell.Management\Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
         if ([string]::IsNullOrWhiteSpace($raw)) {
             $result.Data = $null
             $result.Reason = 'Not collected / not applicable - file empty: ' + $Path
@@ -102,19 +102,19 @@ function Resolve-SccRunDir {
         }
         if (-not $dir -and $Run -is [object]) {
             $s = [string]$Run
-            if ($s -and (Test-Path -LiteralPath $s)) { $dir = $s }
+            if ($s -and (Microsoft.PowerShell.Management\Test-Path -LiteralPath $s)) { $dir = $s }
         }
     }
     if (-not $dir -and $OutputDir) { $dir = $OutputDir }
-    if (-not $dir) { $dir = (Get-Location).Path }
+    if (-not $dir) { $dir = (Microsoft.PowerShell.Management\Get-Location).Path }
     return $dir
 }
 
 function Get-SccFileSize {
     param([string]$Path)
     try {
-        if (Test-Path -LiteralPath $Path) {
-            $it = Get-Item -LiteralPath $Path -ErrorAction Stop
+        if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $Path) {
+            $it = Microsoft.PowerShell.Management\Get-Item -LiteralPath $Path -ErrorAction Stop
             if (-not $it.PSIsContainer) { return $it.Length }
         }
     } catch { }
@@ -357,13 +357,13 @@ function New-SccReport {
     )
 
     $runDir = Resolve-SccRunDir -Run $Run -OutputDir $OutputDir
-    if (-not (Test-Path -LiteralPath $runDir)) {
-        try { New-Item -ItemType Directory -Path $runDir -Force | Out-Null } catch { }
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $runDir)) {
+        try { Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $runDir -Force | Out-Null } catch { }
     }
     $outDir = $OutputDir
     if ([string]::IsNullOrWhiteSpace($outDir)) { $outDir = $runDir }
-    if (-not (Test-Path -LiteralPath $outDir)) {
-        New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $outDir)) {
+        Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $outDir -Force | Out-Null
     }
 
     # Load inputs
@@ -383,8 +383,8 @@ function New-SccReport {
 
     $scannerDir = [System.IO.Path]::Combine($runDir, 'scanner-results')
     $scannerResults = [System.Collections.ArrayList]::new()
-    if (Test-Path -LiteralPath $scannerDir) {
-        $files = @(Get-ChildItem -LiteralPath $scannerDir -File -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object -Property Name)
+    if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $scannerDir) {
+        $files = @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $scannerDir -File -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object -Property Name)
         foreach ($f in $files) {
             $r = Read-SccJsonFile $f.FullName
             [void]$scannerResults.Add([PSCustomObject]@{ FileName = $f.Name; Path = $f.FullName; Data = $r.Data; Exists = $r.Exists; Reason = $r.Reason })
@@ -392,10 +392,10 @@ function New-SccReport {
     }
 
     $masterLogPath = [System.IO.Path]::Combine($runDir, 'logs/master.log')
-    $masterLogExists = Test-Path -LiteralPath $masterLogPath
+    $masterLogExists = Microsoft.PowerShell.Management\Test-Path -LiteralPath $masterLogPath
     $masterLogContent = $null
     if ($masterLogExists) {
-        try { $masterLogContent = Get-Content -LiteralPath $masterLogPath -Raw -ErrorAction Stop } catch { $masterLogContent = '' }
+        try { $masterLogContent = Microsoft.PowerShell.Management\Get-Content -LiteralPath $masterLogPath -Raw -ErrorAction Stop } catch { $masterLogContent = '' }
     }
 
     # Derived values
@@ -1371,7 +1371,7 @@ $rows
 
     # Raw Evidence Index
     $evidenceIndexHtml = ''
-    $allFilesRaw = @(Get-ChildItem -LiteralPath $runDir -File -Recurse -ErrorAction SilentlyContinue | Sort-Object -Property FullName)
+    $allFilesRaw = @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $runDir -File -Recurse -ErrorAction SilentlyContinue | Sort-Object -Property FullName)
     # Exclude outputs themselves for determinism (second run would otherwise include previous report)
     $allFiles = @($allFilesRaw | Where-Object { $_.Name -notin @('report.html','report.json','technician-summary.txt') })
     if (@($allFiles).Count -eq 0) {

@@ -155,7 +155,7 @@ function Write-SccScannerLog {
 function Get-SccTempRoot {
     if ($env:TEMP) { return $env:TEMP }
     if ($env:TMP) { return $env:TMP }
-    return (Get-Location).Path
+    return (Microsoft.PowerShell.Management\Get-Location).Path
 }
 
 # ---------------------------------------------------------------------------
@@ -171,18 +171,18 @@ function Resolve-SccScannerToolPath {
     )
 
     if ($ExplicitPath) {
-        if (Test-Path -LiteralPath $ExplicitPath) { return $ExplicitPath }
+        if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $ExplicitPath) { return $ExplicitPath }
         return $null
     }
 
     # Try Scc.Tools module if importable
     try {
         $sccToolsPath = Join-Path $PSScriptRoot '..\Scc.Tools\Scc.Tools.psd1'
-        if (Test-Path -LiteralPath $sccToolsPath) {
+        if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $sccToolsPath) {
             try {
                 Import-Module -Name $sccToolsPath -Force -ErrorAction Stop
                 $resolved = Resolve-SccTool -Tool $ToolName -ErrorAction SilentlyContinue
-                if ($resolved -and $resolved.ResolvedPath -and (Test-Path -LiteralPath $resolved.ResolvedPath)) {
+                if ($resolved -and $resolved.ResolvedPath -and (Microsoft.PowerShell.Management\Test-Path -LiteralPath $resolved.ResolvedPath)) {
                     return $resolved.ResolvedPath
                 }
             } catch { }
@@ -193,7 +193,7 @@ function Resolve-SccScannerToolPath {
 
     # Fallback: scan candidate paths
     foreach ($c in $CandidatePaths) {
-        if ($c -and (Test-Path -LiteralPath $c)) { return $c }
+        if ($c -and (Microsoft.PowerShell.Management\Test-Path -LiteralPath $c)) { return $c }
     }
     return $null
 }
@@ -208,8 +208,8 @@ function Copy-SccScanLogs {
     )
     if (-not $DestinationDir) { return '' }
     try {
-        if (-not (Test-Path -LiteralPath $DestinationDir)) {
-            New-Item -ItemType Directory -Path $DestinationDir -Force | Out-Null
+        if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $DestinationDir)) {
+            Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $DestinationDir -Force | Out-Null
         }
         try {
             $supportRoot = Join-Path $env:ProgramData 'Microsoft\Windows Defender\Support'
@@ -218,12 +218,12 @@ function Copy-SccScanLogs {
         }
         $cutoff = ([datetime]::UtcNow).AddMinutes(-1 * [Math]::Max($SinceMinutes, 5))
         $copied = @()
-        if (Test-Path -LiteralPath $supportRoot) {
-            $files = @(Get-ChildItem -LiteralPath $supportRoot -File -ErrorAction SilentlyContinue |
+        if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $supportRoot) {
+            $files = @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $supportRoot -File -ErrorAction SilentlyContinue |
                 Where-Object { $_.LastWriteTime -ge $cutoff } |
                 Sort-Object LastWriteTime -Descending | Select-Object -First 10)
             foreach ($f in $files) {
-                Copy-Item -LiteralPath $f.FullName -Destination $DestinationDir -Force
+                Microsoft.PowerShell.Management\Copy-Item -LiteralPath $f.FullName -Destination $DestinationDir -Force
                 $copied += $f.Name
             }
         }
@@ -245,8 +245,8 @@ function Copy-SccKVRTScanLogs {
     )
     if (-not $DestinationDir) { return '' }
     try {
-        if (-not (Test-Path -LiteralPath $DestinationDir)) {
-            New-Item -ItemType Directory -Path $DestinationDir -Force | Out-Null
+        if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $DestinationDir)) {
+            Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $DestinationDir -Force | Out-Null
         }
         $roots = @()
         if ($DataDir) { $roots += $DataDir }
@@ -255,7 +255,7 @@ function Copy-SccKVRTScanLogs {
             if (-not $sysDrive) { $sysDrive = 'C:' }
             $wildcard = Join-Path ($sysDrive + '\') 'KVRT*_Data'
             try {
-                $found = @(Get-Item -Path $wildcard -ErrorAction SilentlyContinue)
+                $found = @(Microsoft.PowerShell.Management\Get-Item -Path $wildcard -ErrorAction SilentlyContinue)
                 foreach ($f in $found) { $roots += $f.FullName }
             } catch { }
         } catch {
@@ -265,12 +265,12 @@ function Copy-SccKVRTScanLogs {
         $cutoff = ([datetime]::UtcNow).AddMinutes(-1 * [Math]::Max($SinceMinutes, 5))
         $copied = @()
         foreach ($r in $roots) {
-            if (-not $r -or -not (Test-Path -LiteralPath $r)) { continue }
-            $files = @(Get-ChildItem -LiteralPath $r -Recurse -File -ErrorAction SilentlyContinue |
+            if (-not $r -or -not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $r)) { continue }
+            $files = @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $r -Recurse -File -ErrorAction SilentlyContinue |
                 Where-Object { $_.LastWriteTime -ge $cutoff } |
                 Sort-Object LastWriteTime -Descending | Select-Object -First 20)
             foreach ($f in $files) {
-                Copy-Item -LiteralPath $f.FullName -Destination $DestinationDir -Force
+                Microsoft.PowerShell.Management\Copy-Item -LiteralPath $f.FullName -Destination $DestinationDir -Force
                 $copied += $f.Name
             }
         }
@@ -291,11 +291,11 @@ function Copy-SccMSERTScanLogs {
     )
     if (-not $DestinationDir -or -not $LogFile) { return '' }
     try {
-        if (-not (Test-Path -LiteralPath $DestinationDir)) {
-            New-Item -ItemType Directory -Path $DestinationDir -Force | Out-Null
+        if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $DestinationDir)) {
+            Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $DestinationDir -Force | Out-Null
         }
-        if (Test-Path -LiteralPath $LogFile) {
-            Copy-Item -LiteralPath $LogFile -Destination $DestinationDir -Force
+        if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $LogFile) {
+            Microsoft.PowerShell.Management\Copy-Item -LiteralPath $LogFile -Destination $DestinationDir -Force
             try {
                 return (Join-Path $DestinationDir (Split-Path -Leaf $LogFile))
             } catch {
@@ -383,7 +383,7 @@ function Invoke-SccScanner {
     $config = $null
     try {
         $corePath = (Join-Path $PSScriptRoot '..\Scc.Core\Scc.Core.psd1')
-        if (Test-Path -LiteralPath $corePath) {
+        if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $corePath) {
             Import-Module -Name $corePath -Force -ErrorAction Stop
             $config = Get-SccConfig -ErrorAction SilentlyContinue
         }
@@ -447,7 +447,7 @@ function Invoke-SccScanner {
     # Try to record scan state in runstate via Scc.Core
     try {
         $corePath2 = (Join-Path $PSScriptRoot '..\Scc.Core\Scc.Core.psd1')
-        if (Test-Path -LiteralPath $corePath2) {
+        if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $corePath2) {
             Import-Module -Name $corePath2 -Force -ErrorAction SilentlyContinue
             Save-SccRunState -Run $Run -Stage 'Scanners' -Status 'Completed' `
                 -Detail ("Scan " + $Name + " completed with status " + $adapterResult.Status) `
@@ -515,7 +515,7 @@ function Invoke-SccGuiScanner {
 
     # Launch visible (no CreateNoWindow, no redirects - GUI app)
     try {
-        $proc = Start-Process -FilePath $target -PassThru -ErrorAction Stop
+        $proc = Microsoft.PowerShell.Management\Start-Process -FilePath $target -PassThru -ErrorAction Stop
     } catch {
         $end = [datetime]::UtcNow
         return [PSCustomObject]@{
@@ -737,7 +737,7 @@ function Invoke-SccKVRTAdapter {
             $driveRoot = $root
             if ($root -match '^[A-Za-z]:$') { $driveRoot = $root + '\' }
             try {
-                $hits = @(Get-ChildItem -LiteralPath $driveRoot -Filter '*.exe' -File -ErrorAction SilentlyContinue |
+                $hits = @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $driveRoot -Filter '*.exe' -File -ErrorAction SilentlyContinue |
                     Where-Object { $_.Name -match '^(kvrt|KVRT)' })
                 foreach ($h in $hits) { $candidates += $h.FullName }
             } catch { }
@@ -760,7 +760,7 @@ function Invoke-SccKVRTAdapter {
     # Version from file resource (KVRT has no documented --version)
     $version = ''
     try {
-        $vi = (Get-Item -LiteralPath $tool).VersionInfo
+        $vi = (Microsoft.PowerShell.Management\Get-Item -LiteralPath $tool).VersionInfo
         if ($vi.ProductVersion) { $version = [string]$vi.ProductVersion }
         elseif ($vi.FileVersion) { $version = [string]$vi.FileVersion }
     } catch { }
@@ -769,8 +769,8 @@ function Invoke-SccKVRTAdapter {
     if (-not $TimeoutMinutes -or $TimeoutMinutes -lt 1) { $TimeoutMinutes = 120 }
 
     $dataDir = Join-Path (Get-SccTempRoot) ('KVRT_Data_' + ([datetime]::UtcNow.ToString('yyyyMMdd_HHmmss')))
-    if (-not (Test-Path -LiteralPath $dataDir)) {
-        try { $null = New-Item -ItemType Directory -Path $dataDir -Force -ErrorAction Stop } catch { }
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $dataDir)) {
+        try { $null = Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $dataDir -Force -ErrorAction Stop } catch { }
     }
     $argList = @('-accepteula', '-silent', '-dontencrypt', '-details', ('-d "' + $dataDir + '"'))
     if ($ScanPath) {
@@ -829,14 +829,14 @@ function Invoke-SccKVRTAdapter {
 
     # Parse detections from report files
     $detections = @()
-    if (-not $timedOut -and $dataDir -and (Test-Path -LiteralPath $dataDir)) {
+    if (-not $timedOut -and $dataDir -and (Microsoft.PowerShell.Management\Test-Path -LiteralPath $dataDir)) {
         try {
-            $files = @(Get-ChildItem -LiteralPath $dataDir -Recurse -File -ErrorAction SilentlyContinue |
+            $files = @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $dataDir -Recurse -File -ErrorAction SilentlyContinue |
                 Where-Object { $_.Extension -in '.txt', '.log', '.htm', '.html' } |
                 Sort-Object LastWriteTime -Descending | Select-Object -First 5)
             foreach ($f in $files) {
                 $lines = @()
-                try { $lines = @(Get-Content -LiteralPath $f.FullName -ErrorAction Stop) } catch { continue }
+                try { $lines = @(Microsoft.PowerShell.Management\Get-Content -LiteralPath $f.FullName -ErrorAction Stop) } catch { continue }
                 foreach ($ln in $lines) {
                     if ($ln -match '(?i)(infected|detected|Trojan|Virus|Malware|Adware)') {
                         $path = ''
@@ -859,7 +859,7 @@ function Invoke-SccKVRTAdapter {
 
     if ($null -ne $exitCode -and @($detections).Count -eq 0 -and -not $timedOut) {
         $reportFiles = @()
-        try { $reportFiles = @(Get-ChildItem -LiteralPath $dataDir -Recurse -File -ErrorAction SilentlyContinue) } catch { }
+        try { $reportFiles = @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $dataDir -Recurse -File -ErrorAction SilentlyContinue) } catch { }
         if ($reportFiles.Count -eq 0) {
             $errors += 'KVRT wrote no report files to the data directory; scan output missing.'
         }
@@ -914,8 +914,8 @@ function Invoke-SccMSERTAdapter {
     $candidates = @()
     try {
         $toolDir = Join-Path $PSScriptRoot '..\tools\AV'
-        if (Test-Path -LiteralPath $toolDir) {
-            $hits = @(Get-ChildItem -LiteralPath $toolDir -Filter 'msert.exe' -File -ErrorAction SilentlyContinue)
+        if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $toolDir) {
+            $hits = @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $toolDir -Filter 'msert.exe' -File -ErrorAction SilentlyContinue)
             foreach ($h in $hits) { $candidates += $h.FullName }
         }
         $homeDir = ''
@@ -941,7 +941,7 @@ function Invoke-SccMSERTAdapter {
     # Version from file resource
     $version = ''
     try {
-        $vi = (Get-Item -LiteralPath $tool).VersionInfo
+        $vi = (Microsoft.PowerShell.Management\Get-Item -LiteralPath $tool).VersionInfo
         if ($vi.ProductVersion) { $version = [string]$vi.ProductVersion }
         elseif ($vi.FileVersion) { $version = [string]$vi.FileVersion }
     } catch { }
@@ -1029,9 +1029,9 @@ function Invoke-SccMSERTAdapter {
         $msertLog = 'C:\Windows\debug\msert.log'
     }
 
-    if ((Test-Path -LiteralPath $msertLog) -and -not $timedOut) {
+    if ((Microsoft.PowerShell.Management\Test-Path -LiteralPath $msertLog) -and -not $timedOut) {
         try {
-            $logLines = @(Get-Content -LiteralPath $msertLog -ErrorAction Stop)
+            $logLines = @(Microsoft.PowerShell.Management\Get-Content -LiteralPath $msertLog -ErrorAction Stop)
             $inResults = $false
             foreach ($ln in $logLines) {
                 if ($ln -match '(?i)Results Summary') { $inResults = $true; continue }
@@ -1056,7 +1056,7 @@ function Invoke-SccMSERTAdapter {
     $logNote = ''
     if ($LogDir) {
         $logNote = Copy-SccMSERTScanLogs -DestinationDir $LogDir -LogFile $msertLog
-        if (-not $logNote -and (Test-Path -LiteralPath $msertLog)) {
+        if (-not $logNote -and (Microsoft.PowerShell.Management\Test-Path -LiteralPath $msertLog)) {
             $errors += 'MSERT log file exists but could not be copied to scanner-results directory.'
         }
     }

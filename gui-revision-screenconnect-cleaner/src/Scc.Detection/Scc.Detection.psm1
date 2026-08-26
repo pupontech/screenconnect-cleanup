@@ -238,10 +238,10 @@ function Get-FileFacts {
         FileVersion = $null; ProductName = $null; CompanyName = $null
         Sha256 = $null; SignatureStatus = $null; SignerSubject = $null
     }
-    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $f }
+    if (-not $Path -or -not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $Path)) { return $f }
     $f.Exists = $true
     try {
-        $item = Get-Item -LiteralPath $Path
+        $item = Microsoft.PowerShell.Management\Get-Item -LiteralPath $Path
         $f.SizeBytes   = $item.Length
         $f.CreatedUtc  = $item.CreationTimeUtc.ToString("yyyy-MM-dd HH:mm:ss")
         $f.ModifiedUtc = $item.LastWriteTimeUtc.ToString("yyyy-MM-dd HH:mm:ss")
@@ -264,7 +264,7 @@ function Get-FileFacts {
 
 function Get-SccServiceInventory {
     try {
-        return @(Get-CimInstance -ClassName Win32_Service -ErrorAction Stop |
+        return @(Microsoft.PowerShell.Management\Get-CimInstance -ClassName Win32_Service -ErrorAction Stop |
             Select-Object Name, DisplayName, PathName, State, StartMode, StartName, ProcessId, Description)
     } catch {
         return @()
@@ -273,7 +273,7 @@ function Get-SccServiceInventory {
 
 function Get-SccProcessInventory {
     try {
-        return @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop |
+        return @(Microsoft.PowerShell.Management\Get-CimInstance -ClassName Win32_Process -ErrorAction Stop |
             Select-Object ProcessId, ParentProcessId, Name, ExecutablePath, CommandLine, CreationDate)
     } catch {
         return @()
@@ -288,11 +288,11 @@ function Get-SccUninstallInventory {
     )
     $out = [System.Collections.ArrayList]::new()
     foreach ($r in $roots) {
-        if (-not (Test-Path -LiteralPath $r)) { continue }
+        if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $r)) { continue }
         try {
-            foreach ($k in (Get-ChildItem -LiteralPath $r -ErrorAction SilentlyContinue)) {
+            foreach ($k in (Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $r -ErrorAction SilentlyContinue)) {
                 try {
-                    $p = Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction SilentlyContinue
+                    $p = Microsoft.PowerShell.Management\Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction SilentlyContinue
                     if (-not $p.DisplayName) { continue }
                     [void]$out.Add([PSCustomObject]@{
                         RegistryKey          = ($k.PSPath -replace '^Microsoft\.PowerShell\.Core\\Registry::', '')
@@ -356,9 +356,9 @@ function Get-SccScDirs {
     $expanded = Expand-Env $Pattern
     $parent   = Split-Path -Path $expanded -Parent
     $leaf     = Split-Path -Path $expanded -Leaf
-    if (-not $parent -or -not (Test-Path -LiteralPath $parent)) { return @() }
+    if (-not $parent -or -not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $parent)) { return @() }
     try {
-        return @(Get-ChildItem -LiteralPath $parent -Directory -ErrorAction SilentlyContinue |
+        return @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $parent -Directory -ErrorAction SilentlyContinue |
                  Where-Object { $_.Name -like $leaf } |
                  ForEach-Object {
                      [PSCustomObject]@{
@@ -390,12 +390,12 @@ function Get-SccTargets {
     if (-not $TargetsFile) {
         foreach ($d in (Get-SccModuleConfigDirs)) {
             $cand = [System.IO.Path]::Combine($d, 'targets.json')
-            if (Test-Path -LiteralPath $cand) { $TargetsFile = $cand; break }
+            if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $cand) { $TargetsFile = $cand; break }
         }
     }
-    if ($TargetsFile -and (Test-Path -LiteralPath $TargetsFile)) {
+    if ($TargetsFile -and (Microsoft.PowerShell.Management\Test-Path -LiteralPath $TargetsFile)) {
         try {
-            $raw = Get-Content -LiteralPath $TargetsFile -Raw -ErrorAction Stop | ConvertFrom-Json
+            $raw = Microsoft.PowerShell.Management\Get-Content -LiteralPath $TargetsFile -Raw -ErrorAction Stop | ConvertFrom-Json
             if ($raw -and $raw.targets) { return $raw.targets }
         } catch { }
     }
@@ -410,11 +410,11 @@ function Get-SccTrustedRelays {
     $file = $null
     foreach ($d in (Get-SccModuleConfigDirs)) {
         $cand = [System.IO.Path]::Combine($d, 'trusted-relays.json')
-        if (Test-Path -LiteralPath $cand) { $file = $cand; break }
+        if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $cand) { $file = $cand; break }
     }
     if ($file) {
         try {
-            $raw = Get-Content -LiteralPath $file -Raw -ErrorAction Stop | ConvertFrom-Json
+            $raw = Microsoft.PowerShell.Management\Get-Content -LiteralPath $file -Raw -ErrorAction Stop | ConvertFrom-Json
             if ($raw -and $raw.trustedRelays) { return $raw.trustedRelays }
         } catch { }
     }
@@ -613,11 +613,11 @@ function Resolve-SccScInstances {
     # --- 5. Config files + file facts ------------------------------------
     foreach ($key in @($instances.Keys)) {
         $slot = $instances[$key]
-        if ($slot.InstallPath -and (Test-Path -LiteralPath $slot.InstallPath)) {
-            $configs = @(Get-ChildItem -LiteralPath $slot.InstallPath -Filter "*.config" -ErrorAction SilentlyContinue)
+        if ($slot.InstallPath -and (Microsoft.PowerShell.Management\Test-Path -LiteralPath $slot.InstallPath)) {
+            $configs = @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $slot.InstallPath -Filter "*.config" -ErrorAction SilentlyContinue)
             foreach ($cfg in $configs) {
                 $text = $null
-                try { $text = Get-Content -LiteralPath $cfg.FullName -Raw -ErrorAction Stop } catch { }
+                try { $text = Microsoft.PowerShell.Management\Get-Content -LiteralPath $cfg.FullName -Raw -ErrorAction Stop } catch { }
                 [void]$slot.ConfigFiles.Add([PSCustomObject]@{
                     Name        = $cfg.Name
                     Path        = $cfg.FullName
@@ -630,11 +630,11 @@ function Resolve-SccScInstances {
                 }
             }
         }
-        if (-not $slot.ExecutablePath -and $slot.InstallPath -and (Test-Path -LiteralPath $slot.InstallPath)) {
-            $exe = @(Get-ChildItem -LiteralPath $slot.InstallPath -Filter "*.exe" -ErrorAction SilentlyContinue |
+        if (-not $slot.ExecutablePath -and $slot.InstallPath -and (Microsoft.PowerShell.Management\Test-Path -LiteralPath $slot.InstallPath)) {
+            $exe = @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $slot.InstallPath -Filter "*.exe" -ErrorAction SilentlyContinue |
                      Where-Object { $_.Name -match '(?i)ClientService' } | Select-Object -First 1)
             if (-not $exe) {
-                $exe = @(Get-ChildItem -LiteralPath $slot.InstallPath -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1)
+                $exe = @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $slot.InstallPath -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1)
             }
             if ($exe) { $slot.ExecutablePath = $exe[0].FullName }
         }
@@ -644,8 +644,8 @@ function Resolve-SccScInstances {
             $slot.FileVersion     = $ff.FileVersion
             $slot.ProductVersion  = $ff.ProductName
         }
-        if (-not $slot.InstallTimestampUtc -and $slot.InstallPath -and (Test-Path -LiteralPath $slot.InstallPath)) {
-            try { $slot.InstallTimestampUtc = (Get-Item -LiteralPath $slot.InstallPath).CreationTimeUtc.ToString("yyyy-MM-dd HH:mm:ss") } catch { }
+        if (-not $slot.InstallTimestampUtc -and $slot.InstallPath -and (Microsoft.PowerShell.Management\Test-Path -LiteralPath $slot.InstallPath)) {
+            try { $slot.InstallTimestampUtc = (Microsoft.PowerShell.Management\Get-Item -LiteralPath $slot.InstallPath).CreationTimeUtc.ToString("yyyy-MM-dd HH:mm:ss") } catch { }
         }
     }
 
@@ -935,10 +935,10 @@ function Invoke-SccDetection {
         Warnings       = $warnings.ToArray()
     }
 
-    if ($Run -and $Run.PSObject.Properties['RunDir'] -and (Test-Path -LiteralPath $Run.RunDir)) {
+    if ($Run -and $Run.PSObject.Properties['RunDir'] -and (Microsoft.PowerShell.Management\Test-Path -LiteralPath $Run.RunDir)) {
         $jsonPath = [System.IO.Path]::Combine($Run.RunDir, 'findings.json')
         try {
-            $findings | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $jsonPath -Encoding UTF8
+            $findings | ConvertTo-Json -Depth 12 | Microsoft.PowerShell.Management\Set-Content -LiteralPath $jsonPath -Encoding UTF8
         } catch { }
     }
 

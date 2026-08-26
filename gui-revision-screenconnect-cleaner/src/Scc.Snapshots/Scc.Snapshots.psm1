@@ -151,11 +151,11 @@ function Compare-SccObjectSection {
 
 function Read-SnapshotFile {
     param([string]$Path, [string]$Role)
-    if (-not (Test-Path -LiteralPath $Path)) {
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $Path)) {
         throw "$Role file not found: $Path"
     }
     try {
-        $obj = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+        $obj = Microsoft.PowerShell.Management\Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
     }
     catch {
         throw "$Role file is not valid JSON ($Path): $($_.Exception.Message)"
@@ -272,8 +272,8 @@ function Compare-SccSnapshots {
         }
         if ($runDir) {
             $snapshotsDir = [System.IO.Path]::Combine($runDir, 'snapshots')
-            if (-not (Test-Path -LiteralPath $snapshotsDir)) {
-                New-Item -ItemType Directory -Path $snapshotsDir -Force | Out-Null
+            if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $snapshotsDir)) {
+                Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $snapshotsDir -Force | Out-Null
             }
             $diffFile = [System.IO.Path]::Combine($snapshotsDir, 'diff.json')
             $json = $result | ConvertTo-Json -Depth 8

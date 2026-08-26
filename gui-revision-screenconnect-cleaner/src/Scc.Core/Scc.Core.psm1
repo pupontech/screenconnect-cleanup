@@ -194,7 +194,7 @@ function ConvertFrom-SccJson {
         [Parameter(Mandatory = $true)]
         [string]$Path
     )
-    if (-not (Test-Path -LiteralPath $Path)) {
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $Path)) {
         Write-SccLog -Level WARNING -Stage 'Core' -Component 'Scc.Core' -Operation 'ConvertFrom-SccJson' -Message ("File not found: {0}" -f $Path)
         return $null
     }
@@ -264,7 +264,7 @@ function Get-SccConfig {
     if ($Path) { $files += $Path }
 
     foreach ($f in $files) {
-        if (-not (Test-Path -LiteralPath $f)) { continue }
+        if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $f)) { continue }
         try {
             $text = [System.IO.File]::ReadAllText($f)
             $parsed = ConvertFrom-Json -InputObject $text
@@ -280,7 +280,7 @@ function Get-SccConfig {
 
     # Try to load a real trusted-relays.json if present (override embedded).
     foreach ($tr in @(([System.IO.Path]::Combine($userDir, 'trusted-relays.json')), ([System.IO.Path]::Combine($machineDir, 'trusted-relays.json')))) {
-        if (Test-Path -LiteralPath $tr) {
+        if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $tr) {
             try {
                 $trp = ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($tr))
                 if ($trp.trustedRelays) { $config.trustedRelays = $trp.trustedRelays }
@@ -333,8 +333,8 @@ function Set-SccConfigValue {
         $file = [System.IO.Path]::Combine($dir, 'scc-config.json')
     }
 
-    if (-not (Test-Path -LiteralPath $dir)) {
-        $null = New-Item -ItemType Directory -Path $dir -Force
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $dir)) {
+        $null = Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $dir -Force
     }
     if ($PSCmdlet.ShouldProcess($file, 'Write config value')) {
         [System.IO.File]::WriteAllText($file, (ConvertTo-SccJson -InputObject $config -Depth 10), [System.Text.Encoding]::ASCII)
@@ -410,7 +410,7 @@ function Get-SccComputerInfo {
 
     if ($isWindows) {
         try {
-            $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+            $os = Microsoft.PowerShell.Management\Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
             $osCaption = $os.Caption
             $osVersion = $os.Version
             $isServer = ($osCaption -match '(?i)windows\s+server')
@@ -515,7 +515,7 @@ function Set-SccCache {
 # =====================================================================
 function Get-SccNormalizedPath {
     param([string]$Path)
-    if ($Path -and (Test-Path -LiteralPath $Path)) {
+    if ($Path -and (Microsoft.PowerShell.Management\Test-Path -LiteralPath $Path)) {
         try { return [System.IO.Path]::GetFullPath($Path) } catch { }
     }
     return $Path
@@ -549,10 +549,10 @@ function Get-SccFileFacts {
         Architecture    = ''
     }
 
-    if ($Path -and (Test-Path -LiteralPath $Path)) {
+    if ($Path -and (Microsoft.PowerShell.Management\Test-Path -LiteralPath $Path)) {
         $facts.Exists = $true
         try {
-            $item = Get-Item -LiteralPath $Path
+            $item = Microsoft.PowerShell.Management\Get-Item -LiteralPath $Path
             $facts.SizeBytes = $item.Length
             $facts.LastWriteUtc = $item.LastWriteTimeUtc.ToString('o')
             $facts.CreationUtc = $item.CreationTimeUtc.ToString('o')
@@ -639,8 +639,8 @@ function Write-SccLog {
     } else {
         $logDir = Join-Path (Resolve-SccEnv -Text '%ProgramData%\ScreenConnectCleaner') 'logs'
     }
-    if (-not (Test-Path -LiteralPath $logDir)) {
-        try { $null = New-Item -ItemType Directory -Path $logDir -Force } catch { return }
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $logDir)) {
+        try { $null = Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $logDir -Force } catch { return }
     }
 
     $jsonlFile = [System.IO.Path]::Combine($logDir, ($Stage) + '.jsonl')
@@ -648,8 +648,8 @@ function Write-SccLog {
 
     $plain = ('{0} [{1}] {2}/{3}/{4}: {5}' -f $ts, $Level, $Stage, $Component, $Operation, $Message)
     try {
-        Add-Content -LiteralPath $jsonlFile -Value $jsonl -Encoding ASCII
-        Add-Content -LiteralPath $masterFile -Value $plain -Encoding ASCII
+        Microsoft.PowerShell.Management\Add-Content -LiteralPath $jsonlFile -Value $jsonl -Encoding ASCII
+        Microsoft.PowerShell.Management\Add-Content -LiteralPath $masterFile -Value $plain -Encoding ASCII
     } catch { }
 }
 
@@ -709,11 +709,11 @@ function New-SccRun {
     }
 
     $subDirs = @('evidence', 'snapshots', 'scanner-results', 'logs', 'quarantine-meta')
-    if (-not (Test-Path -LiteralPath $runDir)) {
-        $null = New-Item -ItemType Directory -Path $runDir -Force
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $runDir)) {
+        $null = Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $runDir -Force
     }
     foreach ($s in $subDirs) {
-        $null = New-Item -ItemType Directory -Path ([System.IO.Path]::Combine($runDir, $s)) -Force
+        $null = Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path ([System.IO.Path]::Combine($runDir, $s)) -Force
     }
 
     if (-not $IncidentDate) { $IncidentDate = ([datetime]::UtcNow).ToString('yyyy-MM-dd') }
@@ -770,7 +770,7 @@ function Save-SccRunState {
     )
 
     $stateFile = [System.IO.Path]::Combine($Run.RunDir, 'runstate.json')
-    if (-not (Test-Path -LiteralPath $stateFile)) { return }
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $stateFile)) { return }
     $state = ConvertFrom-SccJson -Path $stateFile
     if (-not $state) { return }
 
@@ -803,7 +803,7 @@ function Get-SccRunState {
     )
     $root = if ($ReportRoot) { Resolve-SccEnv -Text $ReportRoot } else { Resolve-SccEnv -Text (Get-SccPaths).ReportRoot }
     $stateFile = Join-Path ([System.IO.Path]::Combine($root, $RunId)) 'runstate.json'
-    if (-not (Test-Path -LiteralPath $stateFile)) { return $null }
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $stateFile)) { return $null }
     return (ConvertFrom-SccJson -Path $stateFile)
 }
 
@@ -815,12 +815,12 @@ function Find-SccRecentRuns {
     )
     $root = if ($ReportRoot) { Resolve-SccEnv -Text $ReportRoot } else { Resolve-SccEnv -Text (Get-SccPaths).ReportRoot }
     $results = @()
-    if (-not (Test-Path -LiteralPath $root)) { return $results }
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $root)) { return $results }
 
     $cutoff = ([datetime]::UtcNow).AddDays(-$MaxAgeDays)
     try {
-        $dirs = Get-ChildItem -LiteralPath $root -Directory -ErrorAction Stop |
-            Where-Object { $_.Name -like 'SC-*' -and (Test-Path -LiteralPath ([System.IO.Path]::Combine($_.FullName, 'runstate.json'))) }
+        $dirs = Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $root -Directory -ErrorAction Stop |
+            Where-Object { $_.Name -like 'SC-*' -and (Microsoft.PowerShell.Management\Test-Path -LiteralPath ([System.IO.Path]::Combine($_.FullName, 'runstate.json'))) }
     } catch { return $results }
 
     foreach ($d in $dirs) {
@@ -882,7 +882,7 @@ function Test-SccNas {
 
     $exists = $false
     try {
-        $exists = Test-Path -LiteralPath $NasPath
+        $exists = Microsoft.PowerShell.Management\Test-Path -LiteralPath $NasPath
     } catch {
         $result.Error = $_.Exception.Message
     }

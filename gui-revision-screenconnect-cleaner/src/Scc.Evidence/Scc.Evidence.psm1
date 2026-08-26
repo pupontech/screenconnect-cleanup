@@ -78,8 +78,8 @@ function ConvertTo-NullSafeString {
 function Get-RegValueSafe {
     param([string]$Path, [string]$Name)
     try {
-        if (-not (Test-Path -LiteralPath $Path)) { return $null }
-        $item = Get-ItemProperty -LiteralPath $Path -Name $Name -ErrorAction Stop
+        if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $Path)) { return $null }
+        $item = Microsoft.PowerShell.Management\Get-ItemProperty -LiteralPath $Path -Name $Name -ErrorAction Stop
         return $item.$Name
     }
     catch {
@@ -121,7 +121,7 @@ function Test-IsAdmin {
 
 function Get-Win32OsCaption {
     try {
-        $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+        $os = Microsoft.PowerShell.Management\Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
         return ConvertTo-NullSafeString $os.Caption
     }
     catch {
@@ -134,7 +134,7 @@ function Get-Win32OsCaption {
 # ---------------------------------------------------------------------------
 
 function Get-ServicesSection {
-    $wmiSvcs = Get-CimInstance -ClassName Win32_Service -ErrorAction Stop
+    $wmiSvcs = Microsoft.PowerShell.Management\Get-CimInstance -ClassName Win32_Service -ErrorAction Stop
     $rows = @($wmiSvcs | ForEach-Object {
         [PSCustomObject]@{
             Key         = $_.Name
@@ -186,10 +186,10 @@ function Get-RegistryAutorunsSection {
 
     foreach ($spec in $runKeySpecs) {
         try {
-            if (Test-Path -LiteralPath $spec.Path) {
-                $item = Get-Item -LiteralPath $spec.Path -ErrorAction Stop
+            if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $spec.Path) {
+                $item = Microsoft.PowerShell.Management\Get-Item -LiteralPath $spec.Path -ErrorAction Stop
                 foreach ($valueName in $item.Property) {
-                    $val = (Get-ItemProperty -LiteralPath $spec.Path -Name $valueName -ErrorAction Stop).$valueName
+                    $val = (Microsoft.PowerShell.Management\Get-ItemProperty -LiteralPath $spec.Path -Name $valueName -ErrorAction Stop).$valueName
                     $rows.Add([PSCustomObject]@{
                         Key       = "$($spec.Hive)|$($spec.Path)|$valueName"
                         Hive      = $spec.Hive
@@ -214,7 +214,7 @@ function Get-RegistryAutorunsSection {
     )
     foreach ($spec in $winlogonSpecs) {
         try {
-            if (Test-Path -LiteralPath $spec.Path) {
+            if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $spec.Path) {
                 foreach ($valueName in @('Shell', 'Userinit')) {
                     $val = Get-RegValueSafe -Path $spec.Path -Name $valueName
                     if ($null -ne $val) {
@@ -258,8 +258,8 @@ function Get-StartupFoldersSection {
 
     foreach ($spec in $folderSpecs) {
         try {
-            if ($spec.Path -and (Test-Path -LiteralPath $spec.Path)) {
-                $files = Get-ChildItem -LiteralPath $spec.Path -File -ErrorAction Stop
+            if ($spec.Path -and (Microsoft.PowerShell.Management\Test-Path -LiteralPath $spec.Path)) {
+                $files = Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $spec.Path -File -ErrorAction Stop
                 foreach ($f in $files) {
                     $rows.Add([PSCustomObject]@{
                         Key          = "$($spec.Scope)|$($f.Name)"
@@ -281,7 +281,7 @@ function Get-StartupFoldersSection {
 }
 
 function Get-ProcessesSection {
-    $procs = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop
+    $procs = Microsoft.PowerShell.Management\Get-CimInstance -ClassName Win32_Process -ErrorAction Stop
     $rows = @($procs | ForEach-Object {
         $owner = ''
         try {
@@ -326,7 +326,7 @@ function Get-ConnectionsSection {
     $rows = @($conns | ForEach-Object {
         $procName = ''
         try {
-            $proc = Get-Process -Id $_.OwningProcess -ErrorAction Stop
+            $proc = Microsoft.PowerShell.Management\Get-Process -Id $_.OwningProcess -ErrorAction Stop
             $procName = $proc.ProcessName
         }
         catch {
@@ -360,11 +360,11 @@ function Get-InstalledProgramsSection {
 
     foreach ($root in $roots) {
         try {
-            if (-not (Test-Path -LiteralPath $root.Path)) { continue }
-            $subKeys = Get-ChildItem -LiteralPath $root.Path -ErrorAction Stop
+            if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $root.Path)) { continue }
+            $subKeys = Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $root.Path -ErrorAction Stop
             foreach ($sk in $subKeys) {
                 try {
-                    $props = Get-ItemProperty -LiteralPath $sk.PSPath -ErrorAction Stop
+                    $props = Microsoft.PowerShell.Management\Get-ItemProperty -LiteralPath $sk.PSPath -ErrorAction Stop
                     $displayName = ConvertTo-NullSafeString $props.DisplayName
                     if ([string]::IsNullOrWhiteSpace($displayName)) { continue }
                     $subKeyName = Split-Path -Leaf $sk.PSPath
@@ -398,7 +398,7 @@ function Get-LocalAccountsSection {
 
     $adminMembers = @{}
     try {
-        $members = Get-CimInstance -ClassName Win32_GroupUser -ErrorAction Stop | Where-Object {
+        $members = Microsoft.PowerShell.Management\Get-CimInstance -ClassName Win32_GroupUser -ErrorAction Stop | Where-Object {
             $_.GroupComponent -match 'Name="Administrators"'
         }
         foreach ($m in $members) {
@@ -426,7 +426,7 @@ function Get-LocalAccountsSection {
         }
     }
 
-    $accounts = Get-CimInstance -ClassName Win32_UserAccount -Filter "LocalAccount=True" -ErrorAction Stop
+    $accounts = Microsoft.PowerShell.Management\Get-CimInstance -ClassName Win32_UserAccount -Filter "LocalAccount=True" -ErrorAction Stop
     foreach ($a in $accounts) {
         $isAdmin = $false
         if ($adminMembers.ContainsKey($a.Name)) { $isAdmin = $true }
@@ -493,7 +493,7 @@ function Get-WmiPersistenceSection {
     $rows = [System.Collections.Generic.List[object]]::new()
 
     try {
-        $filters = Get-CimInstance -Namespace 'root\subscription' -ClassName '__EventFilter' -ErrorAction Stop
+        $filters = Microsoft.PowerShell.Management\Get-CimInstance -Namespace 'root\subscription' -ClassName '__EventFilter' -ErrorAction Stop
         foreach ($f in $filters) {
             $rows.Add([PSCustomObject]@{
                 Key            = "root\subscription|__EventFilter|$($f.Name)"
@@ -510,7 +510,7 @@ function Get-WmiPersistenceSection {
     }
 
     try {
-        $consumers = Get-CimInstance -Namespace 'root\subscription' -ClassName '__EventConsumer' -ErrorAction Stop
+        $consumers = Microsoft.PowerShell.Management\Get-CimInstance -Namespace 'root\subscription' -ClassName '__EventConsumer' -ErrorAction Stop
         foreach ($c in $consumers) {
             $className = $c.CimClass.CimClassName
             $detail = ''
@@ -540,7 +540,7 @@ function Get-WmiPersistenceSection {
     }
 
     try {
-        $bindings = Get-CimInstance -Namespace 'root\subscription' -ClassName '__FilterToConsumerBinding' -ErrorAction Stop
+        $bindings = Microsoft.PowerShell.Management\Get-CimInstance -Namespace 'root\subscription' -ClassName '__FilterToConsumerBinding' -ErrorAction Stop
         foreach ($b in $bindings) {
             $filterRef = ConvertTo-NullSafeString $b.Filter
             $consumerRef = ConvertTo-NullSafeString $b.Consumer
@@ -599,7 +599,7 @@ function Get-RecentFilesSection {
     foreach ($root in $roots) {
         if ($rows.Count -ge $CapCount) { $capHit = $true; break }
         if ($budgetHit) { break }
-        if (-not $root -or -not (Test-Path -LiteralPath $root)) { continue }
+        if (-not $root -or -not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $root)) { continue }
 
         try {
             $rootDepth = ($root.TrimEnd('\') -split '\\').Count
@@ -621,7 +621,7 @@ function Get-RecentFilesSection {
 
                 $children = $null
                 try {
-                    $children = Get-ChildItem -LiteralPath $dir -Force -ErrorAction Stop
+                    $children = Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $dir -Force -ErrorAction Stop
                 }
                 catch {
                     continue
@@ -689,8 +689,8 @@ function Get-HostsFileLines {
     elseif ($env:SystemRoot) {
         $hostsPath = [System.IO.Path]::Combine($env:SystemRoot, 'System32\drivers\etc\hosts')
     }
-    if (-not $hostsPath -or -not (Test-Path -LiteralPath $hostsPath)) { return @() }
-    $lines = Get-Content -LiteralPath $hostsPath -ErrorAction Stop
+    if (-not $hostsPath -or -not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $hostsPath)) { return @() }
+    $lines = Microsoft.PowerShell.Management\Get-Content -LiteralPath $hostsPath -ErrorAction Stop
     return @($lines | ForEach-Object { [string]$_ })
 }
 
@@ -853,8 +853,8 @@ function New-SccSnapshot {
     }
 
     $snapshotsDir = [System.IO.Path]::Combine($runDir, 'snapshots')
-    if (-not (Test-Path -LiteralPath $snapshotsDir)) {
-        New-Item -ItemType Directory -Path $snapshotsDir -Force | Out-Null
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $snapshotsDir)) {
+        Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $snapshotsDir -Force | Out-Null
     }
 
     # System info
@@ -1007,10 +1007,10 @@ function Get-SccSnapshot {
     $snapshotsDir = [System.IO.Path]::Combine($runDir, 'snapshots')
     $outFile = [System.IO.Path]::Combine($snapshotsDir, "$Label.json")
 
-    if (-not (Test-Path -LiteralPath $outFile)) {
+    if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $outFile)) {
         throw "Snapshot not found: $outFile"
     }
 
-    $json = Get-Content -LiteralPath $outFile -Raw
+    $json = Microsoft.PowerShell.Management\Get-Content -LiteralPath $outFile -Raw
     return ($json | ConvertFrom-Json)
 }
