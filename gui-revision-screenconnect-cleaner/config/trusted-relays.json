@@ -1,0 +1,18 @@
+{
+  "_comment": [
+    "Known-good ScreenConnect infrastructure. Entries here make a detected",
+    "instance display as Known / Trusted in the GUI and report.",
+    "An UNKNOWN relay is never automatically treated as malicious - it is",
+    "shown as Unknown and the technician decides.",
+    "fingerprint: optional expected server fingerprint (16 hex chars, lowercase),",
+    "matching the ServerKeyFingerprint field reported by detection."
+  ],
+  "trustedRelays": [
+    {
+      "relay": "support.example.com",
+      "name": "Example MSP (rename or remove)",
+      "fingerprint": "",
+      "notes": "Company-managed ScreenConnect server."
+    }
+  ]
+}
