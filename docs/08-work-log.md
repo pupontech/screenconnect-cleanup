@@ -862,3 +862,21 @@ invokes `remove-screenconnect.ps1 -PlanJson`; `-Execute` is added only after the
 manifest is carried into Stage 7 and Stage 8, whose report includes removed/quarantined
 items and a credential-reset checklist reminder. Parsing, ASCII/no-BOM checks, and a
 synthetic pwsh dry-run remain required before Windows validation.
+
+## 9. Post-adoption reconciliation closure (2026-08-26, ox-alpha)
+
+After upstream adopted all agent fixes (d71d40a..0004d30) and closed draft PR #1 as
+superseded, a final sweep confirmed nothing was dropped:
+
+- Worker branches (`crash-audit` @014f0fd, `deadlock-worker` @9d5b677, `fix-worker`
+  @cdd9890) diffed against main: strictly additive — only new tests/CI files and the
+  owner's own extensions; zero reversions of our fixes.
+- Spot-proof of adoption on main: `Get-EntryPropertySafe` x29 call sites,
+  `Run-BoundedProcess` present, QuietUninstallString-only registration covered in
+  `tests/ci/Test-WindowsIntegration.ps1`.
+- Release asset verification: rebuilt bundle from 0004d30 vs published
+  v2026-08-26-crash-fixes zip — 29/29 files SHA256-identical. The stale-release root
+  cause ("GitHub download broken") is closed.
+
+Agent-side work is COMPLETE. Remaining is human-only: M0 live lab validation per
+docs/09-windows-live-test-matrix.md.
