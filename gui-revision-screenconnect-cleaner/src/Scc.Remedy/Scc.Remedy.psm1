@@ -307,7 +307,7 @@ function Stop-SccTargetService {
 
 function Get-SccAncestorPids {
     param([int]$ProcessId)
-    $chain = New-Object System.Collections.Generic.List[int]
+    $chain = [System.Collections.Generic.List[int]]::new()
     $walk = $ProcessId
     for ($i = 0; $i -lt 12 -and $walk -gt 0; $i++) {
         $chain.Add([int]$walk)
@@ -395,7 +395,7 @@ function Invoke-SccUninstallCommand {
             if ($m2.Success) { $exe = $m2.Groups[1].Value; $args = $m2.Groups[2].Value }
         }
         if ([string]::IsNullOrEmpty($exe)) { return $false }
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi = [System.Diagnostics.ProcessStartInfo]::new()
         $psi.FileName               = $exe
         $psi.Arguments              = $args
         $psi.UseShellExecute        = $false
@@ -666,7 +666,7 @@ function Move-SccTargetToQuarantine {
         if ($isDirectory) {
             # F7: directory quarantine - hash each file individually, skip
             # reparse points (junctions/symlinks) per legacy 1099-1130.
-            $rows = New-Object System.Collections.ArrayList
+            $rows = [System.Collections.ArrayList]::new()
             $reparseSkipped = 0
             try {
                 $children = @(Get-ChildItem -LiteralPath $SourcePath -File -Recurse -Force -ErrorAction SilentlyContinue)
@@ -868,7 +868,7 @@ function Test-SccIsAdmin {
     if (-not $isWindows) { return $true }
     try {
         $id = [Security.Principal.WindowsIdentity]::GetCurrent()
-        $p = New-Object Security.Principal.WindowsPrincipal($id)
+        $p = [System.Security.Principal.WindowsPrincipal]::new($id)
         return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     } catch { return $false }
 }

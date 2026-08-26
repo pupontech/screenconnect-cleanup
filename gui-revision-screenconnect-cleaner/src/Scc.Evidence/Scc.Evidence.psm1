@@ -95,7 +95,7 @@ function Get-HostNameSafe {
 function Test-IsAdmin {
     try {
         $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-        $p = New-Object System.Security.Principal.WindowsPrincipal($id)
+        $p = [System.Security.Principal.WindowsPrincipal]::new($id)
         return $p.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
     }
     catch {
@@ -157,7 +157,7 @@ function Get-ScheduledTasksSection {
 }
 
 function Get-RegistryAutorunsSection {
-    $rows = New-Object System.Collections.Generic.List[object]
+    $rows = [System.Collections.Generic.List[object]]::new()
 
     $runKeySpecs = @(
         @{ Hive = 'HKLM'; View = '64'; Path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' }
@@ -224,7 +224,7 @@ function Get-RegistryAutorunsSection {
 }
 
 function Get-StartupFoldersSection {
-    $rows = New-Object System.Collections.Generic.List[object]
+    $rows = [System.Collections.Generic.List[object]]::new()
 
     $allUsersStartup = ''
     $currentUserStartup = ''
@@ -334,7 +334,7 @@ function Get-ConnectionsSection {
 }
 
 function Get-InstalledProgramsSection {
-    $rows = New-Object System.Collections.Generic.List[object]
+    $rows = [System.Collections.Generic.List[object]]::new()
 
     $roots = @(
         @{ Hint = 'HKLM64'; Path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' }
@@ -378,7 +378,7 @@ function Get-InstalledProgramsSection {
 }
 
 function Get-LocalAccountsSection {
-    $rows = New-Object System.Collections.Generic.List[object]
+    $rows = [System.Collections.Generic.List[object]]::new()
 
     $adminMembers = @{}
     try {
@@ -474,7 +474,7 @@ function Get-FirewallRulesSection {
 }
 
 function Get-WmiPersistenceSection {
-    $rows = New-Object System.Collections.Generic.List[object]
+    $rows = [System.Collections.Generic.List[object]]::new()
 
     try {
         $filters = Get-CimInstance -Namespace 'root\subscription' -ClassName '__EventFilter' -ErrorAction Stop
@@ -548,7 +548,7 @@ function Get-RecentFilesSection {
     param([int]$WindowDays, [int]$CapCount = 500,
           [int]$MaxDirs = 40000, [int]$TimeBudgetSeconds = 120)
 
-    $rows = New-Object System.Collections.Generic.List[object]
+    $rows = [System.Collections.Generic.List[object]]::new()
     if ($WindowDays -le 0) {
         return [PSCustomObject]@{ Items = [object[]]$rows.ToArray(); CapHit = $false }
     }
@@ -556,7 +556,7 @@ function Get-RecentFilesSection {
     $cutoffUtc = (Get-Date).ToUniversalTime().AddDays(-1 * $WindowDays)
     $extensions = @('.exe', '.dll', '.msi', '.ps1', '.bat', '.cmd', '.vbs', '.js', '.scr', '.lnk')
 
-    $roots = New-Object System.Collections.Generic.List[string]
+    $roots = [System.Collections.Generic.List[string]]::new()
     if ($env:TEMP) { $roots.Add($env:TEMP) }
     if ($env:WINDIR) { $roots.Add((Join-Path $env:WINDIR 'Temp')) }
     if ($env:APPDATA) { $roots.Add($env:APPDATA) }
@@ -587,7 +587,7 @@ function Get-RecentFilesSection {
 
         try {
             $rootDepth = ($root.TrimEnd('\') -split '\\').Count
-            $stack = New-Object System.Collections.Generic.Stack[string]
+            $stack = [System.Collections.Generic.Stack[string]]::new()
             $stack.Push($root)
 
             while ($stack.Count -gt 0) {
@@ -817,7 +817,7 @@ function New-SccSnapshot {
     )
 
     $ErrorActionPreference = 'Stop'
-    $script:CollectionErrors = New-Object System.Collections.Generic.List[object]
+    $script:CollectionErrors = [System.Collections.Generic.List[object]]::new()
 
     $startTime = Get-Date
     $isWindows = Test-IsWindows
@@ -950,7 +950,7 @@ function New-SccSnapshot {
     # Serialize
     $outFile = Join-Path $snapshotsDir "$Label.json"
     $json = $result | ConvertTo-Json -Depth 6
-    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::WriteAllText($outFile, $json, $utf8NoBom)
 
     $elapsed = (Get-Date) - $startTime

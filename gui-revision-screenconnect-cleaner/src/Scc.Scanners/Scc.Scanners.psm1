@@ -54,7 +54,7 @@ function Get-SccMpComputerStatusVersion {
 # ---------------------------------------------------------------------------
 function New-SccScanResult {
     param([string]$ScannerName = '')
-    New-Object PSObject -Property @{
+    [PSCustomObject]@{
         ScannerName     = $ScannerName
         ScannerVersion  = ''
         Available       = $false
@@ -88,7 +88,7 @@ function Invoke-ProcessWithTimeout {
         [Parameter(Mandatory = $true)][int]$TimeoutSeconds
     )
 
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = $FilePath
     $psi.Arguments = ($ArgumentList -join ' ')
     $psi.UseShellExecute = $false
@@ -341,7 +341,7 @@ function Get-SccScannerList {
             $s['Order'] = $orderMap[$s['Name']]
         }
         if ($EnabledOnly -and -not $s['Enabled']) { continue }
-        $result += New-Object PSObject -Property $s
+        $result += [PSCustomObject]$s
     }
 
     return $result | Sort-Object Order
@@ -494,7 +494,7 @@ function Invoke-SccGuiScanner {
 
     if (-not $target) {
         $end = Get-Date
-        return New-Object PSObject -Property @{
+        return [PSCustomObject]@{
             ScannerName     = $Name
             StartedUtc      = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
             EndedUtc        = $end.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
@@ -510,7 +510,7 @@ function Invoke-SccGuiScanner {
         $proc = Start-Process -FilePath $target -PassThru -ErrorAction Stop
     } catch {
         $end = Get-Date
-        return New-Object PSObject -Property @{
+        return [PSCustomObject]@{
             ScannerName     = $Name
             StartedUtc      = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
             EndedUtc        = $end.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
@@ -533,7 +533,7 @@ function Invoke-SccGuiScanner {
     $result = 'Completed'
     if ($timedOut) { $result = 'Timeout' }
 
-    return New-Object PSObject -Property @{
+    return [PSCustomObject]@{
         ScannerName     = $Name
         StartedUtc      = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
         EndedUtc        = $end.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
@@ -667,7 +667,7 @@ function Invoke-SccDefenderAdapter {
                 if ($cat -and $cat.SeverityName) { $sev = [string]$cat.SeverityName }
             }
         } catch { }
-        $detections += New-Object PSObject -Property @{
+        $detections += [PSCustomObject]@{
             Path       = $res
             ThreatName = [string]$d.ThreatID
             Severity   = $sev
@@ -833,7 +833,7 @@ function Invoke-SccKVRTAdapter {
                     if ($ln -match '(?i)(infected|detected|Trojan|Virus|Malware|Adware)') {
                         $path = ''
                         if ($ln -match '[A-Za-z]:\\[^\t";]+') { $path = $Matches[0].Trim() }
-                        $detections += New-Object PSObject -Property @{
+                        $detections += [PSCustomObject]@{
                             Path       = $path
                             ThreatName = $ln.Trim().Substring(0, [Math]::Min(200, $ln.Trim().Length))
                             Severity   = ''
@@ -1030,7 +1030,7 @@ function Invoke-SccMSERTAdapter {
                 if ($inResults -and $ln -match '(?i)(threat|found|virus|trojan|malware|worm|adware)') {
                     $path = ''
                     if ($ln -match '[A-Za-z]:\\[^\t";]+') { $path = $Matches[0].Trim() }
-                    $detections += New-Object PSObject -Property @{
+                    $detections += [PSCustomObject]@{
                         Path       = $path
                         ThreatName = $ln.Trim().Substring(0, [Math]::Min(200, $ln.Trim().Length))
                         Severity   = ''

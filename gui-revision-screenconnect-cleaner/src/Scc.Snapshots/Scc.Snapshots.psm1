@@ -269,7 +269,7 @@ function Compare-SccSnapshots {
             }
             $diffFile = Join-Path $snapshotsDir 'diff.json'
             $json = $result | ConvertTo-Json -Depth 8
-            $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+            $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
             [System.IO.File]::WriteAllText($diffFile, $json, $utf8NoBom)
         }
     }

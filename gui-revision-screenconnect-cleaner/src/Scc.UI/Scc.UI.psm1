@@ -472,7 +472,7 @@ function Start-SccJob {
 
     $wrapper = @'
 param($Token, $ScriptBlock)
-$state = New-Object 'System.Collections.Specialized.OrderedDictionary'
+$state = [System.Collections.Specialized.OrderedDictionary]::new()
 $state['State'] = 'Running'
 $state['Result'] = $null
 $state['Error'] = $null
@@ -598,7 +598,7 @@ function Get-SccViewPath {
 function Import-SccXaml {
     param([string]$Path)
     [xml]$xaml = Get-Content -Path $Path
-    $reader = New-Object System.Xml.XmlNodeReader($xaml)
+    $reader = [System.Xml.XmlNodeReader]::new($xaml)
     return [System.Windows.Markup.XamlReader]::Load($reader)
 }
 
@@ -619,7 +619,7 @@ function Start-SccApp {
 
     $dash = Import-SccXaml -Path (Get-SccViewPath -Name 'Dashboard')
 
-    $window = New-Object System.Windows.Window
+    $window = [System.Windows.Window]::new()
     $window.Title = 'ScreenConnect Cleaner'
     $window.Width = 1200
     $window.Height = 800
@@ -651,7 +651,7 @@ function Start-SccApp {
 
     # UI polls the active job via a DispatcherTimer (200ms) on the Linux/CI
     # side this code path is never reached.
-    $timer = New-Object System.Windows.Threading.DispatcherTimer
+    $timer = [System.Windows.Threading.DispatcherTimer]::new()
     $timer.Interval = [TimeSpan]::FromMilliseconds(200)
     $timer.Add_Tick({
         if ($null -ne $script:ActiveJob) { Update-SccJob -Handle $script:ActiveJob }

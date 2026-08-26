@@ -278,7 +278,7 @@ function Get-SccUninstallInventory {
         "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
         "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
     )
-    $out = New-Object System.Collections.ArrayList
+    $out = [System.Collections.ArrayList]::new()
     foreach ($r in $roots) {
         if (-not (Test-Path -LiteralPath $r)) { continue }
         try {
@@ -368,7 +368,7 @@ function Get-SccScDirs {
 
 function Get-SccModuleConfigDirs {
     # user -> machine -> new-tree config, in that order.
-    $dirs = New-Object System.Collections.ArrayList
+    $dirs = [System.Collections.ArrayList]::new()
     if ($env:LocalAppData) { [void]$dirs.Add((Join-Path $env:LocalAppData 'ScreenConnectCleaner\config')) }
     if ($env:ProgramData) { [void]$dirs.Add((Join-Path $env:ProgramData 'ScreenConnectCleaner\config')) }
     # new-tree config dir relative to this module file.
@@ -449,21 +449,21 @@ function New-ScInstanceTemplate {
         ParsedParameters    = [ordered]@{}
         UnknownParams       = [ordered]@{}
         CustomProperties    = [ordered]@{}
-        ParserWarnings      = New-Object System.Collections.ArrayList
+        ParserWarnings      = [System.Collections.ArrayList]::new()
         ParseIssue          = $null
         UninstallDisplayName    = $null
         UninstallString         = $null
         QuietUninstallString    = $null
         UninstallRegistryKey    = $null
-        Persistence         = New-Object System.Collections.ArrayList
-        AssociatedProcesses = New-Object System.Collections.ArrayList
+        Persistence         = [System.Collections.ArrayList]::new()
+        AssociatedProcesses = [System.Collections.ArrayList]::new()
         NetworkConnections  = @()
-        ConfigFiles         = New-Object System.Collections.ArrayList
-        Sources             = New-Object System.Collections.ArrayList
+        ConfigFiles         = [System.Collections.ArrayList]::new()
+        Sources             = [System.Collections.ArrayList]::new()
         Confidence          = $null
         TrustMatch          = 'Unknown'
         TrustedRelayEntry   = $null
-        DetectionSources    = New-Object System.Collections.ArrayList
+        DetectionSources    = [System.Collections.ArrayList]::new()
     }
     return $slot
 }
@@ -498,8 +498,8 @@ function Resolve-SccScInstances {
     )
 
     $instances   = [ordered]@{}   # key -> instance object
-    $parseIssues = New-Object System.Collections.ArrayList
-    $rawCopied   = New-Object System.Collections.ArrayList
+    $parseIssues = [System.Collections.ArrayList]::new()
+    $rawCopied   = [System.Collections.ArrayList]::new()
 
     function Get-Slot {
         param([string]$Key)
@@ -656,7 +656,7 @@ function Resolve-SccScInstances {
             })
             continue
         }
-        $warnings = New-Object System.Collections.ArrayList
+        $warnings = [System.Collections.ArrayList]::new()
         $params = ConvertFrom-ScParamBlob -Blob $slot.RawLaunchParameters -Warnings ([ref]$warnings)
         foreach ($w in $warnings) { [void]$slot.ParserWarnings.Add($w) }
         Apply-ScParameters -Params $params -Slot $slot -Warnings ([ref]$slot.ParserWarnings)
@@ -690,7 +690,7 @@ function Resolve-SccScInstances {
     }
 
     # --- 8. Historical instances from 7045 not present on disk ------------
-    $historical = New-Object System.Collections.ArrayList
+    $historical = [System.Collections.ArrayList]::new()
     foreach ($e in $Events) {
         if ($e.Message -notmatch '(?i)ScreenConnect') { continue }
         $ident = Get-ScIdentifier $e.Message
@@ -788,7 +788,7 @@ function Get-SccScreenConnect {
 
     # Public shape: convert internal UnknownParams hashtable to an array and
     # expose the remaining ARCHITECTURE fields directly.
-    $pub = New-Object System.Collections.ArrayList
+    $pub = [System.Collections.ArrayList]::new()
     foreach ($inst in $result.Instances) {
         $inst | Add-Member -MemberType NoteProperty -Name 'UnknownParameters' -Value @($inst.UnknownParams.GetEnumerator() | ForEach-Object {
             [PSCustomObject]@{ Key = $_.Key; Value = $_.Value }
@@ -821,9 +821,9 @@ function Get-SccRemoteAccess {
     $processes = Get-SccProcessInventory
     $uninstall = Get-SccUninstallInventory
 
-    $findings = New-Object System.Collections.ArrayList
+    $findings = [System.Collections.ArrayList]::new()
     foreach ($t in $selected) {
-        $hits = New-Object System.Collections.ArrayList
+        $hits = [System.Collections.ArrayList]::new()
 
         foreach ($svc in $services) {
             if ((Test-AnyLike $svc.Name $t.servicePatterns) -or (Test-AnyLike $svc.DisplayName $t.servicePatterns)) {
@@ -913,7 +913,7 @@ function Invoke-SccDetection {
     $screenConnect = @(Get-SccScreenConnect)
     $remoteAccess  = @(Get-SccRemoteAccess -Targets $Targets -All:$All)
 
-    $warnings = New-Object System.Collections.ArrayList
+    $warnings = [System.Collections.ArrayList]::new()
     foreach ($inst in $screenConnect) {
         foreach ($w in $inst.ParserWarnings) { [void]$warnings.Add($w) }
         if ($inst.ParseIssue) { [void]$warnings.Add($inst.ParseIssue) }
@@ -942,7 +942,7 @@ function Invoke-SccDetectionSelfTest {
     param(
         [switch]$ThrowOnFail
     )
-    $failures = New-Object System.Collections.ArrayList
+    $failures = [System.Collections.ArrayList]::new()
 
     $scTarget = @($script:DefaultTargetsJson | ConvertFrom-Json).targets | Where-Object { $_.id -eq 'screenconnect' } | Select-Object -First 1
 
@@ -983,7 +983,7 @@ function Invoke-SccDetectionSelfTest {
     )
 
     foreach ($smp in $samples) {
-        $warnings = New-Object System.Collections.ArrayList
+        $warnings = [System.Collections.ArrayList]::new()
         $slot = New-ScInstanceTemplate -Key 'self'
         $blob = Find-ScParamBlob $smp.Text
         if ($smp.Name -eq 'no blob present at all' -or $smp.Name -eq 'empty blob') {

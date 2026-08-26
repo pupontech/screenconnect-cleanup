@@ -174,7 +174,7 @@ function Get-SccRemoteAccessFindings {
     if ($null -ne $ra) { return Get-SccSafeItems $ra }
     $ra = Get-SccSafeProp $FindingsData 'OtherTargets' $null
     if ($null -ne $ra) {
-        $out = New-Object System.Collections.ArrayList
+        $out = [System.Collections.ArrayList]::new()
         foreach ($g in (Get-SccSafeItems $ra)) {
             $hits = Get-SccSafeProp $g 'Hits' $null
             if ($null -eq $hits) { $hits = Get-SccSafeProp $g 'Findings' $null }
@@ -206,7 +206,7 @@ function Get-SccTimelineEvents {
         $ToolProvData,
         [string]$ReportGeneratedUtc
     )
-    $events = New-Object System.Collections.ArrayList
+    $events = [System.Collections.ArrayList]::new()
     function Add-EventLocal {
         param([string]$TimeRaw, [string]$Label)
         if ([string]::IsNullOrWhiteSpace($TimeRaw)) { return }
@@ -307,7 +307,7 @@ function Get-SccDeterministicReportTime {
         $RemediationData,
         $ScannerResults
     )
-    $candidates = New-Object System.Collections.ArrayList
+    $candidates = [System.Collections.ArrayList]::new()
     function Add-Candidate { param($v) if (-not [string]::IsNullOrWhiteSpace([string]$v)) { [void]$candidates.Add([string]$v) } }
     if ($null -ne $FindingsData) {
         Add-Candidate (Get-SccSafeProp $FindingsData 'DetectedUtc' $null)
@@ -374,7 +374,7 @@ function New-SccReport {
     }
 
     $scannerDir = Join-Path $runDir 'scanner-results'
-    $scannerResults = New-Object System.Collections.ArrayList
+    $scannerResults = [System.Collections.ArrayList]::new()
     if (Test-Path -LiteralPath $scannerDir) {
         $files = @(Get-ChildItem -LiteralPath $scannerDir -File -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object -Property Name)
         foreach ($f in $files) {
@@ -1243,7 +1243,7 @@ $rowsChanged
     }
 
     # Outstanding Concerns
-    $concerns = New-Object System.Collections.ArrayList
+    $concerns = [System.Collections.ArrayList]::new()
     if ($unknownCount -gt 0) { [void]$concerns.Add("Unknown ScreenConnect relay(s) detected ($unknownCount) - manual review required") }
     if ($scanFailed -gt 0) { [void]$concerns.Add("Scanner failures: $scanFailed scan(s) failed or not verified") }
     if ($diffNew -gt 0) { [void]$concerns.Add("New items appeared after remediation ($diffNew) - possible resurrection") }
@@ -1263,7 +1263,7 @@ $concernRows
 
     # Errors / Warnings
     $errorsHtml = ''
-    $errorLines = New-Object System.Collections.ArrayList
+    $errorLines = [System.Collections.ArrayList]::new()
     if ($masterLogExists -and $masterLogContent) {
         $lines = $masterLogContent -split "`n"
         foreach ($l in $lines) {
@@ -1526,7 +1526,7 @@ $bodyHtml
     }
 
     # Write files UTF8 NoBOM deterministically
-    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::WriteAllText($htmlPath, $fullHtml, $utf8NoBom)
 
     # For determinism, ensure report.json ordering stable: ConvertTo-Json with depth 12
@@ -1535,7 +1535,7 @@ $bodyHtml
     [System.IO.File]::WriteAllText($jsonPath, $jsonText, $utf8NoBom)
 
     # technician-summary.txt <=60 lines
-    $txtLines = New-Object System.Collections.ArrayList
+    $txtLines = [System.Collections.ArrayList]::new()
     [void]$txtLines.Add('ScreenConnect Cleaner - Technician Summary')
     [void]$txtLines.Add(('Run: ' + $runId + '  Computer: ' + $computerName + '  Generated: ' + $reportGeneratedUtc + ' UTC'))
     [void]$txtLines.Add('----------------------------------------------------------------')
@@ -1575,7 +1575,7 @@ $bodyHtml
 
     # Enforce <=60 lines
     if (@($txtLines).Count -gt 60) {
-        $trimmed = New-Object System.Collections.ArrayList
+        $trimmed = [System.Collections.ArrayList]::new()
         for ($i = 0; $i -lt 59; $i++) { [void]$trimmed.Add($txtLines[$i]) }
         [void]$trimmed.Add('... truncated (max 60 lines)')
         $txtLines = $trimmed

@@ -214,7 +214,7 @@ function Merge-SccConfig {
             if ($Base.PSObject.Properties[$p.Name]) {
                 $Base.PSObject.Properties[$p.Name].Value = $merged
             } else {
-                $Base.PSObject.Properties.Add((New-Object PSNoteProperty($p.Name, $merged)))
+                $Base.PSObject.Properties.Add(([System.Management.Automation.PSNoteProperty]::new($p.Name, $merged)))
             }
         }
         return $Base
@@ -306,7 +306,7 @@ function Set-SccConfigValue {
     for ($i = 0; $i -lt ($segments.Count - 1); $i++) {
         $seg = $segments[$i]
         if (-not $node.PSObject.Properties[$seg]) {
-            $node.PSObject.Properties.Add((New-Object PSNoteProperty($seg, (New-Object PSCustomObject))))
+            $node.PSObject.Properties.Add(([System.Management.Automation.PSNoteProperty]::new($seg, ([pscustomobject]::new()))))
         }
         $node = $node.PSObject.Properties[$seg].Value
     }
@@ -314,7 +314,7 @@ function Set-SccConfigValue {
     if ($node.PSObject.Properties[$leaf]) {
         $node.PSObject.Properties[$leaf].Value = $Value
     } else {
-        $node.PSObject.Properties.Add((New-Object PSNoteProperty($leaf, $Value)))
+        $node.PSObject.Properties.Add(([System.Management.Automation.PSNoteProperty]::new($leaf, $Value)))
     }
 
     if ($MachineScope) {
@@ -414,7 +414,7 @@ function Get-SccComputerInfo {
     } else {
         $osCaption = ("Non-Windows ({0} {1})" -f $PSVersionTable.Platform, $PSVersionTable.OS)
         try {
-            $drive = New-Object System.IO.DriveInfo('/')
+            $drive = [System.IO.DriveInfo]::new('/')
             $freeSpaceGB = [math]::Round($drive.AvailableFreeSpace / 1GB, 1)
         } catch { }
         try {
@@ -456,7 +456,7 @@ function Test-SccAdmin {
     if ($env:OS -eq 'Windows_NT') {
         try {
             $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-            $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+            $principal = [System.Security.Principal.WindowsPrincipal]::new($identity)
             return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
         } catch {
             return $false
@@ -656,7 +656,7 @@ function Get-SccRunId {
     }
     $hostName = $hostName.ToUpperInvariant()
     $invalid = [System.IO.Path]::GetInvalidFileNameChars()
-    $sb = New-Object System.Text.StringBuilder
+    $sb = [System.Text.StringBuilder]::new()
     foreach ($c in $hostName.ToCharArray()) {
         $bad = $false
         foreach ($ic in $invalid) { if ($c -eq $ic) { $bad = $true; break } }
