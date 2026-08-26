@@ -1,5 +1,5 @@
 
-# Ensure Microsoft.PowerShell.Utility cmdlets (Get-Date, New-Object, ConvertTo-Json,
+# Ensure Microsoft.PowerShell.Utility cmdlets ([datetime]::UtcNow, New-Object, ConvertTo-Json,
 # Out-Null, Add-Member, etc.) are visible inside this module's session state on every
 # host. Without this, module functions fail with CommandNotFoundException on Windows
 # when the module is loaded through Pester or a nested session state.
@@ -928,7 +928,7 @@ function Invoke-SccDetection {
 
     $findings = [PSCustomObject]@{
         ComputerName   = $env:COMPUTERNAME
-        DetectedUtc    = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss")
+        DetectedUtc    = ([datetime]::UtcNow).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss")
         ScreenConnect  = $screenConnect
         RemoteAccess   = $remoteAccess
         Warnings       = $warnings.ToArray()

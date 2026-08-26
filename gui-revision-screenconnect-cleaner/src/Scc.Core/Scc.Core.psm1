@@ -9,7 +9,7 @@
 # =====================================================================
 
 
-# Ensure Microsoft.PowerShell.Utility cmdlets (Get-Date, New-Object, ConvertTo-Json,
+# Ensure Microsoft.PowerShell.Utility cmdlets ([datetime]::UtcNow, New-Object, ConvertTo-Json,
 # Out-Null, Add-Member, etc.) are visible inside this module's session state on every
 # host. Without this, module functions fail with CommandNotFoundException on Windows
 # when the module is loaded through Pester or a nested session state.
@@ -416,7 +416,7 @@ function Get-SccComputerInfo {
             $freeSpaceGB = [math]::Round($os.FreePhysicalMemory / 1MB, 1)
             $totalMemoryGB = [math]::Round($os.TotalVisibleMemorySize / 1MB, 1)
             $boot = $os.LastBootUpTime
-            $uptimeMinutes = [math]::Round(((Get-Date) - $boot).TotalMinutes, 1)
+            $uptimeMinutes = [math]::Round((([datetime]::UtcNow) - $boot).TotalMinutes, 1)
         } catch { }
     } else {
         $osCaption = ("Non-Windows ({0} {1})" -f $PSVersionTable.Platform, $PSVersionTable.OS)
@@ -483,7 +483,7 @@ function Get-SccCache {
     if ($Key) {
         if ($script:SccCache.ContainsKey($Key)) {
             $entry = $script:SccCache[$Key]
-            if ($entry.ExpiresUtc -lt (Get-Date)) {
+            if ($entry.ExpiresUtc -lt ([datetime]::UtcNow)) {
                 $script:SccCache.Remove($Key)
                 return $null
             }
@@ -505,7 +505,7 @@ function Set-SccCache {
     )
     $script:SccCache[$Key] = @{
         Value      = $Value
-        ExpiresUtc = (Get-Date).AddSeconds($TtlSeconds)
+        ExpiresUtc = ([datetime]::UtcNow).AddSeconds($TtlSeconds)
     }
 }
 
@@ -613,7 +613,7 @@ function Write-SccLog {
     $msgRank = Get-SccLevelRank -Level $Level
     if ($msgRank -lt $threshold) { return }
 
-    $ts = (Get-Date).ToString('o')
+    $ts = ([datetime]::UtcNow).ToString('o')
     $runId = if ($Run -and $Run.RunId) { $Run.RunId } else { $null }
 
     $line = [PSCustomObject]@{
@@ -673,8 +673,8 @@ function Get-SccRunId {
     if ($hostName.Length -gt 20) { $hostName = $hostName.Substring(0, 20) }
     if ([string]::IsNullOrEmpty($hostName)) { $hostName = 'HOST' }
 
-    $stamp = (Get-Date).ToString('yyyyMMdd')
-    $time = (Get-Date).ToString('HHmmss')
+    $stamp = ([datetime]::UtcNow).ToString('yyyyMMdd')
+    $time = ([datetime]::UtcNow).ToString('HHmmss')
     return ('SC-{0}-{1}-{2}' -f $stamp, $hostName, $time)
 }
 
@@ -715,7 +715,7 @@ function New-SccRun {
         $null = New-Item -ItemType Directory -Path (Join-Path $runDir $s) -Force
     }
 
-    if (-not $IncidentDate) { $IncidentDate = (Get-Date).ToString('yyyy-MM-dd') }
+    if (-not $IncidentDate) { $IncidentDate = ([datetime]::UtcNow).ToString('yyyy-MM-dd') }
 
     $run = [PSCustomObject]@{
         RunId        = $runId
@@ -724,7 +724,7 @@ function New-SccRun {
         IncidentDate = $IncidentDate
         Technician   = $Technician
         Client       = $Client
-        CreatedUtc   = (Get-Date).ToString('o')
+        CreatedUtc   = ([datetime]::UtcNow).ToString('o')
     }
 
     $stages = @()
@@ -781,9 +781,9 @@ function Save-SccRunState {
                 $st.StartedUtc = $null
                 $st.EndedUtc = $null
             } else {
-                if (-not $st.StartedUtc) { $st.StartedUtc = (Get-Date).ToString('o') }
+                if (-not $st.StartedUtc) { $st.StartedUtc = ([datetime]::UtcNow).ToString('o') }
                 if ($Status -in @('Completed', 'Interrupted', 'Failed', 'Skipped')) {
-                    $st.EndedUtc = (Get-Date).ToString('o')
+                    $st.EndedUtc = ([datetime]::UtcNow).ToString('o')
                 }
             }
             break
@@ -816,7 +816,7 @@ function Find-SccRecentRuns {
     $results = @()
     if (-not (Test-Path -LiteralPath $root)) { return $results }
 
-    $cutoff = (Get-Date).AddDays(-$MaxAgeDays)
+    $cutoff = ([datetime]::UtcNow).AddDays(-$MaxAgeDays)
     try {
         $dirs = Get-ChildItem -LiteralPath $root -Directory -ErrorAction Stop |
             Where-Object { $_.Name -like 'SC-*' -and (Test-Path -LiteralPath (Join-Path $_.FullName 'runstate.json')) }
@@ -922,16 +922,16 @@ function Invoke-SccSafe {
         [psobject]$Run
     )
 
-    $start = Get-Date
+    $start = [datetime]::UtcNow
     Write-SccLog -Run $Run -Level DEBUG -Stage $Stage -Component $Component -Operation $Operation -Message 'Enter'
 
     try {
         $result = & $ScriptBlock
-        $dur = (New-TimeSpan -Start $start -End (Get-Date)).TotalSeconds
+        $dur = (New-TimeSpan -Start $start -End ([datetime]::UtcNow)).TotalSeconds
         Write-SccLog -Run $Run -Level DEBUG -Stage $Stage -Component $Component -Operation $Operation -Message ('Exit ok in {0:0.00}s' -f $dur)
         return $result
     } catch {
-        $dur = (New-TimeSpan -Start $start -End (Get-Date)).TotalSeconds
+        $dur = (New-TimeSpan -Start $start -End ([datetime]::UtcNow)).TotalSeconds
         $msg = $_.Exception.Message
         Write-SccLog -Run $Run -Level ERROR -Stage $Stage -Component $Component -Operation $Operation -Message ('Failed in {0:0.00}s: {1}' -f $dur, $msg)
         if ($Run) {

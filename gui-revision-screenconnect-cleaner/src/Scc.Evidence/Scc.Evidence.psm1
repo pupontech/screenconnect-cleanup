@@ -1,5 +1,5 @@
 
-# Ensure Microsoft.PowerShell.Utility cmdlets (Get-Date, New-Object, ConvertTo-Json,
+# Ensure Microsoft.PowerShell.Utility cmdlets ([datetime]::UtcNow, New-Object, ConvertTo-Json,
 # Out-Null, Add-Member, etc.) are visible inside this module's session state on every
 # host. Without this, module functions fail with CommandNotFoundException on Windows
 # when the module is loaded through Pester or a nested session state.
@@ -560,7 +560,7 @@ function Get-RecentFilesSection {
         return [PSCustomObject]@{ Items = [object[]]$rows.ToArray(); CapHit = $false }
     }
 
-    $cutoffUtc = (Get-Date).ToUniversalTime().AddDays(-1 * $WindowDays)
+    $cutoffUtc = ([datetime]::UtcNow).ToUniversalTime().AddDays(-1 * $WindowDays)
     $extensions = @('.exe', '.dll', '.msi', '.ps1', '.bat', '.cmd', '.vbs', '.js', '.scr', '.lnk')
 
     $roots = [System.Collections.Generic.List[string]]::new()
@@ -826,7 +826,7 @@ function New-SccSnapshot {
     $ErrorActionPreference = 'Stop'
     $script:CollectionErrors = [System.Collections.Generic.List[object]]::new()
 
-    $startTime = Get-Date
+    $startTime = [datetime]::UtcNow
     $isWindows = Test-IsWindows
     $isAdmin = $false
     $osCaption = ''
@@ -930,7 +930,7 @@ function New-SccSnapshot {
         SchemaVersion      = 2
         Label              = $Label
         ComputerName       = Get-HostNameSafe
-        CollectedUtc       = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        CollectedUtc       = ([datetime]::UtcNow).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
         IsAdmin            = $isAdmin
         OSCaption          = $osCaption
         IncidentWindowDays = $IncidentWindowDays
@@ -960,7 +960,7 @@ function New-SccSnapshot {
     $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::WriteAllText($outFile, $json, $utf8NoBom)
 
-    $elapsed = (Get-Date) - $startTime
+    $elapsed = ([datetime]::UtcNow) - $startTime
     Write-Verbose ("Snapshot collected in {0:N1}s (Label={1}, CollectionErrors={2})" -f $elapsed.TotalSeconds, $Label, $script:CollectionErrors.Count)
 
     return $result

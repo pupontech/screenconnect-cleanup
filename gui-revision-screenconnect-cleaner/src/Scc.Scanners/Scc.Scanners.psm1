@@ -14,7 +14,7 @@
 # ---------------------------------------------------------------------------
 
 
-# Ensure Microsoft.PowerShell.Utility cmdlets (Get-Date, New-Object, ConvertTo-Json,
+# Ensure Microsoft.PowerShell.Utility cmdlets ([datetime]::UtcNow, New-Object, ConvertTo-Json,
 # Out-Null, Add-Member, etc.) are visible inside this module's session state on every
 # host. Without this, module functions fail with CommandNotFoundException on Windows
 # when the module is loaded through Pester or a nested session state.
@@ -144,7 +144,7 @@ function Invoke-ProcessWithTimeout {
 # ---------------------------------------------------------------------------
 function Write-SccScannerLog {
     param([string]$ScannerName, [string]$Message)
-    $line = ('[{0}] [{1}] {2}' -f (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss'), $ScannerName, $Message)
+    $line = ('[{0}] [{1}] {2}' -f ([datetime]::UtcNow).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss'), $ScannerName, $Message)
     Write-Verbose $line
 }
 
@@ -215,7 +215,7 @@ function Copy-SccScanLogs {
         } catch {
             return ''
         }
-        $cutoff = (Get-Date).AddMinutes(-1 * [Math]::Max($SinceMinutes, 5))
+        $cutoff = ([datetime]::UtcNow).AddMinutes(-1 * [Math]::Max($SinceMinutes, 5))
         $copied = @()
         if (Test-Path -LiteralPath $supportRoot) {
             $files = @(Get-ChildItem -LiteralPath $supportRoot -File -ErrorAction SilentlyContinue |
@@ -261,7 +261,7 @@ function Copy-SccKVRTScanLogs {
             # On non-Windows, Join-Path with drive letters fails
         }
 
-        $cutoff = (Get-Date).AddMinutes(-1 * [Math]::Max($SinceMinutes, 5))
+        $cutoff = ([datetime]::UtcNow).AddMinutes(-1 * [Math]::Max($SinceMinutes, 5))
         $copied = @()
         foreach ($r in $roots) {
             if (-not $r -or -not (Test-Path -LiteralPath $r)) { continue }
@@ -429,7 +429,7 @@ function Invoke-SccScanner {
                 $r = New-SccScanResult -ScannerName $Name
                 $r.Status = 'Skipped'
                 $r.Errors = @(('Unknown scanner name: ' + $Name))
-                $r.StartTimeUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+                $r.StartTimeUtc = ([datetime]::UtcNow).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
                 $r.EndTimeUtc = $r.StartTimeUtc
                 return $r
             }
@@ -439,7 +439,7 @@ function Invoke-SccScanner {
         $adapterResult = New-SccScanResult -ScannerName $Name
         $adapterResult.Status = 'Failed'
         $adapterResult.Errors = @($errors)
-        $adapterResult.StartTimeUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        $adapterResult.StartTimeUtc = ([datetime]::UtcNow).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
         $adapterResult.EndTimeUtc = $adapterResult.StartTimeUtc
     }
 
@@ -470,7 +470,7 @@ function Invoke-SccGuiScanner {
         [int]$TimeoutMinutes = 240
     )
 
-    $start = Get-Date
+    $start = [datetime]::UtcNow
     $knownTools = @{
         'ESET'         = 'esetonlinescanner.exe'
         'Malwarebytes' = 'MBSetup.exe'
@@ -500,7 +500,7 @@ function Invoke-SccGuiScanner {
     $target = Resolve-SccScannerToolPath -ToolName $Name -ExplicitPath $ToolPath -CandidatePaths $candidates
 
     if (-not $target) {
-        $end = Get-Date
+        $end = [datetime]::UtcNow
         return [PSCustomObject]@{
             ScannerName     = $Name
             StartedUtc      = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
@@ -516,7 +516,7 @@ function Invoke-SccGuiScanner {
     try {
         $proc = Start-Process -FilePath $target -PassThru -ErrorAction Stop
     } catch {
-        $end = Get-Date
+        $end = [datetime]::UtcNow
         return [PSCustomObject]@{
             ScannerName     = $Name
             StartedUtc      = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
@@ -531,7 +531,7 @@ function Invoke-SccGuiScanner {
     # Wait with timeout - process left running on timeout (owner policy)
     $timedOut = -not $proc.WaitForExit($TimeoutMinutes * 60 * 1000)
 
-    $end = Get-Date
+    $end = [datetime]::UtcNow
     $exitCode = $null
     if (-not $timedOut) {
         try { $exitCode = $proc.ExitCode } catch { }
@@ -567,7 +567,7 @@ function Invoke-SccDefenderAdapter {
     )
 
     $scannerName = 'MicrosoftDefender'
-    $start = Get-Date
+    $start = [datetime]::UtcNow
     $errors = @()
 
     # Locate MpCmdRun.exe via centralized resolver
@@ -586,7 +586,7 @@ function Invoke-SccDefenderAdapter {
         $r = New-SccScanResult -ScannerName $scannerName
         $r.Status = 'NotInstalled'
         $r.StartTimeUtc = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
-        $r.EndTimeUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        $r.EndTimeUtc = ([datetime]::UtcNow).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
         $r.Errors = @('MpCmdRun.exe not found (checked Platform versions and Program Files)')
         return $r
     }
@@ -615,7 +615,7 @@ function Invoke-SccDefenderAdapter {
         $r.Status = 'Skipped'
         $r.ScannerVersion = $version
         $r.StartTimeUtc = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
-        $r.EndTimeUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        $r.EndTimeUtc = ([datetime]::UtcNow).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
         $r.CommandLine = $commandLine
         return $r
     }
@@ -642,7 +642,7 @@ function Invoke-SccDefenderAdapter {
         }
     }
 
-    $end = Get-Date
+    $end = [datetime]::UtcNow
     $duration = [int]($end - $start).TotalSeconds
 
     # Exit code mapping per Microsoft doc
@@ -724,7 +724,7 @@ function Invoke-SccKVRTAdapter {
     )
 
     $scannerName = 'KVRT'
-    $start = Get-Date
+    $start = [datetime]::UtcNow
     $errors = @()
 
     # Locate KVRT.exe via centralized resolver
@@ -751,7 +751,7 @@ function Invoke-SccKVRTAdapter {
         $r = New-SccScanResult -ScannerName $scannerName
         $r.Status = 'NotInstalled'
         $r.StartTimeUtc = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
-        $r.EndTimeUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        $r.EndTimeUtc = ([datetime]::UtcNow).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
         $r.Errors = @('kvrt.exe not found (checked SystemDrive root, Public Downloads, TEMP; pass -ToolPath explicitly)')
         return $r
     }
@@ -767,7 +767,7 @@ function Invoke-SccKVRTAdapter {
     # Build command line per Kaspersky doc [1]
     if (-not $TimeoutMinutes -or $TimeoutMinutes -lt 1) { $TimeoutMinutes = 120 }
 
-    $dataDir = Join-Path (Get-SccTempRoot) ('KVRT_Data_' + (Get-Date -Format 'yyyyMMdd_HHmmss'))
+    $dataDir = Join-Path (Get-SccTempRoot) ('KVRT_Data_' + ([datetime]::UtcNow.ToString('yyyyMMdd_HHmmss')))
     if (-not (Test-Path -LiteralPath $dataDir)) {
         try { $null = New-Item -ItemType Directory -Path $dataDir -Force -ErrorAction Stop } catch { }
     }
@@ -783,7 +783,7 @@ function Invoke-SccKVRTAdapter {
         $r.Status = 'Skipped'
         $r.ScannerVersion = $version
         $r.StartTimeUtc = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
-        $r.EndTimeUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        $r.EndTimeUtc = ([datetime]::UtcNow).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
         $r.CommandLine = $commandLine
         return $r
     }
@@ -810,7 +810,7 @@ function Invoke-SccKVRTAdapter {
         }
     }
 
-    $end = Get-Date
+    $end = [datetime]::UtcNow
     $duration = [int]($end - $start).TotalSeconds
 
     # Exit codes undocumented per Kaspersky doc; completion = Completed
@@ -906,7 +906,7 @@ function Invoke-SccMSERTAdapter {
     )
 
     $scannerName = 'MSERT'
-    $start = Get-Date
+    $start = [datetime]::UtcNow
     $errors = @()
 
     # Locate msert.exe via centralized resolver
@@ -932,7 +932,7 @@ function Invoke-SccMSERTAdapter {
         $r = New-SccScanResult -ScannerName $scannerName
         $r.Status = 'NotInstalled'
         $r.StartTimeUtc = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
-        $r.EndTimeUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        $r.EndTimeUtc = ([datetime]::UtcNow).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
         $r.Errors = @('msert.exe not found (checked tools/AV, Downloads, TEMP; pass -ToolPath explicitly)')
         return $r
     }
@@ -957,7 +957,7 @@ function Invoke-SccMSERTAdapter {
         $r.Status = 'Skipped'
         $r.ScannerVersion = $version
         $r.StartTimeUtc = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
-        $r.EndTimeUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        $r.EndTimeUtc = ([datetime]::UtcNow).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
         $r.CommandLine = $commandLine
         $r.ToolSource = 'Verification=DocUrl'
         return $r
@@ -985,7 +985,7 @@ function Invoke-SccMSERTAdapter {
         }
     }
 
-    $end = Get-Date
+    $end = [datetime]::UtcNow
     $duration = [int]($end - $start).TotalSeconds
 
     # Exit code mapping from vendor docs and community verification:

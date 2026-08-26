@@ -1,5 +1,5 @@
 
-# Ensure Microsoft.PowerShell.Utility cmdlets (Get-Date, New-Object, ConvertTo-Json,
+# Ensure Microsoft.PowerShell.Utility cmdlets ([datetime]::UtcNow, New-Object, ConvertTo-Json,
 # Out-Null, Add-Member, etc.) are visible inside this module's session state on every
 # host. Without this, module functions fail with CommandNotFoundException on Windows
 # when the module is loaded through Pester or a nested session state.
@@ -553,7 +553,7 @@ function New-SccResolvedTool {
     )
     $ageDays = -1
     if ($Facts.LastWriteUtc) {
-        try { $ageDays = [math]::Round(((Get-Date) - $Facts.LastWriteUtc).TotalDays, 1) } catch { }
+        try { $ageDays = [math]::Round((([datetime]::UtcNow) - $Facts.LastWriteUtc).TotalDays, 1) } catch { }
     }
     return [PSCustomObject]@{
         Name           = $Name
@@ -565,7 +565,7 @@ function New-SccResolvedTool {
         SignatureStatus= $Facts.SignatureStatus
         SizeBytes      = $Facts.SizeBytes
         AgeDays        = $ageDays
-        VerifiedAtUtc  = (Get-Date).ToUniversalTime()
+        VerifiedAtUtc  = ([datetime]::UtcNow).ToUniversalTime()
         Provenance     = $Provenance
     }
 }
@@ -752,7 +752,7 @@ function Save-SccToolToCache {
         Size            = $check.Facts.SizeBytes
         Publisher       = $check.Facts.Publisher
         SignatureStatus = $check.Facts.SignatureStatus
-        CachedUtc       = (Get-Date).ToUniversalTime().ToString('o')
+        CachedUtc       = ([datetime]::UtcNow).ToUniversalTime().ToString('o')
         Source          = $Source
         DownloadUrl     = $DownloadUrl
     }

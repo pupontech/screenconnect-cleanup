@@ -1,5 +1,5 @@
 
-# Ensure Microsoft.PowerShell.Utility cmdlets (Get-Date, New-Object, ConvertTo-Json,
+# Ensure Microsoft.PowerShell.Utility cmdlets ([datetime]::UtcNow, New-Object, ConvertTo-Json,
 # Out-Null, Add-Member, etc.) are visible inside this module's session state on every
 # host. Without this, module functions fail with CommandNotFoundException on Windows
 # when the module is loaded through Pester or a nested session state.
@@ -123,9 +123,9 @@ function Add-RemediationAction {
         [string]$StartedUtc
     )
     if ([string]::IsNullOrEmpty($StartedUtc)) {
-        $StartedUtc = (Get-Date).ToUniversalTime().ToString('o')
+        $StartedUtc = ([datetime]::UtcNow).ToUniversalTime().ToString('o')
     }
-    $ended = (Get-Date).ToUniversalTime().ToString('o')
+    $ended = ([datetime]::UtcNow).ToUniversalTime().ToString('o')
     $entry = [PSCustomObject]@{
         Action    = $Action
         Target    = $Target
@@ -290,7 +290,7 @@ function Test-SccScreenConnectTarget {
 
 function Stop-SccTargetService {
     param([string]$ServiceName, $PlanItem, $Run)
-    $started = (Get-Date).ToUniversalTime().ToString('o')
+    $started = ([datetime]::UtcNow).ToUniversalTime().ToString('o')
     $cmd = ('Stop-Service -Name "{0}" -Force' -f $ServiceName)
     try {
         $svc = $null
@@ -331,7 +331,7 @@ function Get-SccAncestorPids {
 
 function Stop-SccTargetProcesses {
     param([string]$InstallDir, [string]$ServiceName, $PlanItem, $Run)
-    $started = (Get-Date).ToUniversalTime().ToString('o')
+    $started = ([datetime]::UtcNow).ToUniversalTime().ToString('o')
     $cmd = ('kill processes under ' + $InstallDir)
     try {
         $pids = @()
@@ -438,7 +438,7 @@ function Uninstall-SccTarget {
     param($PlanItem, $Run)
     $fid = [string](Get-Prop $PlanItem 'FindingId')
     $installDir = [string](Get-Prop $PlanItem 'InstallDir')
-    $started = (Get-Date).ToUniversalTime().ToString('o')
+    $started = ([datetime]::UtcNow).ToUniversalTime().ToString('o')
     try {
         $data = $null
         try { $data = Get-SccTargetUninstallData -PlanItem $PlanItem } catch { $data = $null }
@@ -489,7 +489,7 @@ function Uninstall-SccTarget {
 function Test-SccTargetRemoved {
     param($PlanItem, $Run)
     $fid = [string](Get-Prop $PlanItem 'FindingId')
-    $started = (Get-Date).ToUniversalTime().ToString('o')
+    $started = ([datetime]::UtcNow).ToUniversalTime().ToString('o')
     $svc = [string](Get-Prop $PlanItem 'ServiceName')
     $removed = $true
     try {
@@ -508,7 +508,7 @@ function Test-SccTargetRemoved {
 
 function Remove-SccTargetService {
     param([string]$ServiceName, $PlanItem, $Run)
-    $started = (Get-Date).ToUniversalTime().ToString('o')
+    $started = ([datetime]::UtcNow).ToUniversalTime().ToString('o')
     $cmd = ('sc.exe delete "{0}"' -f $ServiceName)
     try {
         $code = -1
@@ -528,7 +528,7 @@ function Remove-SccTargetService {
 
 function Remove-SccTargetScheduledTask {
     param([string]$InstallDir, $PlanItem, $Run)
-    $started = (Get-Date).ToUniversalTime().ToString('o')
+    $started = ([datetime]::UtcNow).ToUniversalTime().ToString('o')
     if ([string]::IsNullOrEmpty($InstallDir)) {
         Add-RemediationAction -Run $Run -Action 'DeleteScheduledTask' -Target '' -Command '' -Result 'Skipped' -Error 'no install dir' -StartedUtc $started
         return $true
@@ -560,7 +560,7 @@ function Remove-SccTargetScheduledTask {
 
 function Remove-SccTargetRunKey {
     param([string]$InstallDir, $PlanItem, $Run)
-    $started = (Get-Date).ToUniversalTime().ToString('o')
+    $started = ([datetime]::UtcNow).ToUniversalTime().ToString('o')
     if ([string]::IsNullOrEmpty($InstallDir)) {
         Add-RemediationAction -Run $Run -Action 'DeleteRunKey' -Target '' -Command '' -Result 'Skipped' -Error 'no install dir' -StartedUtc $started
         return $true
@@ -602,7 +602,7 @@ function Remove-SccTargetRunKey {
 
 function Remove-SccTargetFirewallRule {
     param([string]$InstallDir, $PlanItem, $Run)
-    $started = (Get-Date).ToUniversalTime().ToString('o')
+    $started = ([datetime]::UtcNow).ToUniversalTime().ToString('o')
     if ([string]::IsNullOrEmpty($InstallDir)) {
         Add-RemediationAction -Run $Run -Action 'DeleteFirewallRule' -Target '' -Command '' -Result 'Skipped' -Error 'no install dir' -StartedUtc $started
         return $true
@@ -639,7 +639,7 @@ function Write-SccResumeMarker {
         $marker = [PSCustomObject]@{
             Module      = 'Scc.Remedy'
             Phase       = $Phase
-            UpdatedUtc  = (Get-Date).ToUniversalTime().ToString('o')
+            UpdatedUtc  = ([datetime]::UtcNow).ToUniversalTime().ToString('o')
             PendingMoves = @($PendingMoves)
         }
         $mp = Join-Path $Run.RunDir 'resume-marker.json'
@@ -650,7 +650,7 @@ function Write-SccResumeMarker {
 function Move-SccTargetToQuarantine {
     param([string]$SourcePath, $PlanItem, $Run, [string]$Reason, [string]$ActionType)
     $fid = [string](Get-Prop $PlanItem 'FindingId')
-    $started = (Get-Date).ToUniversalTime().ToString('o')
+    $started = ([datetime]::UtcNow).ToUniversalTime().ToString('o')
     try {
         if (-not (Test-Path -LiteralPath $SourcePath)) {
             Add-RemediationAction -Run $Run -Action 'Quarantine' -Target $SourcePath -Command '' -Result 'Skipped' -Error 'source not found' -StartedUtc $started
@@ -726,7 +726,7 @@ function Move-SccTargetToQuarantine {
                 QuarantinePath    = $dest
                 SHA256            = $sha
                 SizeBytes         = $size
-                MovedUtc          = (Get-Date).ToUniversalTime().ToString('o')
+                MovedUtc          = ([datetime]::UtcNow).ToUniversalTime().ToString('o')
                 FindingId         = $fid
                 Reason            = $Reason
                 ActionType        = $ActionType
@@ -750,7 +750,7 @@ function Move-SccTargetToQuarantine {
             QuarantinePath    = $dest
             SHA256            = $sha
             SizeBytes         = $size
-            MovedUtc          = (Get-Date).ToUniversalTime().ToString('o')
+            MovedUtc          = ([datetime]::UtcNow).ToUniversalTime().ToString('o')
             FindingId         = $fid
             Reason            = $Reason
             ActionType        = $ActionType
@@ -842,7 +842,7 @@ function New-SccPlan {
 
     $plan = [PSCustomObject]@{
         PlanVersion = '1.0'
-        CreatedUtc  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        CreatedUtc  = ([datetime]::UtcNow).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
         CreatedBy   = $createdBy
         Items       = $items
     }

@@ -1,5 +1,5 @@
 
-# Ensure Microsoft.PowerShell.Utility cmdlets (Get-Date, New-Object, ConvertTo-Json,
+# Ensure Microsoft.PowerShell.Utility cmdlets ([datetime]::UtcNow, New-Object, ConvertTo-Json,
 # Out-Null, Add-Member, etc.) are visible inside this module's session state on every
 # host. Without this, module functions fail with CommandNotFoundException on Windows
 # when the module is loaded through Pester or a nested session state.
@@ -245,7 +245,7 @@ function Compare-SccSnapshots {
 
     $result = [ordered]@{
         SchemaVersion = 1
-        DiffUtc       = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        DiffUtc       = ([datetime]::UtcNow).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
         BeforeLabel   = $beforeSnap.Label
         AfterLabel    = $afterSnap.Label
         BeforeCollectedUtc = $beforeSnap.CollectedUtc

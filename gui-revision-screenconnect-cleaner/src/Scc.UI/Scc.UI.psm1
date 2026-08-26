@@ -17,7 +17,7 @@
 # ============================================================================
 
 
-# Ensure Microsoft.PowerShell.Utility cmdlets (Get-Date, New-Object, ConvertTo-Json,
+# Ensure Microsoft.PowerShell.Utility cmdlets ([datetime]::UtcNow, New-Object, ConvertTo-Json,
 # Out-Null, Add-Member, etc.) are visible inside this module's session state on every
 # host. Without this, module functions fail with CommandNotFoundException on Windows
 # when the module is loaded through Pester or a nested session state.
@@ -274,7 +274,7 @@ function New-SccWorkflow {
 
     if ($null -eq $Run) {
         if ([string]::IsNullOrEmpty($RunId)) {
-            $RunId = ('SC-' + (Get-Date -Format 'yyyyMMdd') + '-HOST-' + (Get-Date -Format 'HHmmss'))
+            $RunId = ('SC-' + ([datetime]::UtcNow.ToString('yyyyMMdd')) + '-HOST-' + ([datetime]::UtcNow.ToString('HHmmss')))
         }
         $Run = [pscustomobject]@{
             RunId        = $RunId
