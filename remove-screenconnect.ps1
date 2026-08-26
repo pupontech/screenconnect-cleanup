@@ -185,6 +185,74 @@ function Force-Array {
 }
 
 # -----------------------------------------------------------------------------
+# Run-BoundedProcess - PS 5.1/.NET Framework compatible bounded process runner
+# Drains stdout/stderr CONCURRENTLY using ReadToEndAsync (available in .NET
+# Framework 4.5+) to prevent deadlock, enforces timeout, kills process on
+# timeout, returns structured result with exit code, stdout, stderr, and
+# TimedOut flag.
+# -----------------------------------------------------------------------------
+function Run-BoundedProcess {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string]$Arguments = '',
+        [int]$TimeoutMs = 300000,
+        [string]$WorkingDirectory = ''
+    )
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $FilePath
+    $psi.Arguments = $Arguments
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    if ($WorkingDirectory -and (Test-Path -LiteralPath $WorkingDirectory)) {
+        $psi.WorkingDirectory = $WorkingDirectory
+    }
+
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    if (-not $proc) {
+        throw "Failed to start process: $FilePath $Arguments"
+    }
+
+    # Start async reads on BOTH streams BEFORE waiting for exit - this prevents
+    # deadlock when a noisy process fills one pipe while the other is unread.
+    $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+    $stderrTask = $proc.StandardError.ReadToEndAsync()
+
+    # Wait for process exit or timeout
+    $exited = $proc.WaitForExit($TimeoutMs)
+    $timedOut = -not $exited
+
+    if ($timedOut) {
+        try { $proc.Kill() } catch { }
+        # Reap the process after kill to avoid zombies
+        $proc.WaitForExit(1000)
+    }
+
+    # Bounded reap of both async reads after process termination (or kill)
+    # Task.WaitAll with timeout prevents indefinite hang on broken streams.
+    $reapTimeoutMs = if ($timedOut) { 2000 } else { 5000 }
+    $tasks = @($stdoutTask, $stderrTask)
+    $allCompleted = [System.Threading.Tasks.Task]::WaitAll($tasks, $reapTimeoutMs)
+
+    $exitCode = if ($exited) { $proc.ExitCode } else { -1 }
+    $stdout = if ($stdoutTask.IsCompleted) { $stdoutTask.Result } else { '' }
+    $stderr = if ($stderrTask.IsCompleted) { $stderrTask.Result } else { '' }
+
+    if (-not $allCompleted) {
+        Write-Log "  Warning: Stream read tasks did not complete within reap timeout" 'Warn'
+    }
+
+    return [PSCustomObject]@{
+        ExitCode  = $exitCode
+        StdOut    = $stdout
+        StdErr    = $stderr
+        TimedOut  = $timedOut
+    }
+}
+
+# -----------------------------------------------------------------------------
 # Load and validate plan.json
 # -----------------------------------------------------------------------------
 Write-Section "Loading plan: $PlanFile"
@@ -942,22 +1010,26 @@ function Run-VendorUninstaller {
         }
 
         try {
-            $proc = [System.Diagnostics.Process]::Start($psi)
-            $stdout = $proc.StandardOutput.ReadToEnd()
-            $stderr = $proc.StandardError.ReadToEnd()
-            $proc.WaitForExit(300000) # 5 minute timeout
-            $exitCode = $proc.ExitCode
+            # Use Run-BoundedProcess for concurrent stream drain + timeout
+            $result = Run-BoundedProcess -FilePath $psi.FileName -Arguments $psi.Arguments -TimeoutMs 300000 -WorkingDirectory (if ($installDir) { $installDir } else { '' })
+            $exitCode = $result.ExitCode
+            $stdout = $result.StdOut
+            $stderr = $result.StdErr
+            $timedOut = $result.TimedOut
 
             Write-Log "  Uninstaller exit code: $exitCode"
             if ($stdout) { Write-Log "    STDOUT: $stdout" 'Debug' }
             if ($stderr) { Write-Log "    STDERR: $stderr" 'Debug' }
+            if ($timedOut) { Write-Log "  Uninstaller timed out after 300s, process killed" 'Warn' }
 
-            if ($exitCode -eq 0 -or $exitCode -eq 3010) { # 3010 = reboot required
+            if ($exitCode -eq 0) {
                 Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target $displayName -Result 'Success' -Details "Exit code $exitCode" -ExitCode $exitCode
-                if ($exitCode -eq 3010) {
-                    Write-Log "  Uninstaller requests reboot (exit code 3010)" 'Warn'
-                }
                 return $true
+            } elseif ($exitCode -eq 3010) { # 3010 = reboot required
+                Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target $displayName -Result 'Success' -Details "Exit code 3010 (reboot required)" -ExitCode $exitCode
+                Write-Log "  Uninstaller requests reboot (exit code 3010)" 'Warn'
+                # Return special marker for 3010 so caller knows to defer completion
+                return @{ Success = $true; RebootRequired = $true; ExitCode = 3010 }
             } else {
                 Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target $displayName -Result 'Failed' -Details "Exit code ${exitCode}: $stderr" -ExitCode $exitCode
                 return $false
@@ -1329,23 +1401,37 @@ foreach ($inst in $scInstancesArray) {
         }
 
         # 2. Run vendor uninstaller
-        $uninstallSuccess = $false
+        $uninstallResult = $null
+        $uninstallSucceeded = $false
+        $rebootRequired = $false
         if ($uninstallEntry) {
-            $uninstallSuccess = Run-VendorUninstaller -UninstallEntry $uninstallEntry -InstanceId $instanceId -InstallDir $installDir
-            if ($uninstallSuccess) {
+            $uninstallResult = Run-VendorUninstaller -UninstallEntry $uninstallEntry -InstanceId $instanceId -InstallDir $installDir
+            if ($uninstallResult -is [hashtable] -and $uninstallResult.RebootRequired) {
+                # Exit 3010 - uninstall succeeded but reboot required
+                $uninstallSucceeded = $true
+                $rebootRequired = $true
+                Write-Log "  Vendor uninstaller succeeded, reboot required (exit 3010)"
+            } elseif ($uninstallResult -eq $true) {
+                # Exit 0 - uninstall succeeded
+                $uninstallSucceeded = $true
                 Write-Log "  Vendor uninstaller reported success"
-                Add-ManifestEntry -InstanceId $instanceId -Action 'Uninstall' -Target ($uninstallEntry.UninstallString) -Result 'Success'
+                $targetStr = Get-EntryPropertySafe -Instance $uninstallEntry -PropertyName 'UninstallString'
+                if (-not $targetStr) { $targetStr = Get-EntryPropertySafe -Instance $uninstallEntry -PropertyName 'QuietUninstallString' }
+                Add-ManifestEntry -InstanceId $instanceId -Action 'Uninstall' -Target $targetStr -Result 'Success'
             } else {
                 Write-Log "  Vendor uninstaller failed or returned no success signal" 'Warn'
-                Add-ManifestEntry -InstanceId $instanceId -Action 'Uninstall' -Target ($uninstallEntry.UninstallString) -Result 'Failed' -Details 'Falling back to manual surgery + quarantine'
+                $targetStr = Get-EntryPropertySafe -Instance $uninstallEntry -PropertyName 'UninstallString'
+                if (-not $targetStr) { $targetStr = Get-EntryPropertySafe -Instance $uninstallEntry -PropertyName 'QuietUninstallString' }
+                Add-ManifestEntry -InstanceId $instanceId -Action 'Uninstall' -Target $targetStr -Result 'Failed' -Details 'Falling back to manual surgery + quarantine'
             }
         } else {
             Write-Log "  No uninstall entry found, will proceed to manual surgery" 'Warn'
             Add-ManifestEntry -InstanceId $instanceId -Action 'Uninstall' -Target 'N/A' -Result 'Skipped' -Details 'No uninstall registry entry found'
         }
 
-        # 3. Manual surgery fallback (if uninstall failed or no uninstaller)
-        if ($installDir -and (Test-Path -LiteralPath $installDir)) {
+        # 3. Manual surgery fallback ONLY if uninstall failed or no uninstaller
+        # Do NOT run manual surgery if uninstall succeeded (exit 0 or 3010)
+        if (-not $uninstallSucceeded -and $installDir -and (Test-Path -LiteralPath $installDir)) {
             Write-Log "  Proceeding with manual surgery for: $installDir"
 
             # Quarantine the entire install directory
@@ -1411,45 +1497,55 @@ foreach ($inst in $scInstancesArray) {
             }
         }
 
-        # 4. Clean persistence (always attempt, even if uninstall succeeded)
-        if ($installDir) {
-            if (-not (Clean-Persistence -InstallDir $installDir -InstanceId $instanceId)) { $instanceFailed = $true }
-        }
-
-        # Also clean persistence for any service executable paths.
-        # ServiceImagePath is a raw service ImagePath: the exe is QUOTED and
-        # followed by launch arguments, e.g.
-        #   "C:\...\ScreenConnect.ClientService.exe" "?e=Access&y=Guest&..."
-        # Split-Path on that whole string yields a path with a leading quote,
-        # so this sweep silently searched a directory that never exists.
-        # Prefer the detector's already-parsed MainExe; otherwise pull the exe
-        # out of the ImagePath before taking its parent.
-        $svcExe = [string](Get-EntryPropertySafe -Instance $inst -PropertyName 'MainExe')
-        if (-not $svcExe) {
-            $svcImagePath = [string](Get-EntryPropertySafe -Instance $inst -PropertyName 'ServiceImagePath')
-            if ($svcImagePath) {
-                $quoted = [regex]::Match($svcImagePath, '^\s*"([^"]+)"')
-                if ($quoted.Success) {
-                    $svcExe = $quoted.Groups[1].Value
-                } else {
-                    $bare = [regex]::Match($svcImagePath, '^\s*(\S.*?\.exe)', 'IgnoreCase')
-                    if ($bare.Success) { $svcExe = $bare.Groups[1].Value }
+        # 4. Clean persistence (ONLY if uninstall failed - do NOT run after successful
+                # uninstall with exit 3010 as it would destructively alter a reboot-pending
+                # install and poison resume. After 3010, persistence cleanup runs on -Resume.)
+                if ($installDir -and -not $rebootRequired) {
+                    if (-not (Clean-Persistence -InstallDir $installDir -InstanceId $instanceId)) { $instanceFailed = $true }
                 }
-            }
-        }
-        if ($svcExe) {
-            $svcDir = Split-Path -Parent $svcExe
-            if ($svcDir -and $svcDir -ne $installDir) {
-                if (-not (Clean-Persistence -InstallDir $svcDir -InstanceId $instanceId)) { $instanceFailed = $true }
-            }
-        }
+
+                # Also clean persistence for any service executable paths (only if not 3010).
+                # ServiceImagePath is a raw service ImagePath: the exe is QUOTED and
+                # followed by launch arguments, e.g.
+                #   "C:\...\\ScreenConnect.ClientService.exe" "?e=Access&y=Guest&..."
+                # Split-Path on that whole string yields a path with a leading quote,
+                # so this sweep silently searched a directory that never exists.
+                # Prefer the detector's already-parsed MainExe; otherwise pull the exe
+                # out of the ImagePath before taking its parent.
+                if (-not $rebootRequired) {
+                    $svcExe = [string](Get-EntryPropertySafe -Instance $inst -PropertyName 'MainExe')
+                    if (-not $svcExe) {
+                        $svcImagePath = [string](Get-EntryPropertySafe -Instance $inst -PropertyName 'ServiceImagePath')
+                        if ($svcImagePath) {
+                            $quoted = [regex]::Match($svcImagePath, '^\s*"([^"]+)"')
+                            if ($quoted.Success) {
+                                $svcExe = $quoted.Groups[1].Value
+                            } else {
+                                $bare = [regex]::Match($svcImagePath, '^\s*(\S.*?\.exe)', 'IgnoreCase')
+                                if ($bare.Success) { $svcExe = $bare.Groups[1].Value }
+                            }
+                        }
+                    }
+                    if ($svcExe) {
+                        $svcDir = Split-Path -Parent $svcExe
+                        if ($svcDir -and $svcDir -ne $installDir) {
+                            if (-not (Clean-Persistence -InstallDir $svcDir -InstanceId $instanceId)) { $instanceFailed = $true }
+                        }
+                    }
+                }
 
         # FIX (reliability): don't mark 'Completed' when a sub-action failed.
         # Otherwise -Resume skips an actually-half-cleaned instance forever.
+        # Also: for 3010 (reboot required), mark as RebootPending so -Resume
+        # will re-attempt persistence cleanup after reboot, NOT skip it.
         if ($instanceFailed) {
             Update-ResumeStatus -InstanceId $instanceId -Status 'Failed'
             Write-Log "  Instance had one or more failed actions; marked Failed (will be re-attempted on -Resume)" 'Error'
             $overallSuccess = $false
+        } elseif ($rebootRequired) {
+            Update-ResumeStatus -InstanceId $instanceId -Status 'RebootPending'
+            Write-Log "  Uninstall succeeded, reboot required (3010); marked RebootPending for resume" 'Warn'
+            $overallSuccess = $false  # Overall run incomplete until reboot
         } else {
             Update-ResumeStatus -InstanceId $instanceId -Status 'Completed'
         }
