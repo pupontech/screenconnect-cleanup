@@ -506,6 +506,8 @@ Describe 'MSERT adapter' {
             Mock -CommandName Invoke-ProcessWithTimeout -ModuleName Scc.Scanners {
                 return @{ TimedOut = $false; StreamDrainTimedOut = $false; ExitCode = 0; StdOut = ''; StdErr = '' }
             }
+            Mock Copy-Item {} -ModuleName Scc.Scanners
+            Mock Copy-SccMSERTScanLogs { return '/tmp/test-run/scanner-results/MSERT/msert.log' } -ModuleName Scc.Scanners
 
             $run = @{ RunDir = '/tmp/test-run' }
             $result = Invoke-SccScanner -Name 'MSERT' -Run $run
@@ -520,6 +522,8 @@ Describe 'MSERT adapter' {
             Mock -CommandName Invoke-ProcessWithTimeout -ModuleName Scc.Scanners {
                 return @{ TimedOut = $false; StreamDrainTimedOut = $false; ExitCode = 2; StdOut = ''; StdErr = '' }
             }
+            Mock Copy-Item {} -ModuleName Scc.Scanners
+            Mock Copy-SccMSERTScanLogs { return '/tmp/test-run/scanner-results/MSERT/msert.log' } -ModuleName Scc.Scanners
 
             $run = @{ RunDir = '/tmp/test-run' }
             $result = Invoke-SccScanner -Name 'MSERT' -Run $run
