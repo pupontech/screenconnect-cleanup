@@ -1,0 +1,49 @@
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Width="1200" Height="800">
+  <UserControl.Resources>
+    <Style TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#1A1A1A"/>
+      <Setter Property="FontSize" Value="13"/>
+    </Style>
+    <Style TargetType="Button">
+      <Setter Property="Background" Value="#0A6EBE"/>
+      <Setter Property="Foreground" Value="#FFFFFF"/>
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="Margin" Value="4"/>
+      <Setter Property="Padding" Value="10,6"/>
+      <Setter Property="BorderThickness" Value="0"/>
+    </Style>
+  </UserControl.Resources>
+  <Grid Background="#F2F2F2" Margin="12">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+    <TextBlock Grid.Row="0" FontSize="22" FontWeight="Bold" Foreground="#0A6EBE" Text="Findings Review"/>
+    <ScrollViewer Grid.Row="1" Margin="0,10,0,0">
+      <ItemsControl x:Name="LstFindings">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <Border Background="#FFFFFF" BorderBrush="#CCCCCC" BorderThickness="1" Margin="4" Padding="8">
+              <Expander Header="{Binding DisplayText}">
+                <StackPanel>
+                  <TextBlock Text="{Binding Identity}"/>
+                  <TextBlock Text="{Binding Trust}"/>
+                  <TextBlock Text="{Binding Evidence}"/>
+                  <CheckBox Content="Remove (default: Keep)" IsChecked="{Binding Remove}"/>
+                </StackPanel>
+              </Expander>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+    <StackPanel Grid.Row="2" Orientation="Horizontal">
+      <Button x:Name="BtnApprovePlan" Content="Approve Plan"/>
+      <Button x:Name="BtnPreviewActions" Content="Preview Actions"/>
+      <TextBlock x:Name="TxtTrustLegend" Text="Trust: Known = green, Unknown = amber. Default decision is KEEP." VerticalAlignment="Center" Margin="8,0,0,0"/>
+    </StackPanel>
+  </Grid>
+</UserControl>

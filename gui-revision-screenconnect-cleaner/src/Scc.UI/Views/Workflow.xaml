@@ -1,0 +1,66 @@
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Width="1200" Height="800">
+  <UserControl.Resources>
+    <Style TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#1A1A1A"/>
+      <Setter Property="FontSize" Value="13"/>
+    </Style>
+    <Style TargetType="Button">
+      <Setter Property="Background" Value="#0A6EBE"/>
+      <Setter Property="Foreground" Value="#FFFFFF"/>
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="Margin" Value="4"/>
+      <Setter Property="Padding" Value="10,6"/>
+      <Setter Property="BorderThickness" Value="0"/>
+    </Style>
+  </UserControl.Resources>
+  <Grid Background="#F2F2F2" Margin="12">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+    <TextBlock Grid.Row="0" FontSize="22" FontWeight="Bold" Foreground="#0A6EBE" Text="Workflow Pipeline"/>
+    <ScrollViewer Grid.Row="1" Margin="0,10,0,0">
+      <WrapPanel x:Name="PnlStages" Orientation="Horizontal">
+        <Border x:Name="CardStage0" Width="250" Height="90" Margin="4" Background="#FFFFFF" BorderBrush="#CCCCCC" BorderThickness="1">
+          <StackPanel Margin="6"><TextBlock FontWeight="Bold" Text="0 Preflight"/><TextBlock x:Name="TxtStage0" Text="Pending"/></StackPanel>
+        </Border>
+        <Border x:Name="CardStage1" Width="250" Height="90" Margin="4" Background="#FFFFFF" BorderBrush="#CCCCCC" BorderThickness="1">
+          <StackPanel Margin="6"><TextBlock FontWeight="Bold" Text="1 Snapshot Before"/><TextBlock x:Name="TxtStage1" Text="Pending"/></StackPanel>
+        </Border>
+        <Border x:Name="CardStage2" Width="250" Height="90" Margin="4" Background="#FFFFFF" BorderBrush="#CCCCCC" BorderThickness="1">
+          <StackPanel Margin="6"><TextBlock FontWeight="Bold" Text="2 Detection"/><TextBlock x:Name="TxtStage2" Text="Pending"/></StackPanel>
+        </Border>
+        <Border x:Name="CardStage3" Width="250" Height="90" Margin="4" Background="#FFFFFF" BorderBrush="#CCCCCC" BorderThickness="1">
+          <StackPanel Margin="6"><TextBlock FontWeight="Bold" Text="3 Review"/><TextBlock x:Name="TxtStage3" Text="Pending"/></StackPanel>
+        </Border>
+        <Border x:Name="CardStage4" Width="250" Height="90" Margin="4" Background="#FFFFFF" BorderBrush="#CCCCCC" BorderThickness="1">
+          <StackPanel Margin="6"><TextBlock FontWeight="Bold" Text="4 Remediate"/><TextBlock x:Name="TxtStage4" Text="Pending"/></StackPanel>
+        </Border>
+        <Border x:Name="CardStage5" Width="250" Height="90" Margin="4" Background="#FFFFFF" BorderBrush="#CCCCCC" BorderThickness="1">
+          <StackPanel Margin="6"><TextBlock FontWeight="Bold" Text="5 Scanners"/><TextBlock x:Name="TxtStage5" Text="Pending"/></StackPanel>
+        </Border>
+        <Border x:Name="CardStage6" Width="250" Height="90" Margin="4" Background="#FFFFFF" BorderBrush="#CCCCCC" BorderThickness="1">
+          <StackPanel Margin="6"><TextBlock FontWeight="Bold" Text="6 Snapshot After"/><TextBlock x:Name="TxtStage6" Text="Pending"/></StackPanel>
+        </Border>
+        <Border x:Name="CardStage7" Width="250" Height="90" Margin="4" Background="#FFFFFF" BorderBrush="#CCCCCC" BorderThickness="1">
+          <StackPanel Margin="6"><TextBlock FontWeight="Bold" Text="7 Compare"/><TextBlock x:Name="TxtStage7" Text="Pending"/></StackPanel>
+        </Border>
+        <Border x:Name="CardStage8" Width="250" Height="90" Margin="4" Background="#FFFFFF" BorderBrush="#CCCCCC" BorderThickness="1">
+          <StackPanel Margin="6"><TextBlock FontWeight="Bold" Text="8 Report"/><TextBlock x:Name="TxtStage8" Text="Pending"/></StackPanel>
+        </Border>
+      </WrapPanel>
+    </ScrollViewer>
+    <StackPanel Grid.Row="2">
+      <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+        <CheckBox x:Name="ChkSkipScanners" Content="Skip scanners" Margin="4"/>
+        <TextBlock x:Name="TxtElapsed" Text="Elapsed: 00:00:00" Margin="8,0,0,0" VerticalAlignment="Center"/>
+        <Button x:Name="BtnCancelWorkflow" Content="Cancel" HorizontalAlignment="Right"/>
+      </StackPanel>
+      <TextBlock x:Name="LblCurrentOp" Text="Current operation: (idle)" Margin="0,4,0,2"/>
+      <ProgressBar x:Name="BarProgress" Height="18" Minimum="0" Maximum="100" Value="0"/>
+    </StackPanel>
+  </Grid>
+</UserControl>

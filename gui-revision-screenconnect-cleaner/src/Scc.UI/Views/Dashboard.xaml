@@ -1,0 +1,80 @@
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Width="1200" Height="800">
+  <UserControl.Resources>
+    <Style TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#1A1A1A"/>
+      <Setter Property="FontSize" Value="13"/>
+    </Style>
+    <Style TargetType="Button">
+      <Setter Property="Background" Value="#0A6EBE"/>
+      <Setter Property="Foreground" Value="#FFFFFF"/>
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="Margin" Value="4"/>
+      <Setter Property="Padding" Value="10,6"/>
+      <Setter Property="BorderThickness" Value="0"/>
+    </Style>
+  </UserControl.Resources>
+  <Grid Background="#F2F2F2" Margin="12">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+    <TextBlock Grid.Row="0" FontSize="22" FontWeight="Bold" Foreground="#0A6EBE"
+               Text="ScreenConnect Cleaner - Dashboard"/>
+    <TabControl Grid.Row="1" Margin="0,10,0,0">
+      <TabItem Header="System">
+        <Grid Margin="8">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <TextBlock Grid.Row="0" Grid.Column="0" Text="Computer:" FontWeight="Bold" Margin="2"/>
+          <TextBlock Grid.Row="0" Grid.Column="1" x:Name="TxtComputer" Text="(unknown)" Margin="2"/>
+          <TextBlock Grid.Row="1" Grid.Column="0" Text="OS:" FontWeight="Bold" Margin="2"/>
+          <TextBlock Grid.Row="1" Grid.Column="1" x:Name="TxtOs" Text="(unknown)" Margin="2"/>
+          <TextBlock Grid.Row="2" Grid.Column="0" Text="Architecture:" FontWeight="Bold" Margin="2"/>
+          <TextBlock Grid.Row="2" Grid.Column="1" x:Name="TxtArch" Text="(unknown)" Margin="2"/>
+          <TextBlock Grid.Row="3" Grid.Column="0" Text="User:" FontWeight="Bold" Margin="2"/>
+          <TextBlock Grid.Row="3" Grid.Column="1" x:Name="TxtUser" Text="(unknown)" Margin="2"/>
+          <TextBlock Grid.Row="4" Grid.Column="0" Text="Admin:" FontWeight="Bold" Margin="2"/>
+          <TextBlock Grid.Row="4" Grid.Column="1" x:Name="TxtAdmin" Text="(unknown)" Margin="2"/>
+          <TextBlock Grid.Row="5" Grid.Column="0" Text="Internet:" FontWeight="Bold" Margin="2"/>
+          <TextBlock Grid.Row="5" Grid.Column="1" x:Name="TxtInternet" Text="(unknown)" Margin="2"/>
+          <TextBlock Grid.Row="6" Grid.Column="0" Text="NAS:" FontWeight="Bold" Margin="2"/>
+          <TextBlock Grid.Row="6" Grid.Column="1" x:Name="TxtNas" Text="(unknown)" Margin="2"/>
+          <TextBlock Grid.Row="7" Grid.Column="0" Text="Free disk (C:):" FontWeight="Bold" Margin="2"/>
+          <TextBlock Grid.Row="7" Grid.Column="1" x:Name="TxtDisk" Text="(unknown)" Margin="2"/>
+          <TextBlock Grid.Row="8" Grid.Column="0" Text="App version:" FontWeight="Bold" Margin="2"/>
+          <TextBlock Grid.Row="8" Grid.Column="1" x:Name="TxtAppVersion" Text="1.0.0" Margin="2"/>
+        </Grid>
+      </TabItem>
+      <TabItem Header="Tool Status">
+        <ListBox x:Name="LstToolStatus" Margin="8"/>
+      </TabItem>
+      <TabItem Header="Resume">
+        <StackPanel Margin="8">
+          <TextBlock Text="Previous runs:" FontWeight="Bold" Margin="2"/>
+          <ListBox x:Name="LstPreviousRuns" Height="200" Margin="2"/>
+          <Button x:Name="BtnResumeRun" Content="Resume Selected Run" HorizontalAlignment="Left"/>
+        </StackPanel>
+      </TabItem>
+    </TabControl>
+    <WrapPanel Grid.Row="2" HorizontalAlignment="Left">
+      <Button x:Name="BtnFullInvestigation" Content="Start Full Investigation"/>
+      <Button x:Name="BtnDetectionOnly" Content="Detection Only"/>
+      <Button x:Name="BtnScanOnly" Content="Scan Only"/>
+      <Button x:Name="BtnReviewPrevious" Content="Review Previous Report"/>
+      <Button x:Name="BtnSettings" Content="Settings"/>
+      <Button x:Name="BtnAdvanced" Content="Advanced Tools"/>
+    </WrapPanel>
+  </Grid>
+</UserControl>
