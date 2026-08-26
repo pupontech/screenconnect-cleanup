@@ -62,6 +62,12 @@ if ($cleanup -match '(?m)All stages executed successfully\.') {
     if ($cleanup -notmatch 'RemovalExitCode') {
         Add-Failure 'C1' "sc-cleanup.ps1 does not carry the remove-screenconnect exit code (RemovalExitCode) out of Stage 4."
     }
+    # The ExitCode read must be StrictMode-safe: a WhatIf/skipped Stage 4
+    # payload has no ExitCode, and direct property access throws
+    # PropertyNotFoundStrict on Windows PowerShell 5.1.
+    if ($cleanup -notmatch 'Contains\(''ExitCode''\)') {
+        Add-Failure 'C1' "sc-cleanup.ps1 reads the Stage 4 ExitCode without a StrictMode-safe Contains guard (WhatIf runs would throw PropertyNotFoundStrict and exit nonzero)."
+    }
 } else {
     Add-Failure 'C1' "sc-cleanup.ps1 lost its completion banner; verify outcome reporting was not broken."
 }

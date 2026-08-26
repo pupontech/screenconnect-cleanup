@@ -951,7 +951,18 @@ $stage8Result = Invoke-Stage -StageId 8 -StageName 'Report' -SkipFlag '' -StageB
 # -----------------------------------------------------------------------------
 Write-Section "PIPELINE COMPLETE"
 $removalExitCode = $null
-if ($stage4Result -and $stage4Result.Result) { $removalExitCode = $stage4Result.Result.ExitCode }
+if ($stage4Result -and $stage4Result.Result) {
+    $stage4Payload = $stage4Result.Result
+    # StrictMode-safe read: a WhatIf/skipped Stage 4 payload is a hashtable with
+    # no ExitCode key, and direct property access would throw PropertyNotFoundStrict
+    # under Set-StrictMode 2.0 on Windows PowerShell 5.1.
+    if ($stage4Payload -is [System.Collections.IDictionary]) {
+        if ($stage4Payload.Contains('ExitCode')) { $removalExitCode = $stage4Payload['ExitCode'] }
+    } else {
+        $ecProp = $stage4Payload.PSObject.Properties['ExitCode']
+        if ($ecProp) { $removalExitCode = $ecProp.Value }
+    }
+}
 $pipelineIncomplete = ($null -ne $removalExitCode -and $removalExitCode -ne 0)
 if ($pipelineIncomplete) {
     Write-StageLog ("PIPELINE COMPLETED WITH ERRORS: Stage 4 removal did not complete cleanly (exit code " + $removalExitCode + "). Post-removal evidence was still produced.") 'Error'
