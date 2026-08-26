@@ -11,12 +11,24 @@ setlocal EnableDelayedExpansion
 title ScreenConnect Cleanup Tool
 
 rem ---- Self-elevate: relaunch as admin automatically if not already --------
+rem The script path travels via the SCC_SELF environment variable so that
+rem apostrophes (and other quotes) in the path cannot break the PowerShell
+rem command line. A failed/cancelled UAC prompt must be visible, never silent.
+set "SCC_SELF=%~f0"
 fltmc.exe >nul 2>&1
 if %errorlevel% neq 0 (
     echo  Requesting administrator privileges...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs" >nul 2>&1
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath $env:SCC_SELF -Verb RunAs"
+    if errorlevel 1 (
+        echo.
+        echo  [ERROR] Elevation could not be launched or was cancelled.
+        echo          Re-run this script from an elevated command prompt.
+        pause
+        exit /b 1
+    )
     exit /b
 )
+set "SCC_SELF="
 
 cd /d "%~dp0"
 

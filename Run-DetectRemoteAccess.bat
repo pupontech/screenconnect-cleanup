@@ -10,12 +10,26 @@ REM System event log (service install history) is usually unreadable. The
 REM report says so when that happens.
 
 rem ---- Self-elevate: relaunch as admin automatically if not already --------
+rem The script path and forwarded arguments travel via environment variables
+rem (SCC_SELF / SCC_ARGS) so apostrophes cannot break the PowerShell command
+rem line. A failed/cancelled UAC prompt must be visible, never silent.
+set "SCC_SELF=%~f0"
+set "SCC_ARGS=%*"
 fltmc.exe >nul 2>&1
 if %errorlevel% neq 0 (
     echo Requesting administrator privileges...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -ArgumentList '%*' -Verb RunAs" >nul 2>&1
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath $env:SCC_SELF -ArgumentList $env:SCC_ARGS -Verb RunAs"
+    if errorlevel 1 (
+        echo.
+        echo [ERROR] Elevation could not be launched or was cancelled.
+        echo         Right-click this script and choose "Run as administrator".
+        pause
+        exit /b 1
+    )
     exit /b
 )
+set "SCC_SELF="
+set "SCC_ARGS="
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0detect-remote-access.ps1" %*
 if %errorlevel% neq 0 (

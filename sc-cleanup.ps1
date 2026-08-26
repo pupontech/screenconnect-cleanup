@@ -400,9 +400,11 @@ if ($safemode) {
 # Stage 0: Preflight
 # -----------------------------------------------------------------------------
 $stage0Result = Invoke-Stage -StageId 0 -StageName 'Preflight' -SkipFlag '' -StageBlock {
-    # Admin check (already done)
-    Write-StageLog "Admin check: PASSED"
-    Add-Content -Path $MasterLogPath -Value "Admin check: PASSED" -Encoding UTF8
+    # Admin check - report the truth. Non-admin is tolerated (non-Windows
+    # test host / read-only runs), but it must never be logged as PASSED.
+    $adminLine = "Admin check: " + $(if ($isAdmin) { 'PASSED' } else { 'FAILED (not elevated)' })
+    Write-StageLog $adminLine
+    Add-Content -Path $MasterLogPath -Value $adminLine -Encoding UTF8
 
     # OS role check
     Write-StageLog "OS: $osCaption  (Server: $isServer)"
@@ -420,6 +422,7 @@ $stage0Result = Invoke-Stage -StageId 0 -StageName 'Preflight' -SkipFlag '' -Sta
     Write-StageLog "Master log opened: $MasterLogPath"
 
     # System Restore point
+    $script:RestorePointFailed = $false
     if (-not $np) {
         Write-StageLog "Creating System Restore point..."
         try {
@@ -427,6 +430,8 @@ $stage0Result = Invoke-Stage -StageId 0 -StageName 'Preflight' -SkipFlag '' -Sta
             Write-StageLog "System Restore point created"
             Add-Content -Path $MasterLogPath -Value "Restore point: Created" -Encoding UTF8
         } catch {
+            # Recorded so Stage 4 can fail closed before any destructive work.
+            $script:RestorePointFailed = $true
             Write-StageLog "System Restore point creation failed: $($_.Exception.Message)" 'Warn'
             Add-Content -Path $MasterLogPath -Value "Restore point: FAILED - $($_.Exception.Message)" -Encoding UTF8
         }
@@ -678,6 +683,18 @@ $stage4Result = Invoke-Stage -StageId 4 -StageName 'Contain + Remove' -SkipFlag 
     # remover does not create its own.
     $removeArgs = @('-PlanJson', $planJson, '-WorkDir', $WorkDir)
     $confirmed = [bool]$stage3Result.Result.RemovalConfirmed
+
+    # Fail closed: a confirmed DESTRUCTIVE run must not proceed when the Stage 0
+    # restore point failed and the operator did not explicitly waive it with -np.
+    # Do NOT throw here - Invoke-Stage rethrows and would abort Stages 5-8 before
+    # any post-removal evidence is produced. Record a blocked result instead so
+    # the snapshot/diff/report still run and the pipeline ends nonzero.
+    if ($confirmed -and -not $sr -and $script:RestorePointFailed -and -not $np) {
+        Write-StageLog "Stage 4 BLOCKED: the System Restore point failed in Stage 0 and -np was not specified. Destructive removal refused (fail closed)." 'Error'
+        Add-Content -Path $MasterLogPath -Value "Removal: BLOCKED - no restore point and no -np" -Encoding UTF8
+        return @{ Skipped = $false; ManifestPath = $null; Executed = $false; ExitCode = 2; RestorePointBlocked = $true }
+    }
+
     if ($confirmed -and -not $sr) { $removeArgs += '-Execute' }
     if ($VerboseLog) { $removeArgs += '-VerboseLog' }
     if ($confirmed -and -not $sr) { Write-StageLog "Running approved ScreenConnect removal with -Execute." }
@@ -933,7 +950,14 @@ $stage8Result = Invoke-Stage -StageId 8 -StageName 'Report' -SkipFlag '' -StageB
 # Pipeline complete
 # -----------------------------------------------------------------------------
 Write-Section "PIPELINE COMPLETE"
-Write-StageLog "All stages executed successfully."
+$removalExitCode = $null
+if ($stage4Result -and $stage4Result.Result) { $removalExitCode = $stage4Result.Result.ExitCode }
+$pipelineIncomplete = ($null -ne $removalExitCode -and $removalExitCode -ne 0)
+if ($pipelineIncomplete) {
+    Write-StageLog ("PIPELINE COMPLETED WITH ERRORS: Stage 4 removal did not complete cleanly (exit code " + $removalExitCode + "). Post-removal evidence was still produced.") 'Error'
+} else {
+    Write-StageLog "All stages executed successfully."
+}
 Write-StageLog ("Working directory: " + $WorkDir)
 Write-StageLog ("Master log: " + $MasterLogPath)
 $reportHtml = $null
@@ -970,4 +994,13 @@ if ($resultsJson) {
 }
 Write-Host "======================================================================" -ForegroundColor Green
 
-exit 0
+# Truthful exit: a nonzero remove-screenconnect exit (or any recorded Stage 4
+# problem) must propagate so launchers and operators see the incomplete run.
+$finalOutcome = 'SUCCESS'
+if ($pipelineIncomplete) { $finalOutcome = ("INCOMPLETE (Stage 4 exit " + $removalExitCode + ")") }
+Add-Content -Path $MasterLogPath -Value ("Final outcome: " + $finalOutcome) -Encoding UTF8
+if ($pipelineIncomplete) {
+    exit 1
+} else {
+    exit 0
+}
