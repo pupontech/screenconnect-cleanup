@@ -2,12 +2,9 @@
 # Build a clean deploy bundle: scripts + docs only, no Sysinternals binaries.
 # Output: <parent>/screenconnect-cleanup-deploy.zip
 #
-# NOTE: tools/Get-ToolPack.ps1 and tools/Get-AVTools.ps1 are referenced by
-# sc-cleanup.ps1 / preflight.ps1 / START-HERE.bat but are NOT currently present
-# in the repo (they were never committed; the downloader/stager scripts must be
-# rebuilt from the official vendor URLs before a deploy bundle can stage the AV
-# scanners). This script therefore copies them only when they exist and warns
-# otherwise, so a bundle is still produced for the read-only half of the tool.
+# tools/Get-ToolPack.ps1 (Sysinternals) and tools/Get-AVTools.ps1 (AV scanners)
+# are bundled when present; both are committed to the repo. Get-AVTools stages
+# KVRT / ESET Online Scanner / Malwarebytes MB5 from official vendor URLs.
 set -euo pipefail
 SRC="$(cd "$(dirname "$0")" && pwd)"
 OUT="$(dirname "$SRC")/screenconnect-cleanup-deploy.zip"
