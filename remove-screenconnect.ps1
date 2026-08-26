@@ -210,45 +210,62 @@ function Run-BoundedProcess {
         $psi.WorkingDirectory = $WorkingDirectory
     }
 
-    $proc = [System.Diagnostics.Process]::Start($psi)
-    if (-not $proc) {
-        throw "Failed to start process: $FilePath $Arguments"
-    }
+    $proc = $null
+    try {
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        if (-not $proc) {
+            throw "Failed to start process: $FilePath $Arguments"
+        }
 
-    # Start async reads on BOTH streams BEFORE waiting for exit - this prevents
-    # deadlock when a noisy process fills one pipe while the other is unread.
-    $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
-    $stderrTask = $proc.StandardError.ReadToEndAsync()
+        # Start async reads on BOTH streams BEFORE waiting for exit - this prevents
+        # deadlock when a noisy process fills one pipe while the other is unread.
+        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+        $stderrTask = $proc.StandardError.ReadToEndAsync()
 
-    # Wait for process exit or timeout
-    $exited = $proc.WaitForExit($TimeoutMs)
-    $timedOut = -not $exited
+        # Wait for process exit or timeout
+        $exited = $proc.WaitForExit($TimeoutMs)
+        $timedOut = -not $exited
 
-    if ($timedOut) {
-        try { $proc.Kill() } catch { }
-        # Reap the process after kill to avoid zombies
-        $proc.WaitForExit(1000)
-    }
+        if ($timedOut) {
+            try { $proc.Kill() } catch { }
+            # Reap the process after kill to avoid zombies
+            $proc.WaitForExit(1000)
+        }
 
-    # Bounded reap of both async reads after process termination (or kill)
-    # Task.WaitAll with timeout prevents indefinite hang on broken streams.
-    $reapTimeoutMs = if ($timedOut) { 2000 } else { 5000 }
-    $tasks = @($stdoutTask, $stderrTask)
-    $allCompleted = [System.Threading.Tasks.Task]::WaitAll($tasks, $reapTimeoutMs)
+        # Bounded reap of both async reads after process termination (or kill)
+        # Explicit typed array avoids Task.WaitAll overload-resolution failures.
+        # Task.WaitAll with timeout prevents indefinite hang on broken streams.
+        $reapTimeoutMs = if ($timedOut) { 2000 } else { 5000 }
+        $tasks = [System.Threading.Tasks.Task[]]@($stdoutTask, $stderrTask)
+        $allCompleted = [System.Threading.Tasks.Task]::WaitAll($tasks, $reapTimeoutMs)
 
-    $exitCode = if ($exited) { $proc.ExitCode } else { -1 }
-    $stdout = if ($stdoutTask.IsCompleted) { $stdoutTask.Result } else { '' }
-    $stderr = if ($stderrTask.IsCompleted) { $stderrTask.Result } else { '' }
+        # Determine exit code: explicit -1 only on timeout (never a normal code),
+        # and capture reap-failure diagnostics instead of silently returning -1.
+        $exitCode = -1
+        $reapFailed = $false
+        if ($exited) {
+            $exitCode = $proc.ExitCode
+        } elseif ($timedOut) {
+            $exitCode = -1  # sentinel: killed by timeout
+            $reapFailed = (-not $allCompleted)
+        }
 
-    if (-not $allCompleted) {
-        Write-Log "  Warning: Stream read tasks did not complete within reap timeout" 'Warn'
-    }
+        $stdout = if ($stdoutTask.IsCompleted) { $stdoutTask.Result } else { '' }
+        $stderr = if ($stderrTask.IsCompleted) { $stderrTask.Result } else { '' }
 
-    return [PSCustomObject]@{
-        ExitCode  = $exitCode
-        StdOut    = $stdout
-        StdErr    = $stderr
-        TimedOut  = $timedOut
+        if (-not $allCompleted) {
+            Write-Log "  Warning: Stream read tasks did not complete within reap timeout" 'Warn'
+        }
+
+        return [PSCustomObject]@{
+            ExitCode     = $exitCode
+            StdOut       = $stdout
+            StdErr       = $stderr
+            TimedOut     = $timedOut
+            ReapFailed   = $reapFailed
+        }
+    } finally {
+        if ($proc) { $proc.Dispose() }
     }
 }
 
@@ -587,6 +604,7 @@ Write-Log "Execute mode: $($Execute.IsPresent)"
 # -----------------------------------------------------------------------------
 $script:ResumeStatuses = New-Object System.Collections.ArrayList
 $script:CompletedInstanceIds = New-Object System.Collections.ArrayList
+$script:RebootPendingInstanceIds = New-Object System.Collections.ArrayList
 
 function Write-ResumeMarker {
     param([string]$Phase)
@@ -653,11 +671,14 @@ if ($Resume) {
         try {
             $marker = Get-Content -LiteralPath $resumeMarkerPath -Raw | ConvertFrom-Json
             foreach ($mi in @($marker.Instances)) {
-                if ([string](Get-EntryPropertySafe -Instance $mi -PropertyName 'Status') -eq 'Completed') {
+                $markerStatus = [string](Get-EntryPropertySafe -Instance $mi -PropertyName 'Status')
+                if ($markerStatus -eq 'Completed') {
                     [void]$script:CompletedInstanceIds.Add([string](Get-EntryPropertySafe -Instance $mi -PropertyName 'InstanceId'))
+                } elseif ($markerStatus -eq 'RebootPending') {
+                    [void]$script:RebootPendingInstanceIds.Add([string](Get-EntryPropertySafe -Instance $mi -PropertyName 'InstanceId'))
                 }
             }
-            Write-Log "Resume marker found: $($script:CompletedInstanceIds.Count) completed instance(s) will be skipped"
+            Write-Log ("Resume marker found: " + $script:CompletedInstanceIds.Count + " completed instance(s) will be skipped, " + $script:RebootPendingInstanceIds.Count + " reboot-pending instance(s) will finish post-reboot cleanup")
         } catch {
             Write-Log "Could not read resume marker: $($_.Exception.Message)" 'Warn'
         }
@@ -1011,7 +1032,11 @@ function Run-VendorUninstaller {
 
         try {
             # Use Run-BoundedProcess for concurrent stream drain + timeout
-            $result = Run-BoundedProcess -FilePath $psi.FileName -Arguments $psi.Arguments -TimeoutMs 300000 -WorkingDirectory (if ($installDir) { $installDir } else { '' })
+            # PS 5.1-compatible: precompute the working directory instead of an
+            # inline if-expression, which fails to parse on Windows PowerShell.
+            $workingDirectory = ''
+            if ($installDir) { $workingDirectory = $installDir }
+            $result = Run-BoundedProcess -FilePath $psi.FileName -Arguments $psi.Arguments -TimeoutMs 300000 -WorkingDirectory $workingDirectory
             $exitCode = $result.ExitCode
             $stdout = $result.StdOut
             $stderr = $result.StdErr
@@ -1387,6 +1412,47 @@ foreach ($inst in $scInstancesArray) {
             }
         }
 
+        # FIX (reboot-resume): a RebootPending instance already had a successful
+        # vendor uninstaller pass (exit 3010). On -Resume after reboot, do NOT
+        # re-run the vendor uninstaller or manual surgery - finish only the
+        # deferred persistence cleanup, then close the instance status.
+        if (($script:RebootPendingInstanceIds.Count -gt 0) -and ($script:RebootPendingInstanceIds -contains $instanceId)) {
+            Write-Log "  RebootPending resume: vendor uninstaller already succeeded; running post-reboot persistence cleanup only"
+            Add-ManifestEntry -InstanceId $instanceId -Action 'ResumeSkip' -Target 'N/A' -Result 'RebootPending' -Details 'Vendor uninstaller already succeeded (3010); skipping uninstall and manual surgery'
+            $instanceFailed = $false
+            if ($installDir) {
+                if (-not (Clean-Persistence -InstallDir $installDir -InstanceId $instanceId)) { $instanceFailed = $true }
+            }
+            $resumeSvcExe = [string](Get-EntryPropertySafe -Instance $inst -PropertyName 'MainExe')
+            if (-not $resumeSvcExe) {
+                $resumeSvcImagePath = [string](Get-EntryPropertySafe -Instance $inst -PropertyName 'ServiceImagePath')
+                if ($resumeSvcImagePath) {
+                    $resumeQuoted = [regex]::Match($resumeSvcImagePath, '^\s*"([^"]+)"')
+                    if ($resumeQuoted.Success) {
+                        $resumeSvcExe = $resumeQuoted.Groups[1].Value
+                    } else {
+                        $resumeBare = [regex]::Match($resumeSvcImagePath, '^\s*(\S.*?\.exe)', 'IgnoreCase')
+                        if ($resumeBare.Success) { $resumeSvcExe = $resumeBare.Groups[1].Value }
+                    }
+                }
+            }
+            if ($resumeSvcExe) {
+                $resumeSvcDir = Split-Path -Parent $resumeSvcExe
+                if ($resumeSvcDir -and $resumeSvcDir -ne $installDir) {
+                    if (-not (Clean-Persistence -InstallDir $resumeSvcDir -InstanceId $instanceId)) { $instanceFailed = $true }
+                }
+            }
+            if ($instanceFailed) {
+                Update-ResumeStatus -InstanceId $instanceId -Status 'Failed'
+                Write-Log "  RebootPending post-reboot cleanup failed for: $instanceId" 'Error'
+                $overallSuccess = $false
+            } else {
+                Update-ResumeStatus -InstanceId $instanceId -Status 'Completed'
+                Write-Log "  RebootPending post-reboot cleanup finished for: $instanceId"
+            }
+            continue
+        }
+
         # 1. Stop service + kill processes
         # FIX (reliability): capture each sub-action result so a half-failure is
         # surfaced and the instance is NOT marked 'Completed'.
@@ -1498,41 +1564,41 @@ foreach ($inst in $scInstancesArray) {
         }
 
         # 4. Clean persistence (ONLY if uninstall failed - do NOT run after successful
-                # uninstall with exit 3010 as it would destructively alter a reboot-pending
-                # install and poison resume. After 3010, persistence cleanup runs on -Resume.)
-                if ($installDir -and -not $rebootRequired) {
-                    if (-not (Clean-Persistence -InstallDir $installDir -InstanceId $instanceId)) { $instanceFailed = $true }
-                }
+        # uninstall with exit 3010 as it would destructively alter a reboot-pending
+        # install and poison resume. After 3010, persistence cleanup runs on -Resume.)
+        if ($installDir -and -not $rebootRequired) {
+            if (-not (Clean-Persistence -InstallDir $installDir -InstanceId $instanceId)) { $instanceFailed = $true }
+        }
 
-                # Also clean persistence for any service executable paths (only if not 3010).
-                # ServiceImagePath is a raw service ImagePath: the exe is QUOTED and
-                # followed by launch arguments, e.g.
-                #   "C:\...\\ScreenConnect.ClientService.exe" "?e=Access&y=Guest&..."
-                # Split-Path on that whole string yields a path with a leading quote,
-                # so this sweep silently searched a directory that never exists.
-                # Prefer the detector's already-parsed MainExe; otherwise pull the exe
-                # out of the ImagePath before taking its parent.
-                if (-not $rebootRequired) {
-                    $svcExe = [string](Get-EntryPropertySafe -Instance $inst -PropertyName 'MainExe')
-                    if (-not $svcExe) {
-                        $svcImagePath = [string](Get-EntryPropertySafe -Instance $inst -PropertyName 'ServiceImagePath')
-                        if ($svcImagePath) {
-                            $quoted = [regex]::Match($svcImagePath, '^\s*"([^"]+)"')
-                            if ($quoted.Success) {
-                                $svcExe = $quoted.Groups[1].Value
-                            } else {
-                                $bare = [regex]::Match($svcImagePath, '^\s*(\S.*?\.exe)', 'IgnoreCase')
-                                if ($bare.Success) { $svcExe = $bare.Groups[1].Value }
-                            }
-                        }
-                    }
-                    if ($svcExe) {
-                        $svcDir = Split-Path -Parent $svcExe
-                        if ($svcDir -and $svcDir -ne $installDir) {
-                            if (-not (Clean-Persistence -InstallDir $svcDir -InstanceId $instanceId)) { $instanceFailed = $true }
-                        }
+        # Also clean persistence for any service executable paths (only if not 3010).
+        # ServiceImagePath is a raw service ImagePath: the exe is QUOTED and
+        # followed by launch arguments, e.g.
+        #   "C:\...\ScreenConnect.ClientService.exe" "?e=Access&y=Guest&..."
+        # Split-Path on that whole string yields a path with a leading quote,
+        # so this sweep silently searched a directory that never exists.
+        # Prefer the detector's already-parsed MainExe; otherwise pull the exe
+        # out of the ImagePath before taking its parent.
+        if (-not $rebootRequired) {
+            $svcExe = [string](Get-EntryPropertySafe -Instance $inst -PropertyName 'MainExe')
+            if (-not $svcExe) {
+                $svcImagePath = [string](Get-EntryPropertySafe -Instance $inst -PropertyName 'ServiceImagePath')
+                if ($svcImagePath) {
+                    $quoted = [regex]::Match($svcImagePath, '^\s*"([^"]+)"')
+                    if ($quoted.Success) {
+                        $svcExe = $quoted.Groups[1].Value
+                    } else {
+                        $bare = [regex]::Match($svcImagePath, '^\s*(\S.*?\.exe)', 'IgnoreCase')
+                        if ($bare.Success) { $svcExe = $bare.Groups[1].Value }
                     }
                 }
+            }
+            if ($svcExe) {
+                $svcDir = Split-Path -Parent $svcExe
+                if ($svcDir -and $svcDir -ne $installDir) {
+                    if (-not (Clean-Persistence -InstallDir $svcDir -InstanceId $instanceId)) { $instanceFailed = $true }
+                }
+            }
+        }
 
         # FIX (reliability): don't mark 'Completed' when a sub-action failed.
         # Otherwise -Resume skips an actually-half-cleaned instance forever.
@@ -1543,6 +1609,11 @@ foreach ($inst in $scInstancesArray) {
             Write-Log "  Instance had one or more failed actions; marked Failed (will be re-attempted on -Resume)" 'Error'
             $overallSuccess = $false
         } elseif ($rebootRequired) {
+            if ($Execute) {
+                # Schedule the post-reboot continuation so persistence cleanup
+                # actually happens without operator intervention.
+                Set-RunOnceResume -InstanceId $instanceId -WorkDir $WorkDir
+            }
             Update-ResumeStatus -InstanceId $instanceId -Status 'RebootPending'
             Write-Log "  Uninstall succeeded, reboot required (3010); marked RebootPending for resume" 'Warn'
             $overallSuccess = $false  # Overall run incomplete until reboot

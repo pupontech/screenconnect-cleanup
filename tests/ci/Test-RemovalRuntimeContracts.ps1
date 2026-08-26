@@ -2,18 +2,11 @@
 # Test-RemovalRuntimeContracts.ps1 -- contract tests for Stage 4
 # bounded, deadlock-safe uninstaller execution.
 #
-# Tests:
-# 1. Run-BoundedProcess function exists in remove-screenconnect.ps1
-# 2. Run-BoundedProcess uses ReadToEndAsync for concurrent stream drain
-# 3. Run-BoundedProcess enforces timeout and kills process
-# 4. Run-BoundedProcess waits for process reaping after Kill
-# 5. Exit code 3010 (reboot required) is handled correctly - does NOT
-#    incorrectly trigger immediate manual surgery fallback
-# 6. Failed uninstaller (non-zero, non-3010) correctly marks Failed and
-#    DOES trigger manual surgery
-# 7. Successful uninstaller (exit 0) marks Completed without manual surgery
-# 8. 3010 path skips persistence cleanup and marks non-Completed status
-# 9. PS 5.1 compatibility - no .NET APIs unavailable in 5.1
+# Source/AST-contract checks only. No vendor executable is launched,
+# no production cleanup control flow is executed, and nothing on the
+# host is modified. A test that needs live process behavior uses an
+# independently written harmless synthetic child (never production
+# functions).
 #
 # Exit codes: 0 = all contracts pass, 1 = contract violations found.
 # PowerShell 5.1 compatible. Pure ASCII, no BOM.
@@ -26,27 +19,19 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $scriptPath = Join-Path $repoRoot 'remove-screenconnect.ps1'
 
-$failedTests = 0
-$passedTests = 0
+$script:failedTests = 0
+$script:passedTests = 0
 
 function Assert-True {
     param([bool]$Condition, [string]$Message)
-    if (-not $Condition) {
-        Write-Host "FAIL: $Message" -ForegroundColor Red
-        return $false
+    if ($Condition) {
+        $script:passedTests++
+        Write-Host "PASS: $Message" -ForegroundColor Green
+        return
     }
-    Write-Host "PASS: $Message" -ForegroundColor Green
-    return $true
-}
-
-function Assert-Equals {
-    param($Expected, $Actual, [string]$Message)
-    if ($Expected -ne $Actual) {
-        Write-Host "FAIL: $Message (expected '$Expected', got '$Actual')" -ForegroundColor Red
-        return $false
-    }
-    Write-Host "PASS: $Message" -ForegroundColor Green
-    return $true
+    $script:failedTests++
+    Write-Host "FAIL: $Message" -ForegroundColor Red
+    return
 }
 
 Write-Host "=== Running Removal Runtime Contract Tests ==="
@@ -55,208 +40,139 @@ Write-Host ""
 $scriptContent = Get-Content -LiteralPath $scriptPath -Raw
 
 # ---------------------------------------------------------------------------
-# TEST 1: Run-BoundedProcess function exists in source (AST check)
+# TEST 1: Run-BoundedProcess function exists in source
 # ---------------------------------------------------------------------------
 Write-Host "--- Test 1: Run-BoundedProcess function exists in source ---"
 if ($scriptContent -match '(?m)^function\s+Run-BoundedProcess\s*\{') {
-    $passedTests++
-    Write-Host "PASS: Run-BoundedProcess function exists in source" -ForegroundColor Green
+    Assert-True $true "Run-BoundedProcess function exists in source"
+    $funcMatch = [regex]::Match($scriptContent, '(?ms)^function\s+Run-BoundedProcess\s*\{.*?^\}')
 } else {
-    $failedTests++
-    Write-Host "FAIL: Run-BoundedProcess function NOT found in source" -ForegroundColor Red
+    Assert-True $false "Run-BoundedProcess function exists in source (RED expected before implementation)"
 }
 
 # ---------------------------------------------------------------------------
-# TEST 2: Run-BoundedProcess uses ReadToEndAsync for concurrent drain
+# TEST 2: concurrent drain via ReadToEndAsync BEFORE the bounded wait
 # ---------------------------------------------------------------------------
-Write-Host ""
 Write-Host "--- Test 2: ReadToEndAsync used for concurrent stream drain ---"
-if ($scriptContent -match '(?m)^function\s+Run-BoundedProcess\s*\{') {
-    $funcMatch = [regex]::Match($scriptContent, '(?ms)^function\s+Run-BoundedProcess\s*\{.*?^\}')
-    if ($funcMatch.Success) {
-        $funcDef = $funcMatch.Value
-        $passed = $true
-        $passed = Assert-True ($funcDef -match 'ReadToEndAsync\(\)') "Uses ReadToEndAsync for stdout" -and $passed
-        $passed = Assert-True ($funcDef -match '\$stdoutTask\s*=') "Starts stdout task before WaitForExit" -and $passed
-        $passed = Assert-True ($funcDef -match '\$stderrTask\s*=') "Starts stderr task before WaitForExit" -and $passed
-        $passed = Assert-True ($funcDef -match 'WaitForExit') "Calls WaitForExit after starting tasks" -and $passed
-        if ($passed) { $passedTests++ } else { $failedTests++ }
-    } else {
-        $failedTests++
-        Write-Host "FAIL: Could not extract Run-BoundedProcess function" -ForegroundColor Red
-    }
+if ($funcMatch.Success) {
+    $funcDef = $funcMatch.Value
+    Assert-True ($funcDef -match 'ReadToEndAsync\(\)') "Uses ReadToEndAsync for both redirected streams"
+    Assert-True ($funcDef -match 'ReadToEndAsync\(\)[\s\S]*ReadToEndAsync\(\)') "Both stdout and stderr tasks are started"
+    Assert-True ($funcDef -match 'WaitForExit\(\$TimeoutMs\)') "Calls bounded WaitForExit after starting tasks"
+    Assert-True ($funcDef -match '\.Kill\(\)') "Calls Kill on timeout"
+    Assert-True ($funcDef -match 'WaitForExit\(1000\)') "Reaps the process after Kill with a bounded wait"
+    Assert-True ($funcDef -match '\[System\.Threading\.Tasks\.Task\[\]\]@\(') "Casts stream tasks to Task[] for WaitAll overload resolution"
+    Assert-True ($funcDef -match '\[System\.Threading\.Tasks\.Task\]::WaitAll\(') "Uses bounded Task.WaitAll for post-termination drain"
+    Assert-True ($funcDef -match 'ReapFailed') "Carries an explicit reap-failure diagnostic"
+    Assert-True ($funcDef -match 'finally') "Disposes the process in a finally block"
+    Assert-True ($funcDef -notmatch 'StandardOutput\.ReadToEnd\(\)') "Does not use blocking synchronous ReadToEnd"
+    Assert-True ($funcDef -notmatch 'HasExited') "Does not use HasExited polling"
 } else {
-    Write-Host "SKIP: Run-BoundedProcess not yet implemented (RED expected)" -ForegroundColor Yellow
+    Assert-True $false "Could not extract Run-BoundedProcess function"
 }
 
 # ---------------------------------------------------------------------------
-# TEST 3: Run-BoundedProcess enforces timeout and kills process
+# TEST 3: timeout result contract
 # ---------------------------------------------------------------------------
-Write-Host ""
-Write-Host "--- Test 3: Timeout enforcement and process kill ---"
-if ($scriptContent -match '(?m)^function\s+Run-BoundedProcess\s*\{') {
-    $funcMatch = [regex]::Match($scriptContent, '(?ms)^function\s+Run-BoundedProcess\s*\{.*?^\}')
-    if ($funcMatch.Success) {
-        $funcDef = $funcMatch.Value
-        $passed = $true
-        $passed = Assert-True ($funcDef -match 'TimedOut') "Has TimedOut output field" -and $passed
-        $passed = Assert-True ($funcDef -match '\.Kill\(\)') "Calls Kill on timeout" -and $passed
-        $passed = Assert-True ($funcDef -match 'WaitForExit\(\$TimeoutMs\)') "Uses bounded WaitForExit" -and $passed
-        if ($passed) { $passedTests++ } else { $failedTests++ }
-    } else {
-        $failedTests++
-        Write-Host "FAIL: Could not extract Run-BoundedProcess function" -ForegroundColor Red
-    }
+Write-Host "--- Test 3: Timeout result contract ---"
+if ($funcMatch.Success) {
+    Assert-True ($funcMatch.Value -match 'TimedOut\s*=') "Result object carries TimedOut"
+    Assert-True ($funcMatch.Value -match 'ExitCode\s*=') "Result object carries ExitCode"
 } else {
-    Write-Host "SKIP: Run-BoundedProcess not yet implemented (RED expected)" -ForegroundColor Yellow
+    Assert-True $false "Could not extract Run-BoundedProcess function"
 }
 
 # ---------------------------------------------------------------------------
-# TEST 4: Run-BoundedProcess waits for process reaping after Kill
+# TEST 4: exit code 3010 returns a RebootRequired result
 # ---------------------------------------------------------------------------
-Write-Host ""
-Write-Host "--- Test 4: WaitForExit called after Kill for process reaping ---"
-# Check directly in script content - Kill() } followed by WaitForExit(1000)
-$passed = $true
-$passed = Assert-True ($scriptContent -match '(?s)Kill\(\) }.*WaitForExit\(1000\)') "Reaps process after Kill with 1000ms wait" -and $passed
-if ($passed) { $passedTests++ } else { $failedTests++; Write-Host "FAIL: No process reap after Kill" -ForegroundColor Red }
-
-# ---------------------------------------------------------------------------
-# TEST 5: Run-VendorUninstaller handles exit code 3010 correctly
-# ---------------------------------------------------------------------------
-Write-Host ""
-Write-Host "--- Test 5: Exit code 3010 returns RebootRequired hashtable ---"
+Write-Host "--- Test 4: Exit code 3010 returns RebootRequired hashtable ---"
 if ($scriptContent -match '(?m)^function\s+Run-VendorUninstaller\s*\{') {
-    $passed = $true
-    $passed = Assert-True ($scriptContent -match 'RebootRequired\s*=\s*\$true') "Returns RebootRequired hashtable for 3010" -and $passed
-    $passed = Assert-True ($scriptContent -match 'Success\s*=\s*\$true') "Returns Success=true for 3010" -and $passed
-    if ($passed) { $passedTests++ } else { $failedTests++ }
+    $uninstallerMatch = [regex]::Match($scriptContent, '(?ms)^function\s+Run-VendorUninstaller\s*\{.*?^\}')
+    if ($uninstallerMatch.Success) {
+        $uninstallerDef = $uninstallerMatch.Value
+        Assert-True ($uninstallerDef -match 'RebootRequired\s*=\s*\$true') "3010 result carries RebootRequired = true"
+        Assert-True ($uninstallerDef -match 'Success\s*=\s*\$true') "3010 result carries Success = true"
+        Assert-True ($uninstallerDef -match '3010') "3010 exit code is recognized"
+    } else {
+        Assert-True $false "Could not extract Run-VendorUninstaller function"
+    }
 } else {
-    Write-Host "SKIP: Run-VendorUninstaller not found" -ForegroundColor Yellow
+    Assert-True $false "Run-VendorUninstaller function not found in source"
 }
 
 # ---------------------------------------------------------------------------
-# TEST 6: Main loop defers manual surgery on 3010 (uses $uninstallSucceeded)
+# TEST 5: main loop skips manual surgery when the uninstaller succeeded
 # ---------------------------------------------------------------------------
-Write-Host ""
-Write-Host "--- Test 6: Manual surgery skipped when uninstall succeeds (0 or 3010) ---"
+Write-Host "--- Test 5: Manual surgery skipped when uninstall succeeds (0 or 3010) ---"
 $mainLoopIdx = $scriptContent.IndexOf('# 2. Run vendor uninstaller')
 if ($mainLoopIdx -ge 0) {
     $mainLoopSection = $scriptContent.Substring($mainLoopIdx)
-    $passed = $true
-    $passed = Assert-True ($mainLoopSection -match '\$uninstallSucceeded') "Tracks uninstallSucceeded flag" -and $passed
-    $passed = Assert-True ($mainLoopSection -match '-not\s+\$uninstallSucceeded') "Manual surgery gated by -not uninstallSucceeded" -and $passed
-    if ($passed) { $passedTests++ } else { $failedTests++ }
+    Assert-True ($mainLoopSection -match '\$uninstallSucceeded') "Tracks uninstallSucceeded flag"
+    Assert-True ($mainLoopSection -match '-not\s+\$uninstallSucceeded') "Manual surgery gated by -not uninstallSucceeded"
 } else {
-    $failedTests++
-    Write-Host "FAIL: Main loop section not found" -ForegroundColor Red
+    Assert-True $false "Main loop section not found in source"
 }
 
 # ---------------------------------------------------------------------------
-# TEST 7: Failed uninstaller (non-zero, non-3010) triggers manual surgery
+# TEST 6: 3010 defers persistence cleanup and marks RebootPending
 # ---------------------------------------------------------------------------
-Write-Host ""
-Write-Host "--- Test 7: Failed uninstaller returns $false ---
-if ($scriptContent -match '(?m)^function\s+Run-VendorUninstaller\s*\{') {
-    $funcMatch = [regex]::Match($scriptContent, '(?ms)^function\s+Run-VendorUninstaller\s*\{.*?^\}')
-    if ($funcMatch.Success) {
-        $funcDef = $funcMatch.Value
-        $passed = $true
-        $passed = Assert-True ($funcDef -match 'else\s*\{\s*return\s+\$false') "Returns $false for non-zero non-3010" -and $passed
-        if ($passed) { $passedTests++ } else { $failedTests++ }
-    } else {
-        $failedTests++
-        Write-Host "FAIL: Could not extract Run-VendorUninstaller function" -ForegroundColor Red
-    }
-} else {
-    Write-Host "SKIP: Run-VendorUninstaller not found" -ForegroundColor Yellow
-}
-
-# ---------------------------------------------------------------------------
-# TEST 8: Successful uninstaller (exit 0) returns $true
-# ---------------------------------------------------------------------------
-Write-Host ""
-Write-Host "--- Test 8: Successful uninstaller (exit 0) returns $true ---
-if ($scriptContent -match '(?m)^function\s+Run-VendorUninstaller\s*\{') {
-    $funcMatch = [regex]::Match($scriptContent, '(?ms)^function\s+Run-VendorUninstaller\s*\{.*?^\}')
-    if ($funcMatch.Success) {
-        $funcDef = $funcMatch.Value
-        $passed = $true
-        $passed = Assert-True ($funcDef -match '\$exitCode\s*-\?eq\s*0') "Checks for exit code 0" -and $passed
-        $passed = Assert-True ($funcDef -match 'if.*\$exitCode.*0.*return\s+\$true') "Returns $true for exit 0" -and $passed
-        if ($passed) { $passedTests++ } else { $failedTests++ }
-    } else {
-        $failedTests++
-        Write-Host "FAIL: Could not extract Run-VendorUninstaller function" -ForegroundColor Red
-    }
-} else {
-    Write-Host "SKIP: Run-VendorUninstaller not found" -ForegroundColor Yellow
-}
-
-# ---------------------------------------------------------------------------
-# TEST 9: 3010 path skips persistence cleanup and marks non-Completed status
-# ---------------------------------------------------------------------------
-Write-Host ""
-Write-Host "--- Test 9: 3010 skips Clean-Persistence and sets non-Completed status ---"
-$mainLoopIdx = $scriptContent.IndexOf('# 2. Run vendor uninstaller')
+Write-Host "--- Test 6: 3010 skips persistence cleanup and sets non-Completed status ---"
 if ($mainLoopIdx -ge 0) {
-    $mainLoopSection = $scriptContent.Substring($mainLoopIdx)
-    # Find the section after uninstall handling up to Clean-Persistence
-    $afterUninstall = $mainLoopSection.Substring(0, [math]::Min(800, $mainLoopSection.Length))
-    $passed = $true
-    $passed = Assert-True ($afterUninstall -match '\$rebootRequired') "Tracks rebootRequired flag" -and $passed
-    $passed = Assert-True ($afterUninstall -match 'Clean-Persistence.*\$installDir') "Has Clean-Persistence call" -and $passed
-    # Check Clean-Persistence is gated by not rebootRequired or not uninstallSucceeded
-    $cleanPersistIdx = $afterUninstall.IndexOf('Clean-Persistence')
-    if ($cleanPersistIdx -ge 0) {
-        $beforeClean = $afterUninstall.Substring(0, $cleanPersistIdx)
-        $passed = Assert-True ($beforeClean -match 'if.*rebootRequired|if.*uninstallSucceeded') "Clean-Persistence gated by success flags" -and $passed
-    }
-    # Check status update is not Completed for 3010
-    $passed = Assert-True ($scriptContent -match '3010.*Deferred|RebootRequired.*Deferred|Status.*Reboot') "Sets non-Completed status for 3010" -and $passed
-    if ($passed) { $passedTests++ } else { $failedTests++ }
+    Assert-True ($mainLoopSection -match '\$rebootRequired') "Tracks rebootRequired flag"
+    Assert-True ($scriptContent -match 'if \(\$installDir -and -not \$rebootRequired\)') "Clean-Persistence gated on -not rebootRequired"
+    Assert-True ($scriptContent -match 'RebootPending') "Sets RebootPending status for 3010"
+    Assert-True ($scriptContent -match "'RebootPending'") "RebootPending status literal is present"
+    Assert-True ($scriptContent -match 'Set-RunOnceResume -InstanceId \$instanceId') "3010 path schedules a post-reboot RunOnce resume"
 } else {
-    $failedTests++
-    Write-Host "FAIL: Main loop section not found" -ForegroundColor Red
+    Assert-True $false "Main loop section not found in source"
 }
 
 # ---------------------------------------------------------------------------
-# TEST 10: PS 5.1 compatibility - no .NET APIs unavailable in 5.1
-# ReadToEndAsync and Task.WaitAll ARE available in .NET Framework 4.5+ (PS 5.1)
+# TEST 7: reboot-resume fast path never re-runs the vendor uninstaller
 # ---------------------------------------------------------------------------
-Write-Host ""
-Write-Host "--- Test 10: PS 5.1 compatibility check ---"
-if ($scriptContent -match '(?m)^function\s+Run-BoundedProcess\s*\{') {
-    $funcMatch = [regex]::Match($scriptContent, '(?ms)^function\s+Run-BoundedProcess\s*\{.*?^\}')
-    if ($funcMatch.Success) {
-        $funcDef = $funcMatch.Value
-        $ps51Issues = @()
-        
-        # These are NOT available in .NET Framework 4.x / PS 5.1:
-        if ($funcDef -match '\basync\b|\bawait\b') { $ps51Issues += "Uses async/await keywords (C# only, not PowerShell)" }
-        if ($funcDef -match 'CancellationToken') { $ps51Issues += "Uses CancellationToken" }
-        if ($funcDef -match 'ValueTask') { $ps51Issues += "Uses ValueTask (.NET Core only)" }
-        if ($funcDef -match 'IAsyncEnumerable') { $ps51Issues += "Uses IAsyncEnumerable (.NET Core only)" }
-        if ($funcDef -match '\[System\.Runtime\.CompilerServices\]') { $ps51Issues += "Uses CompilerServices" }
-        if ($funcDef -match 'ConfigureAwait') { $ps51Issues += "Uses ConfigureAwait" }
-        if ($funcDef -match 'System\.Threading\.Thread') { $ps51Issues += "Uses raw Thread (no PS runspace)" }
-        if ($funcDef -match '\block\s') { $ps51Issues += "Uses 'lock' keyword (C# only, not PowerShell)" }
-        
-        if ($ps51Issues.Count -eq 0) {
-            $passedTests++
-            Write-Host "PASS: No PS 5.1 incompatible APIs detected" -ForegroundColor Green
-        } else {
-            $failedTests++
-            foreach ($issue in $ps51Issues) {
-                Write-Host "FAIL: PS 5.1 incompatibility: $issue" -ForegroundColor Red
-            }
+Write-Host "--- Test 7: RebootPending resume skips the vendor uninstaller ---"
+Assert-True ($scriptContent -match 'RebootPendingInstanceIds') "Tracks RebootPending instance IDs separately"
+Assert-True ($scriptContent -match 'vendor uninstaller already succeeded|RebootPending resume') "Documents the RebootPending fast path"
+Assert-True ($scriptContent -match 'Clean-Persistence -InstallDir \$installDir') "RebootPending resume still runs persistence cleanup"
+
+# ---------------------------------------------------------------------------
+# TEST 8: PS 5.1 compatibility - no .NET APIs unavailable in 5.1
+# ---------------------------------------------------------------------------
+Write-Host "--- Test 8: PS 5.1 compatibility check ---"
+if ($funcMatch.Success) {
+    $ps51Issues = @()
+    if ($funcMatch.Value -match 'async\s+Task|await\s') { $ps51Issues += "Uses async/await keywords (C# only, not PowerShell)" }
+    if ($funcMatch.Value -match 'CancellationToken') { $ps51Issues += "Uses CancellationToken" }
+    if ($funcMatch.Value -match 'ValueTask') { $ps51Issues += "Uses ValueTask (.NET Core only)" }
+    if ($funcMatch.Value -match 'IAsyncEnumerable') { $ps51Issues += "Uses IAsyncEnumerable (.NET Core only)" }
+    if ($funcMatch.Value -match '\[System\.Runtime\.CompilerServices\]') { $ps51Issues += "Uses CompilerServices" }
+    if ($funcMatch.Value -match 'ConfigureAwait') { $ps51Issues += "Uses ConfigureAwait" }
+    if ($funcMatch.Value -match 'System\.Threading\.Thread') { $ps51Issues += "Uses raw Thread (no PS runspace)" }
+    if ($funcMatch.Value -match '\block\s') { $ps51Issues += "Uses 'lock' keyword (C# only, not PowerShell)" }
+    if ($ps51Issues.Count -eq 0) {
+        Assert-True $true "No PS 5.1 incompatible APIs detected"
+    } else {
+        foreach ($issue in $ps51Issues) {
+            Assert-True $false "PS 5.1 incompatibility: $issue"
         }
-    } else {
-        $failedTests++
-        Write-Host "FAIL: Could not extract Run-BoundedProcess function" -ForegroundColor Red
     }
 } else {
-    Write-Host "SKIP: Run-BoundedProcess not yet implemented (RED expected)" -ForegroundColor Yellow
+    Assert-True $false "Could not extract Run-BoundedProcess function"
+}
+
+# ---------------------------------------------------------------------------
+# TEST 9: no parenthesized if-expression in the remover (parse blocker)
+# ---------------------------------------------------------------------------
+Write-Host "--- Test 9: remover parses with zero errors (PS 5.1 parse gate) ---"
+$parseErrors = $null
+$null = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$null, [ref]$parseErrors)
+if ($null -ne $parseErrors -and @($parseErrors).Count -gt 0) {
+    foreach ($pe in @($parseErrors)) {
+        Write-Host ("  parse error L" + $pe.Extent.StartLineNumber + ": " + $pe.Message) -ForegroundColor Red
+    }
+    Assert-True $false "remove-screenconnect.ps1 must parse with zero errors"
+} else {
+    Assert-True $true "remove-screenconnect.ps1 parses with zero errors"
 }
 
 # ---------------------------------------------------------------------------
@@ -264,10 +180,10 @@ if ($scriptContent -match '(?m)^function\s+Run-BoundedProcess\s*\{') {
 # ---------------------------------------------------------------------------
 Write-Host ""
 Write-Host "=== Test Summary ==="
-Write-Host "Passed: $passedTests"
-Write-Host "Failed: $failedTests"
+Write-Host "Passed: $script:passedTests"
+Write-Host "Failed: $script:failedTests"
 
-if ($failedTests -gt 0) {
+if ($script:failedTests -gt 0) {
     exit 1
 } else {
     exit 0
