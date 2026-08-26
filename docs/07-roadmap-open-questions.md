@@ -18,12 +18,12 @@ box" tool has value on day one.
 
 | | Milestone | Deliverable | State |
 |---|---|---|---|
-| **M0** | **Live lab validation.** Install ScreenConnect from a test cloud instance in a VM. Confirm the relay-identity extraction. Uninstall, document remnants. | Corrected key map | **NOT DONE — top priority** (requires a Windows VM / live ScreenConnect; out of scope for agents) |
+| **M0** | **Live lab validation.** Install ScreenConnect from a test cloud instance in a VM. Confirm the relay-identity extraction. Uninstall, document remnants. | Corrected key map | **PARTIAL (field, 2026-08-26):** real removal on INPIRON4SANITY2 confirmed instance identity via DisplayName + install-dir match and the no-UninstallString surgery fallback end-to-end. Relay-key extraction (Q1/Q2) still needs a test-cloud install lab run |
 | **M1** | Stages 0, 1, 8 — snapshot + report, read-only | Usable immediately, cannot hurt anything | **Built & Linux-verified** (Windows content paths still unverified — see below) |
 | **M2** | Stage 2 — ScreenConnect + RAT detection | `-sr` detect-only mode | **PoC DONE** (verified on a real machine) |
 | **M3** | Stage 7 — after-snapshot + diff | Catches resurrections | **Built & Linux-verified** |
 | **M4** | Stage 5 — scanner adapters (Defender first) | Optional, skippable | **Built** — Defender, KVRT, ESET adapters (Linux WhatIf-verified; real exec unverified). AdwCleaner/MSERT not built. |
-| **M5** | Stages 3, 4 — approval gate + removal + quarantine + reboot resume | **Only after heavy VM-snapshot testing** | **Implemented, untested on live Windows** (Stage 3 emits plan.json; Stage 4 consumes it, dry-run unless explicitly confirmed) |
+| **M5** | Stages 3, 4 — approval gate + removal + quarantine + reboot resume | **Only after heavy VM-snapshot testing** | **LIVE-VALIDATED (field, 2026-08-26):** full removal executed with ExecuteMode=true on INPIRON4SANITY2 via the manual-surgery path (quarantine + service delete + uninstall-key cleanup), manifest truthful after the UninstallFallback fix. 3010 reboot-resume path still needs a lab run |
 | **M6** | Stage 6 — targeted Procmon | Respawn investigation | **Not started** (opt-in stub only) |
 | **M7** | Top-level `sc-cleanup.ps1` stage runner tying it together | The actual product | **Built & Linux end-to-end verified** (detect-remote-access stubbed on Linux) |
 

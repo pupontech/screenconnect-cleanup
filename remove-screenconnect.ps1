@@ -914,7 +914,9 @@ function Run-VendorUninstaller {
     if (-not $UninstallEntry) {
         Write-Log "  No uninstall registry entry provided"
         Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target 'Registry' -Result 'Skipped' -Details 'No uninstall entry'
-        return $false
+        # $null = nothing was attempted (entry already recorded above); the
+        # caller must NOT record a second 'Failed' entry for this.
+        return $null
     }
 
     # StrictMode-safe reads: a real Uninstall key very often has NO
@@ -945,9 +947,11 @@ function Run-VendorUninstaller {
         # but loses UninstallString. Manual surgery (quarantine + service
         # deletion) is the designed fallback and handles it, so recording this
         # as 'Failed' made a successful removal report failure and exit 1.
+        # Return $null (nothing attempted) - the caller must not add a second
+        # 'Failed' entry with an empty Target on top of this truthful one.
         Write-Log "  No UninstallString or QuietUninstallString found - falling back to manual surgery" 'Warn'
         Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target $displayName -Result 'Skipped' -Details 'No uninstall string on the registry entry; manual surgery will handle this instance'
-        return $false
+        return $null
     }
 
     # Check if MSI
@@ -1494,17 +1498,28 @@ foreach ($inst in $scInstancesArray) {
                 $rebootRequired = $true
                 Write-Log "  Vendor uninstaller succeeded, reboot required (exit 3010)"
             } elseif ($uninstallResult -eq $true) {
-                # Exit 0 - uninstall succeeded
+                # Exit 0 - uninstall succeeded (entry already recorded inside
+                # Run-VendorUninstaller as Success with the exit code)
                 $uninstallSucceeded = $true
                 Write-Log "  Vendor uninstaller reported success"
-                $targetStr = Get-EntryPropertySafe -Instance $uninstallEntry -PropertyName 'UninstallString'
-                if (-not $targetStr) { $targetStr = Get-EntryPropertySafe -Instance $uninstallEntry -PropertyName 'QuietUninstallString' }
-                Add-ManifestEntry -InstanceId $instanceId -Action 'Uninstall' -Target $targetStr -Result 'Success'
+            } elseif ($null -eq $uninstallResult) {
+                # Nothing was attempted (no uninstall string / no entry); the
+                # truthful Skipped entry is already in the manifest. Record the
+                # DECISION here with a real target, never an empty one, and
+                # never as 'Failed' - a run whose manual surgery succeeds must
+                # not show a failed Uninstall.
+                Write-Log "  No vendor uninstaller available - proceeding with manual surgery" 'Warn'
+                $fallbackTarget = Get-EntryPropertySafe -Instance $uninstallEntry -PropertyName 'DisplayName'
+                if (-not $fallbackTarget) { $fallbackTarget = 'N/A' }
+                Add-ManifestEntry -InstanceId $instanceId -Action 'UninstallFallback' -Target $fallbackTarget -Result 'Planned' -Details 'No vendor uninstaller available; proceeding with manual surgery + quarantine'
             } else {
-                Write-Log "  Vendor uninstaller failed or returned no success signal" 'Warn'
-                $targetStr = Get-EntryPropertySafe -Instance $uninstallEntry -PropertyName 'UninstallString'
-                if (-not $targetStr) { $targetStr = Get-EntryPropertySafe -Instance $uninstallEntry -PropertyName 'QuietUninstallString' }
-                Add-ManifestEntry -InstanceId $instanceId -Action 'Uninstall' -Target $targetStr -Result 'Failed' -Details 'Falling back to manual surgery + quarantine'
+                # Genuine failure - the reason entry (exit code / timeout /
+                # validation refusal) is already recorded. Record the decision
+                # with a real target.
+                Write-Log "  Vendor uninstaller failed - proceeding with manual surgery" 'Warn'
+                $fallbackTarget = Get-EntryPropertySafe -Instance $uninstallEntry -PropertyName 'DisplayName'
+                if (-not $fallbackTarget) { $fallbackTarget = 'N/A' }
+                Add-ManifestEntry -InstanceId $instanceId -Action 'UninstallFallback' -Target $fallbackTarget -Result 'Planned' -Details 'Vendor uninstaller failed; proceeding with manual surgery + quarantine'
             }
         } else {
             Write-Log "  No uninstall entry found, will proceed to manual surgery" 'Warn'
