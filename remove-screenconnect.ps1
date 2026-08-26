@@ -943,9 +943,36 @@ function Run-VendorUninstaller {
 
         try {
             $proc = [System.Diagnostics.Process]::Start($psi)
-            $stdout = $proc.StandardOutput.ReadToEnd()
-            $stderr = $proc.StandardError.ReadToEnd()
-            $proc.WaitForExit(300000) # 5 minute timeout
+
+            # FIX (deadlock): drain BOTH pipes asynchronously instead of two
+            # sequential synchronous ReadToEnd() calls. Sequential sync reads
+            # deadlock whenever the child fills one pipe buffer while we are
+            # blocked reading the other (classic .NET redirect deadlock). This
+            # is the async-drain shape proven in Invoke-ChildScript in
+            # sc-cleanup.ps1, extended to stdout as well: the 5-minute bound
+            # below must stay a HARD bound, and a hung uninstaller that never
+            # closes its pipes would otherwise wedge us inside a synchronous
+            # stdout ReadToEnd() forever -- before WaitForExit() ever ran.
+            $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+            $stderrTask = $proc.StandardError.ReadToEndAsync()
+
+            # FIX (hang): consume the WaitForExit(int) RESULT. It returns
+            # $false when the timeout elapses; the old code ignored it, so a
+            # hung uninstaller was never killed and the unconditional ExitCode
+            # read below could throw on a still-running process.
+            $exited = $proc.WaitForExit(300000) # 5 minute timeout
+            if (-not $exited) {
+                try {
+                    $proc.Kill()
+                    $null = $proc.WaitForExit(10000)
+                } catch { }
+                Write-Log "  Uninstaller exceeded the 5 minute timeout and was KILLED" 'Error'
+                Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target $displayName -Result 'Failed' -Details 'Uninstaller timed out after 300 seconds (5 minutes) and the process was killed'
+                return $false
+            }
+
+            $stdout = $stdoutTask.Result
+            $stderr = $stderrTask.Result
             $exitCode = $proc.ExitCode
 
             Write-Log "  Uninstaller exit code: $exitCode"
