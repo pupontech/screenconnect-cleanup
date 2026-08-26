@@ -3,13 +3,33 @@
 
 BeforeAll {
     if (-not $env:TEMP) { $env:TEMP = [System.IO.Path]::GetTempPath() }
+    if (-not $env:TMP) { $env:TMP = $env:TEMP }
+    # Save original env so we can restore in AfterAll and not pollute other containers.
+    $script:origLocalAppData = $env:LocalAppData
+    $script:origProgramData = $env:ProgramData
+    $script:origTemp = $env:TEMP
     # Control user/machine config discovery so no stray config pollutes defaults.
     $env:LocalAppData = Join-Path $env:TEMP ('scc-la-' + [guid]::NewGuid().ToString())
     $env:ProgramData = Join-Path $env:TEMP ('scc-pd-' + [guid]::NewGuid().ToString())
-    $null = New-Item -ItemType Directory -Path $env:LocalAppData -Force
-    $null = New-Item -ItemType Directory -Path $env:ProgramData -Force
-    $modulePath = '/root/screenconnect-cleanup/gui-revision-screenconnect-cleaner/src/Scc.Core/Scc.Core.psd1'
+    if (-not (Test-Path -LiteralPath $env:LocalAppData)) { $null = New-Item -ItemType Directory -Path $env:LocalAppData -Force }
+    if (-not (Test-Path -LiteralPath $env:ProgramData)) { $null = New-Item -ItemType Directory -Path $env:ProgramData -Force }
+    $modulePath = Join-Path $PSScriptRoot '..' '..' 'src' 'Scc.Core' 'Scc.Core.psd1'
+    if (-not (Test-Path -LiteralPath $modulePath)) {
+        throw "Scc.Core module not found at $modulePath"
+    }
     Import-Module -Name $modulePath -Force
+}
+
+AfterAll {
+    if ($null -ne $script:origLocalAppData) { $env:LocalAppData = $script:origLocalAppData } else { Remove-Item Env:LocalAppData -ErrorAction SilentlyContinue }
+    if ($null -ne $script:origProgramData) { $env:ProgramData = $script:origProgramData } else { Remove-Item Env:ProgramData -ErrorAction SilentlyContinue }
+    if ($script:origTemp -and $env:TEMP -ne $script:origTemp) { $env:TEMP = $script:origTemp }
+    # Clean up temp dirs created in BeforeAll if they still exist.
+    foreach ($p in @($env:LocalAppData, $env:ProgramData)) {
+        if ($p -and $p -match 'scc-la-|scc-pd-' -and (Test-Path -LiteralPath $p)) {
+            Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 Describe 'Scc.Core configuration' {
@@ -50,11 +70,13 @@ Describe 'Scc.Core configuration' {
 Describe 'Resolve-SccEnv' {
 
     It 'expands known %VAR% placeholders' {
-        $env:SCC_TEST_TEMP = '/tmp/sccroottemp'
-        $env:SCC_TEST_PROG = '/progdata'
-        Resolve-SccEnv -Text '%SCC_TEST_TEMP%\sub' | Should -Be '/tmp/sccroottemp\sub'
-        Resolve-SccEnv -Text '%SCC_TEST_PROG%\x' | Should -Be '/progdata\x'
-        Remove-Item Env:SCC_TEST_TEMP, Env:SCC_TEST_PROG
+        $tmpBase = Join-Path $env:TEMP ('sccroottemp-' + [guid]::NewGuid().ToString('N'))
+        $progBase = Join-Path $env:TEMP ('progdata-' + [guid]::NewGuid().ToString('N'))
+        $env:SCC_TEST_TEMP = $tmpBase
+        $env:SCC_TEST_PROG = $progBase
+        Resolve-SccEnv -Text '%SCC_TEST_TEMP%\sub' | Should -Be ($tmpBase + '\sub')
+        Resolve-SccEnv -Text '%SCC_TEST_PROG%\x' | Should -Be ($progBase + '\x')
+        Remove-Item Env:SCC_TEST_TEMP, Env:SCC_TEST_PROG -ErrorAction SilentlyContinue
     }
 
     It 'leaves unknown %VAR% literal' {
@@ -64,9 +86,9 @@ Describe 'Resolve-SccEnv' {
 
 Describe 'Get-SccPaths env-var expansion' {
     BeforeAll {
-        $env:SCC_TMP = '/tmp/sccenv'
-        $env:SCC_PDATA = '/progdata'
-        $env:SCC_LDATA = '/localdata'
+        $env:SCC_TMP = Join-Path $env:TEMP ('sccenv-' + [guid]::NewGuid().ToString('N'))
+        $env:SCC_PDATA = Join-Path $env:TEMP ('progdata-' + [guid]::NewGuid().ToString('N'))
+        $env:SCC_LDATA = Join-Path $env:TEMP ('localdata-' + [guid]::NewGuid().ToString('N'))
     }
     AfterAll {
         Remove-Item Env:SCC_TMP, Env:SCC_PDATA, Env:SCC_LDATA -ErrorAction SilentlyContinue
@@ -164,13 +186,18 @@ Describe 'Get-SccFileFacts' {
         Remove-Item -LiteralPath $script:f.FullName -Force -ErrorAction SilentlyContinue
     }
 
-    It 'returns size, sha256, and NotChecked signature on Linux' {
+    It 'returns size, sha256, and platform-appropriate signature status' {
         InModuleScope Scc.Core { $script:SccConfig = $null; $script:SccCache = @{} }
         $facts = Get-SccFileFacts -Path $script:f.FullName
         $facts.Exists | Should -BeTrue
         $facts.SizeBytes | Should -Be (Get-Item -LiteralPath $script:f.FullName).Length
         $facts.SHA256 | Should -Be $script:expectedSha
-        $facts.SignatureStatus | Should -Be 'NotChecked'
+        if ($env:OS -eq 'Windows_NT') {
+            $facts.SignatureStatus | Should -Not -BeNullOrEmpty
+            @('Valid','Invalid','NotSigned','UnknownError','NotTrusted','Error','NotSupported','NotChecked') | Should -Contain $facts.SignatureStatus
+        } else {
+            $facts.SignatureStatus | Should -Be 'NotChecked'
+        }
     }
 
     It 'returns identical SHA256 on second (cached) call' {
@@ -217,26 +244,29 @@ Describe 'Test-SccNas' {
 
 Describe 'runstate shape (resume contract)' {
     BeforeAll {
-        $script:rtRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('SccRt_' + [Guid]::NewGuid().ToString('N'))
-        New-Item -ItemType Directory -Path $script:rtRoot -Force | Out-Null
+        if (-not $env:TEMP) { $env:TEMP = [System.IO.Path]::GetTempPath() }
+        $script:rtRoot = Join-Path $env:TEMP ('SccRt_' + [Guid]::NewGuid().ToString('N'))
+        if (-not (Test-Path -LiteralPath $script:rtRoot)) { New-Item -ItemType Directory -Path $script:rtRoot -Force | Out-Null }
         # Save/restore the user config file so this Describe does not leak
         # its reportRoot override into other tests.
         $script:rtCfgDir = (Get-SccPaths).ConfigUserDir
         $script:rtCfgFile = Join-Path $script:rtCfgDir 'scc-config.json'
         $script:rtCfgBackup = $null
         if (Test-Path -LiteralPath $script:rtCfgFile) {
-            $script:rtCfgBackup = [System.IO.File]::ReadAllText($script:rtCfgFile)
+            try { $script:rtCfgBackup = [System.IO.File]::ReadAllText($script:rtCfgFile) } catch { $script:rtCfgBackup = $null }
         }
         Set-SccConfigValue -Name 'paths.reportRoot' -Value $script:rtRoot -UserScope
         $script:rtRun = New-SccRun -Technician 'rt' -Client 'c'
     }
     AfterAll {
         if ($null -ne $script:rtCfgBackup) {
-            [System.IO.File]::WriteAllText($script:rtCfgFile, $script:rtCfgBackup, [System.Text.Encoding]::ASCII)
+            try { [System.IO.File]::WriteAllText($script:rtCfgFile, $script:rtCfgBackup, [System.Text.Encoding]::ASCII) } catch { }
         } elseif (Test-Path -LiteralPath $script:rtCfgFile) {
             Remove-Item -LiteralPath $script:rtCfgFile -Force -ErrorAction SilentlyContinue
         }
-        Remove-Item $script:rtRoot -Recurse -Force -ErrorAction SilentlyContinue
+        if ($script:rtRoot -and (Test-Path -LiteralPath $script:rtRoot)) {
+            Remove-Item -LiteralPath $script:rtRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
     It 'runstate stages carry Index, Name, Status' {
         $state = Get-SccRunState -RunId $script:rtRun.RunId

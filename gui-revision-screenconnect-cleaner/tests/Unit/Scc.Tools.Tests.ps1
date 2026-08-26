@@ -98,6 +98,27 @@ InModuleScope Scc.Tools {
             if (Test-Path -LiteralPath $manifestFile) {
                 Remove-Item -LiteralPath $manifestFile -Force -ErrorAction SilentlyContinue
             }
+            # Platform guard: on Windows, Get-AuthenticodeSignature returns UnknownError for
+            # fake test binaries, which would incorrectly block cache/NAS/official tests.
+            # Mock Get-SccToolFacts to return NotChecked with the real hash so the
+            # B1 signature-rejection logic is not exercised in this Describe (the
+            # dedicated hardening Describe covers it explicitly). This keeps the
+            # acquisition tests platform-agnostic without weakening product code.
+            Mock Get-SccToolFacts {
+                param([string]$Path)
+                $exists = Test-Path -LiteralPath $Path
+                if (-not $exists) {
+                    return [PSCustomObject]@{ Path = $Path; Exists = $false; SizeBytes = $null; SHA256 = $null; FileVersion = ''; Publisher = ''; SignatureStatus = 'NotChecked'; LastWriteUtc = $null }
+                }
+                $sz = $null; $h = $null; $ver = ''
+                try { $sz = (Get-Item -LiteralPath $Path -ErrorAction Stop).Length } catch {}
+                try { $h = (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash } catch {}
+                try {
+                    $it = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+                    if ($it -and $it.VersionInfo.FileVersion) { $ver = $it.VersionInfo.FileVersion }
+                } catch {}
+                return [PSCustomObject]@{ Path = $Path; Exists = $true; SizeBytes = $sz; SHA256 = $h; FileVersion = $ver; Publisher = ''; SignatureStatus = 'NotChecked'; LastWriteUtc = (Get-Date).ToUniversalTime() }
+            }
         }
 
         AfterAll {
@@ -125,7 +146,10 @@ InModuleScope Scc.Tools {
             # Establish a known-good KVRT baseline in the cache/manifest.
             $seed = Join-Path $script:nas 'KVRT.exe'
             Set-Content -LiteralPath $seed -Value 'REAL-KVRT-CONTENT' -Encoding ASCII
-            Save-SccToolToCache -Path $seed -Tool 'KVRT' -Source 'Nas' | Should -BeTrue
+            $hash = (Get-FileHash -LiteralPath $seed -Algorithm SHA256).Hash
+            $size = (Get-Item -LiteralPath $seed).Length
+            $check = [PSCustomObject]@{ Passed = $true; Reasons = @('signature not checked on this platform, accepted'); Facts = [PSCustomObject]@{ Path = $seed; Exists = $true; SizeBytes = $size; SHA256 = $hash; FileVersion = '1.0'; Publisher = ''; SignatureStatus = 'NotChecked'; LastWriteUtc = (Get-Date).ToUniversalTime() } }
+            Save-SccToolToCache -Path $seed -Tool 'KVRT' -Source 'Nas' -Integrity $check | Should -BeTrue
             # Corrupt the cached copy (now differs from the manifest hash).
             $cached = Join-Path $script:cache 'KVRT\KVRT.exe'
             Set-Content -LiteralPath $cached -Value 'CORRUPTED-CACHE-COPIES' -Encoding ASCII
@@ -189,7 +213,10 @@ InModuleScope Scc.Tools {
             # Record a known-good KVRT baseline in the manifest.
             $seed = Join-Path $script:nas 'KVRT.exe'
             Set-Content -LiteralPath $seed -Value 'REAL-KVRT-CONTENT' -Encoding ASCII
-            Save-SccToolToCache -Path $seed -Tool 'KVRT' -Source 'Nas' | Should -BeTrue
+            $hash = (Get-FileHash -LiteralPath $seed -Algorithm SHA256).Hash
+            $size = (Get-Item -LiteralPath $seed).Length
+            $check = [PSCustomObject]@{ Passed = $true; Reasons = @('signature not checked on this platform, accepted'); Facts = [PSCustomObject]@{ Path = $seed; Exists = $true; SizeBytes = $size; SHA256 = $hash; FileVersion = '1.0'; Publisher = ''; SignatureStatus = 'NotChecked'; LastWriteUtc = (Get-Date).ToUniversalTime() } }
+            Save-SccToolToCache -Path $seed -Tool 'KVRT' -Source 'Nas' -Integrity $check | Should -BeTrue
             # NAS now holds a WRONG-hash binary (differs from the baseline).
             Set-Content -LiteralPath $seed -Value 'TAMPERED-NAS-BINARY' -Encoding ASCII
             # -ForceRefresh bypasses local, forcing the NAS validation to run and fail.
@@ -278,7 +305,10 @@ InModuleScope Scc.Tools {
         It 'manifest round-trip: save, re-read, entry present with SHA256' {
             $seed = Join-Path $script:nas 'KVRT.exe'
             Set-Content -LiteralPath $seed -Value 'MANIFEST-ROUNDTRIP-DATA' -Encoding ASCII
-            Save-SccToolToCache -Path $seed -Tool 'KVRT' -Source 'Nas' | Should -BeTrue
+            $hash = (Get-FileHash -LiteralPath $seed -Algorithm SHA256).Hash
+            $size = (Get-Item -LiteralPath $seed).Length
+            $check = [PSCustomObject]@{ Passed = $true; Reasons = @('signature not checked on this platform, accepted'); Facts = [PSCustomObject]@{ Path = $seed; Exists = $true; SizeBytes = $size; SHA256 = $hash; FileVersion = '1.0'; Publisher = ''; SignatureStatus = 'NotChecked'; LastWriteUtc = (Get-Date).ToUniversalTime() } }
+            Save-SccToolToCache -Path $seed -Tool 'KVRT' -Source 'Nas' -Integrity $check | Should -BeTrue
 
             $manifestFile = Join-Path $script:cache 'tool-cache-manifest.json'
             Test-Path -LiteralPath $manifestFile | Should -BeTrue
@@ -292,7 +322,18 @@ InModuleScope Scc.Tools {
         It 'Get-SccToolStatus reports cached, verified and NAS state without network calls' {
             $seed = Join-Path $script:nas 'KVRT.exe'
             Set-Content -LiteralPath $seed -Value 'STATUS-DATA' -Encoding ASCII
-            Save-SccToolToCache -Path $seed -Tool 'KVRT' -Source 'Nas' | Should -BeTrue
+            $hash = (Get-FileHash -LiteralPath $seed -Algorithm SHA256).Hash
+            $size = (Get-Item -LiteralPath $seed).Length
+            $check = [PSCustomObject]@{ Passed = $true; Reasons = @('signature not checked on this platform, accepted'); Facts = [PSCustomObject]@{ Path = $seed; Exists = $true; SizeBytes = $size; SHA256 = $hash; FileVersion = '1.0'; Publisher = ''; SignatureStatus = 'NotChecked'; LastWriteUtc = (Get-Date).ToUniversalTime() } }
+            Save-SccToolToCache -Path $seed -Tool 'KVRT' -Source 'Nas' -Integrity $check | Should -BeTrue
+            # Mock Get-SccToolFacts for the status check so the cached file is verified on Windows (which would otherwise return UnknownError for the fake binary).
+            Mock Get-SccToolFacts {
+                param([string]$Path)
+                $h = (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
+                if (-not $h) { $h = 'FAKE' }
+                $sz = $null; try { $sz = (Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue).Length } catch { $sz = 1 }
+                return [PSCustomObject]@{ Path = $Path; Exists = $true; SizeBytes = $sz; SHA256 = $h; FileVersion = '1.0'; Publisher = ''; SignatureStatus = 'NotChecked'; LastWriteUtc = (Get-Date).ToUniversalTime() }
+            } -ParameterFilter { $Path -like '*KVRT*' }
 
             $rows = @(Get-SccToolStatus)
             $rows.Count | Should -Be 9

@@ -20,7 +20,7 @@
 #
 # Exit codes: 0 = success / preview shown, 1 = fatal error.
 # =====================================================================
-[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
+[CmdletBinding()]
 param(
     # Source portable tree (folder containing Scc.Cleaner.ps1).
     # Defaults to the folder this script sits in (build/) parent, then
@@ -30,14 +30,16 @@ param(
     [switch]$Install,
     # Remove what this script installed.
     [switch]$Uninstall,
-    # Force a preview even with -Install.
+    # Force a preview even with -Install (alias of the -WhatIf common switch;
+    # declared explicitly because we drive our own preview/exec split rather
+    # than relying solely on ShouldProcess).
     [switch]$WhatIf
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 1.0
 
-$IsWindows = ($env:OS -eq 'Windows_NT')
+$IsWindowsHost = ($env:OS -eq 'Windows_NT')
 
 # ---------------------------------------------------------------------
 # Resolve source directory (portable tree).
@@ -82,7 +84,7 @@ try {
         exit 1
     }
 
-    if (-not $IsWindows) {
+    if (-not $IsWindowsHost) {
         Write-Warning 'This installer performs Windows-only operations (Program Files, Start Menu).'
         Write-Warning 'On a non-Windows host it can only show a preview. Run on Windows to install.'
     }
@@ -91,7 +93,7 @@ try {
         # ---- Uninstall: remove only what we installed. ----
         $progDir = $null
         $dataDir = $null
-        if ($IsWindows) {
+        if ($IsWindowsHost) {
             $progDir = Join-Path $env:ProgramFiles 'ScreenConnectCleaner'
             $dataDir = Join-Path $env:ProgramData 'ScreenConnectCleaner'
         }
@@ -120,7 +122,7 @@ try {
     }
 
     # ---- Install (or preview). ----
-    if (-not $IsWindows) {
+    if (-not $IsWindowsHost) {
         Write-Host 'Preview of install (non-Windows host - no changes possible):' -ForegroundColor Cyan
     } else {
         Write-Host ('{0} install:' -f $(if ($PreviewMode) { 'Preview of' } else { 'Performing' })) -ForegroundColor Cyan
@@ -129,7 +131,7 @@ try {
     $progDir = $null
     $dataDir = $null
     $startMenuDir = $null
-    if ($IsWindows) {
+    if ($IsWindowsHost) {
         $progDir = Join-Path $env:ProgramFiles 'ScreenConnectCleaner'
         $dataDir = Join-Path $env:ProgramData 'ScreenConnectCleaner'
         $startMenuDir = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\ScreenConnect Cleaner'
