@@ -202,6 +202,177 @@ $whatIfRc = $whatIfP.ExitCode
 Check 'sc-cleanup -WhatIf exits 0' ($whatIfRc -eq 0) "rc=$whatIfRc"
 
 # ---------------------------------------------------------------------
+# 4. Registry entries missing UninstallString are clean dry-runs with NO
+#    StrictMode crash.
+#
+#    d71d40a crashes processing such an instance. The main loop
+#    dereferenced $uninstallEntry.UninstallString directly
+#    (remove-screenconnect.ps1 line 1337/1340) under Set-StrictMode
+#    -Version 2.0, so any registration without that value threw
+#    ("The property 'UninstallString' cannot be found on this object"),
+#    which was caught as a 'ProcessInstance' Failed and failed the run.
+#
+#    Two non-destructive synthetic registrations are exercised:
+#      a. quiet-only: carries ONLY QuietUninstallString -> the original
+#         regression. Run-VendorUninstaller dry-run "succeeds" and the
+#         success-recording line must not crash.
+#      b. nostrings sibling: ScreenConnect-labelled key with NEITHER
+#         UninstallString NOR QuietUninstallString, only a verified
+#         InstallLocation -> Run-VendorUninstaller takes its clean
+#         false-return branch ("no uninstall string, manual surgery")
+#         and the failure-recording line must not crash either.
+#    Non-destructive: dry-run (no -Execute) never starts a process and
+#    never executes a registry command string; the fabricated uninstall
+#    paths point at files that do not exist on the runner.
+# ---------------------------------------------------------------------
+$quietRoot = 'HKCU:\Software\RIT-SCC-CI'
+$quietKey = Join-Path $quietRoot ('quiet-' + [Guid]::NewGuid().ToString('N'))
+$bareKey = Join-Path $quietRoot ('bare-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $quietKey -Force | Out-Null
+New-Item -ItemType Directory -Path $bareKey -Force | Out-Null
+try {
+    $quietInstallDir = 'C:\Program Files (x86)\ScreenConnect Client (quietonly)'
+    New-ItemProperty -LiteralPath $quietKey -Name 'DisplayName' -PropertyType String -Value 'ScreenConnect Client (quietonly)' -Force | Out-Null
+    # Deliberately NO 'UninstallString' value - only QuietUninstallString. The
+    # value references the verified install dir so Get-VerifiedUninstallEntry
+    # accepts the key; Run-VendorUninstaller (dry-run) never executes it.
+    New-ItemProperty -LiteralPath $quietKey -Name 'QuietUninstallString' -PropertyType String -Value ('"C:\Program Files (x86)\ScreenConnect Client (quietonly)\ScreenConnect.ClientService.exe" /s') -Force | Out-Null
+
+    # Sibling of the quiet-only leaf: ScreenConnect-labelled, but with NO
+    # uninstall command at all - just DisplayName + InstallLocation pointing
+    # at the verified install dir. This drives Run-VendorUninstaller into its
+    # false-return branch (no command -> record Skipped, return $false), so
+    # the main loop's failure-recording path runs against an entry that has
+    # neither value.
+    $bareInstallDir = 'C:\Program Files (x86)\ScreenConnect Client (nostrings)'
+    New-ItemProperty -LiteralPath $bareKey -Name 'DisplayName' -PropertyType String -Value 'ScreenConnect Client (nostrings)' -Force | Out-Null
+    New-ItemProperty -LiteralPath $bareKey -Name 'InstallLocation' -PropertyType String -Value $bareInstallDir -Force | Out-Null
+
+    $quietPlan = Join-Path $tmp 'plan-quiet.json'
+    @{
+        GeneratedUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        TechName = 'CI'
+        ClientName = 'CI'
+        IncidentDate = (Get-Date).ToString('yyyy-MM-dd')
+        Decision = 'ALL_REMOVE'
+        SourceFindings = ''
+        ScreenConnectInstances = @(
+            @{
+                InstanceId = 'quietonly'
+                Identifier = 'quietonly'
+                ServiceName = 'ScreenConnect Client (quietonly)'
+                ServiceImagePath = $quietInstallDir + '\ScreenConnect.ClientService.exe'
+                InstallDir = $quietInstallDir
+                UninstallRegistryKey = $quietKey
+            },
+            @{
+                InstanceId = 'nostrings'
+                Identifier = 'nostrings'
+                ServiceName = 'ScreenConnect Client (nostrings)'
+                ServiceImagePath = $bareInstallDir + '\ScreenConnect.ClientService.exe'
+                InstallDir = $bareInstallDir
+                UninstallRegistryKey = $bareKey
+            }
+        )
+    } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $quietPlan -Encoding UTF8 -NoNewline
+
+    $quietWork = Join-Path $tmp 'workdir-quiet'
+    New-Item -ItemType Directory -Path $quietWork -Force | Out-Null
+
+    # HARDENED: an unexpected throw from the remover must become an explicit
+    # failed Check, not kill this harness before the HKCU cleanup below runs.
+    $global:LASTEXITCODE = $null
+    $removerThrew = $false
+    $throwMsg = ''
+    try {
+        & $remover -PlanJson $quietPlan -WorkDir $quietWork -NoRestorePoint
+    } catch {
+        $removerThrew = $true
+        $throwMsg = $_.Exception.Message
+    }
+    $removerRc = $LASTEXITCODE
+    Check 'remover invocation did not throw' (-not $removerThrew) "unexpected throw: $throwMsg"
+    if (-not $removerThrew) {
+        Check 'removal dry-run exit code sane (0 or 1)' ($removerRc -eq 0 -or $removerRc -eq 1) "rc=$removerRc"
+    }
+
+    $quietManifest = Join-Path $quietWork 'removal-manifest.json'
+    if ((-not $removerThrew) -and (Test-Path -LiteralPath $quietManifest)) {
+        $qm = Get-Content -LiteralPath $quietManifest -Raw | ConvertFrom-Json
+        $qEntries = @($qm.Entries)
+
+        # --- Original quiet-only regression (preserved) ---
+        # Processing this instance must be clean. Any 'ProcessInstance' Failed
+        # for 'quietonly' means the success path dereferenced a missing
+        # .UninstallString and threw under StrictMode.
+        $qProcFail = @($qEntries | Where-Object { $_.Action -eq 'ProcessInstance' -and $_.Result -eq 'Failed' -and $_.InstanceId -eq 'quietonly' })
+        Check 'quiet-only uninstall: no ProcessInstance crash' ($qProcFail.Count -eq 0)
+
+        # The registration must be recorded as a clean dry-run, never Failed
+        # and never silently skipped because of a crash before the decision.
+        $qDryRun = @($qEntries | Where-Object { $_.Action -eq 'Uninstall' -and $_.Result -eq 'DryRun' -and $_.InstanceId -eq 'quietonly' })
+        Check 'quiet-only uninstall: recorded as clean dry-run' ($qDryRun.Count -ge 1)
+
+        # --- Sibling false-return branch (neither uninstall value) ---
+        # No crash on the failure-recording path either.
+        $bProcFail = @($qEntries | Where-Object { $_.Action -eq 'ProcessInstance' -and $_.Result -eq 'Failed' -and $_.InstanceId -eq 'nostrings' })
+        Check 'nostrings uninstall: no ProcessInstance crash' ($bProcFail.Count -eq 0)
+
+        # Run-VendorUninstaller MUST have taken its designed false-return
+        # branch: no command on the key -> recorded Skipped (not Failed),
+        # manual-surgery fallback announced.
+        $bSkipped = @($qEntries | Where-Object {
+            $_.InstanceId -eq 'nostrings' -and
+            $_.Action -eq 'Uninstall' -and
+            $_.Result -eq 'Skipped' -and
+            $_.Details -like '*No uninstall string*manual surgery*'
+        })
+        Check 'nostrings uninstall: false-return branch recorded Skipped' ($bSkipped.Count -ge 1)
+
+        # The main loop then records its fallback decision WITHOUT crashing:
+        # Result 'Failed' (fallback to manual surgery) and an empty Target,
+        # because neither registry value exists to report.
+        $bFallback = @($qEntries | Where-Object {
+            $_.InstanceId -eq 'nostrings' -and
+            $_.Action -eq 'Uninstall' -and
+            $_.Result -eq 'Failed' -and
+            $_.Details -eq 'Falling back to manual surgery + quarantine'
+        })
+        Check 'nostrings uninstall: fallback decision recorded without crash' ($bFallback.Count -eq 1)
+        Check 'nostrings uninstall: fallback Target empty (no registry string reported)' ($bFallback.Count -eq 1 -and [string]::IsNullOrEmpty([string]$bFallback[0].Target))
+
+        # Non-destructive correctness: nothing was executed or claimed done -
+        # no Success and no DryRun Uninstall for the stringless entry.
+        $bDestructive = @($qEntries | Where-Object {
+            $_.InstanceId -eq 'nostrings' -and
+            $_.Action -in @('StopService','KillProcess','KillProcesses','Uninstall','Quarantine','DeleteService','DeleteScheduledTask','DeleteRunKey','DeleteWmiSubscription') -and
+            $_.Result -eq 'Success'
+        })
+        Check 'no destructive Success action for stringless entry' ($bDestructive.Count -eq 0)
+        $bDryRunU = @($qEntries | Where-Object {
+            $_.InstanceId -eq 'nostrings' -and $_.Action -eq 'Uninstall' -and $_.Result -eq 'DryRun'
+        })
+        Check 'nostrings uninstall: no DryRun uninstall command (nothing to run)' ($bDryRunU.Count -eq 0)
+    } else {
+        Check 'stringless-entry manifest written and remover silent' $false
+    }
+} finally {
+    # Clean the created GUID leaves...
+    Remove-Item -LiteralPath $quietKey -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $bareKey -Recurse -Force -ErrorAction SilentlyContinue
+    # ...and remove the RIT-SCC-CI parent ONLY if this run left it empty, so
+    # we never delete a pre-existing tree or siblings owned by another run.
+    try {
+        if (Test-Path -LiteralPath $quietRoot) {
+            $leftovers = @(Get-ChildItem -LiteralPath $quietRoot -ErrorAction SilentlyContinue)
+            if ($leftovers.Count -eq 0) {
+                Remove-Item -LiteralPath $quietRoot -Force -ErrorAction SilentlyContinue
+            }
+        }
+    } catch { }
+}
+
+# ---------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue

@@ -62,6 +62,30 @@ jobs:
         shell: pwsh
         run: ./tests/ci/Test-WindowsIntegration.ps1
 
+      - name: Stage 4 removal runtime contracts (powershell 5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/ci/Test-RemovalRuntimeContracts.ps1
+
+      - name: Stage 4 removal runtime contracts (pwsh)
+        shell: pwsh
+        run: ./tests/ci/Test-RemovalRuntimeContracts.ps1
+
+      - name: Pipeline + launcher contracts (powershell 5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/ci/Test-PipelineLauncherContracts.ps1
+
+      - name: Pipeline + launcher contracts (pwsh)
+        shell: pwsh
+        run: ./tests/ci/Test-PipelineLauncherContracts.ps1
+
+      - name: Scanner process contracts (powershell 5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/ci/Test-ScannerProcessContracts.ps1
+
+      - name: Scanner process contracts (pwsh)
+        shell: pwsh
+        run: ./tests/ci/Test-ScannerProcessContracts.ps1
+
       - name: Synthetic Stage 7 diff test (end-to-end via pwsh)
         shell: pwsh
         env:
