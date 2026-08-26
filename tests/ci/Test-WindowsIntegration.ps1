@@ -202,6 +202,78 @@ $whatIfRc = $whatIfP.ExitCode
 Check 'sc-cleanup -WhatIf exits 0' ($whatIfRc -eq 0) "rc=$whatIfRc"
 
 # ---------------------------------------------------------------------
+# 4. Quiet-UninstallString registration (no UninstallString value) is a
+#    clean dry-run with NO StrictMode crash.
+#
+#    d71d40a crashes processing this instance. The main loop dereferences
+#    $uninstallEntry.UninstallString directly (remove-screenconnect.ps1 line
+#    1337/1340) under Set-StrictMode -Version 2.0, but a registration that
+#    carries ONLY QuietUninstallString has NO 'UninstallString' property, so
+#    the missing-property read throws ("The property 'UninstallString' cannot
+#    be found on this object"), which is caught as a 'ProcessInstance' Failed
+#    and fails the run. Regression: the same plan must dry-run cleanly.
+#    Non-destructive: dry-run (no -Execute) never starts a process and the
+#    uninstall command is a fabricated path that is never executed.
+# ---------------------------------------------------------------------
+$quietRoot = 'HKCU:\Software\RIT-SCC-CI'
+$quietKey = Join-Path $quietRoot ('quiet-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $quietKey -Force | Out-Null
+try {
+    $quietInstallDir = 'C:\Program Files (x86)\ScreenConnect Client (quietonly)'
+    New-ItemProperty -LiteralPath $quietKey -Name 'DisplayName' -PropertyType String -Value 'ScreenConnect Client (quietonly)' -Force | Out-Null
+    # Deliberately NO 'UninstallString' value - only QuietUninstallString. The
+    # value references the verified install dir so Get-VerifiedUninstallEntry
+    # accepts the key; Run-VendorUninstaller (dry-run) never executes it.
+    New-ItemProperty -LiteralPath $quietKey -Name 'QuietUninstallString' -PropertyType String -Value ('"C:\Program Files (x86)\ScreenConnect Client (quietonly)\ScreenConnect.ClientService.exe" /s') -Force | Out-Null
+
+    $quietPlan = Join-Path $tmp 'plan-quiet.json'
+    @{
+        GeneratedUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        TechName = 'CI'
+        ClientName = 'CI'
+        IncidentDate = (Get-Date).ToString('yyyy-MM-dd')
+        Decision = 'ALL_REMOVE'
+        SourceFindings = ''
+        ScreenConnectInstances = @(
+            @{
+                InstanceId = 'quietonly'
+                Identifier = 'quietonly'
+                ServiceName = 'ScreenConnect Client (quietonly)'
+                ServiceImagePath = $quietInstallDir + '\ScreenConnect.ClientService.exe'
+                InstallDir = $quietInstallDir
+                UninstallRegistryKey = $quietKey
+            }
+        )
+    } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $quietPlan -Encoding UTF8 -NoNewline
+
+    $quietWork = Join-Path $tmp 'workdir-quiet'
+    New-Item -ItemType Directory -Path $quietWork -Force | Out-Null
+
+    & $remover -PlanJson $quietPlan -WorkDir $quietWork -NoRestorePoint
+
+    $quietManifest = Join-Path $quietWork 'removal-manifest.json'
+    if (Test-Path -LiteralPath $quietManifest) {
+        $qm = Get-Content -LiteralPath $quietManifest -Raw | ConvertFrom-Json
+        $qEntries = @($qm.Entries)
+
+        # The regression: processing this instance must be clean. Any
+        # 'ProcessInstance' Failed for 'quietonly' means Run-VendorUninstaller
+        # dereferenced a missing .UninstallString and threw under StrictMode.
+        $qProcFail = @($qEntries | Where-Object { $_.Action -eq 'ProcessInstance' -and $_.Result -eq 'Failed' -and $_.InstanceId -eq 'quietonly' })
+        Check 'quiet-only uninstall: no ProcessInstance crash' ($qProcFail.Count -eq 0)
+
+        # The registration must be recorded as a clean dry-run, never Failed
+        # and never silently skipped because of a crash before the decision.
+        $qDryRun = @($qEntries | Where-Object { $_.Action -eq 'Uninstall' -and $_.Result -eq 'DryRun' -and $_.InstanceId -eq 'quietonly' })
+        Check 'quiet-only uninstall: recorded as clean dry-run' ($qDryRun.Count -ge 1)
+    } else {
+        Check 'quiet-only uninstall: manifest written' $false
+    }
+} finally {
+    Remove-Item -LiteralPath $quietKey -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# ---------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
