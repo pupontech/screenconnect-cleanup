@@ -245,10 +245,10 @@ function Get-StartupFoldersSection {
     $allUsersStartup = ''
     $currentUserStartup = ''
     if ($env:ProgramData) {
-        $allUsersStartup = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\StartUp'
+        $allUsersStartup = [System.IO.Path]::Combine($env:ProgramData, 'Microsoft\Windows\Start Menu\Programs\StartUp')
     }
     if ($env:APPDATA) {
-        $currentUserStartup = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'
+        $currentUserStartup = [System.IO.Path]::Combine($env:APPDATA, 'Microsoft\Windows\Start Menu\Programs\Startup')
     }
 
     $folderSpecs = @(
@@ -574,10 +574,10 @@ function Get-RecentFilesSection {
 
     $roots = [System.Collections.Generic.List[string]]::new()
     if ($env:TEMP) { $roots.Add($env:TEMP) }
-    if ($env:WINDIR) { $roots.Add((Join-Path $env:WINDIR 'Temp')) }
+    if ($env:WINDIR) { $roots.Add(([System.IO.Path]::Combine($env:WINDIR, 'Temp'))) }
     if ($env:APPDATA) { $roots.Add($env:APPDATA) }
     if ($env:LOCALAPPDATA) { $roots.Add($env:LOCALAPPDATA) }
-    if ($env:USERPROFILE) { $roots.Add((Join-Path $env:USERPROFILE 'Downloads')) }
+    if ($env:USERPROFILE) { $roots.Add(([System.IO.Path]::Combine($env:USERPROFILE, 'Downloads'))) }
     if ($env:PUBLIC) { $roots.Add($env:PUBLIC) }
     if ($env:ProgramData) { $roots.Add($env:ProgramData) }
 
@@ -684,10 +684,10 @@ function Get-RdpEnabled {
 function Get-HostsFileLines {
     $hostsPath = ''
     if ($env:WINDIR) {
-        $hostsPath = Join-Path $env:WINDIR 'System32\drivers\etc\hosts'
+        $hostsPath = [System.IO.Path]::Combine($env:WINDIR, 'System32\drivers\etc\hosts')
     }
     elseif ($env:SystemRoot) {
-        $hostsPath = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+        $hostsPath = [System.IO.Path]::Combine($env:SystemRoot, 'System32\drivers\etc\hosts')
     }
     if (-not $hostsPath -or -not (Test-Path -LiteralPath $hostsPath)) { return @() }
     $lines = Get-Content -LiteralPath $hostsPath -ErrorAction Stop
@@ -852,7 +852,7 @@ function New-SccSnapshot {
         throw 'Run object must have a RunDir property or be a string path.'
     }
 
-    $snapshotsDir = Join-Path $runDir 'snapshots'
+    $snapshotsDir = [System.IO.Path]::Combine($runDir, 'snapshots')
     if (-not (Test-Path -LiteralPath $snapshotsDir)) {
         New-Item -ItemType Directory -Path $snapshotsDir -Force | Out-Null
     }
@@ -964,7 +964,7 @@ function New-SccSnapshot {
     }
 
     # Serialize
-    $outFile = Join-Path $snapshotsDir "$Label.json"
+    $outFile = [System.IO.Path]::Combine($snapshotsDir, "$Label.json")
     $json = $result | ConvertTo-Json -Depth 6
     $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::WriteAllText($outFile, $json, $utf8NoBom)
@@ -1004,8 +1004,8 @@ function Get-SccSnapshot {
         throw 'Run object must have a RunDir property or be a string path.'
     }
 
-    $snapshotsDir = Join-Path $runDir 'snapshots'
-    $outFile = Join-Path $snapshotsDir "$Label.json"
+    $snapshotsDir = [System.IO.Path]::Combine($runDir, 'snapshots')
+    $outFile = [System.IO.Path]::Combine($snapshotsDir, "$Label.json")
 
     if (-not (Test-Path -LiteralPath $outFile)) {
         throw "Snapshot not found: $outFile"
