@@ -727,7 +727,9 @@ $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 'sa' -St
 
     # All three adapters share one contract: they never throw, and report
     # Status='NotInstalled' when the scanner is absent, so an unconditional
-    # loop is safe. AdwCleaner/MSERT have no adapter yet.
+    # loop is safe. GUI-only scanners (ESET Online Scanner, Malwarebytes,
+    # AdwCleaner) are launched for attended use by Invoke-GUIScanner.ps1
+    # after this stage; MSERT has no adapter yet.
     $scannerAdapters = @(
         @{ Script = 'Invoke-DefenderScan.ps1'; Name = 'Defender'; LogSubDir = 'MicrosoftDefender' },
         @{ Script = 'Invoke-KVRTScan.ps1';     Name = 'KVRT';     LogSubDir = 'KVRT' },
@@ -752,7 +754,7 @@ $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 'sa' -St
         Add-Content -Path $MasterLogPath -Value $line -Encoding UTF8
     }
 
-    Write-StageLog "Additional scanners (AdwCleaner, MSERT) not yet implemented."
+    Write-StageLog "Additional scanners (MSERT) not yet implemented. GUI-only tools (ESET Online Scanner, Malwarebytes, AdwCleaner) can be run attended via Invoke-GUIScanner.ps1."
 
     $scannerSummary = Join-Path $WorkDir 'scanner_results.json'
     $scannerResults | ConvertTo-Json -Depth 5 | Set-Content -Path $scannerSummary -Encoding UTF8 -NoNewline

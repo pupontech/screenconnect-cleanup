@@ -6,21 +6,27 @@
   the actual antivirus SCANNERS Stage 5 can use:
 
     KVRT.exe               Kaspersky Virus Removal Tool - downloaded fresh
-                            from Kaspersky's official distribution URL every
-                            run (KVRT is meant to be used current; it is not
-                            versioned/pinned upstream). Has a documented
-                            silent CLI (-accepteula -silent), which
-                            scanners\Invoke-KVRTScan.ps1 already drives.
+                           from Kaspersky's official distribution URL every
+                           run (KVRT is meant to be used current; it is not
+                           versioned/pinned upstream). Has a documented
+                           silent CLI (-accepteula -silent), which
+                           scanners\Invoke-KVRTScan.ps1 already drives.
 
-    esetonlinescanner.exe   ESET Online Scanner (consumer, GUI-only). No
-    MBSetup.exe             officially documented unattended/silent scan
-                            switches for either of these, so this script
-                            only STAGES them for a technician to run by
-                            double-click during Stage 5 - it does not
-                            invent CLI flags to drive them unattended.
-                            Copied from the internal tools share when
-                            available (-InternalShare), else left for the
-                            technician to supply manually.
+    adwcleaner.exe         Malwarebytes AdwCleaner (free) - downloaded fresh
+                           from Malwarebytes' official distribution URL every
+                           run. Documented CLI (/eula /scan, see scanners\
+                           Invoke-AdwCleanerScan.ps1) makes it drivable
+                           unattended in detect-only mode.
+
+    esetonlinescanner.exe  ESET Online Scanner (consumer, GUI-only). No
+                           officially documented unattended/silent scan
+                           switches exist (verified 2026-08-26 against
+                           help.eset.com + ESET forums; ecls.exe from a
+                           licensed endpoint install remains the only CLI
+                           path). Downloaded fresh from ESET's official
+                           download host for a technician to run by
+                           double-click during Stage 5 - the automated
+                           pipeline never launches it.
 
   Usage:
     Get-AVTools.ps1 -ToolDir .\tools\AV
@@ -51,13 +57,13 @@ function Say {
     if (-not $Quiet) { Write-Host $Message -ForegroundColor $Color }
 }
 
-$kvrtPath = Join-Path $ToolDir 'KVRT.exe'
-$eosPath  = Join-Path $ToolDir 'esetonlinescanner.exe'
-$mbPath   = Join-Path $ToolDir 'MBSetup.exe'
+$kvrtPath   = Join-Path $ToolDir 'KVRT.exe'
+$adwPath    = Join-Path $ToolDir 'adwcleaner.exe'
+$eosPath    = Join-Path $ToolDir 'esetonlinescanner.exe'
 
 if ($Verify) {
     $ok = $true
-    foreach ($p in @($kvrtPath, $eosPath, $mbPath)) {
+    foreach ($p in @($kvrtPath, $adwPath, $eosPath)) {
         if (Test-Path -LiteralPath $p) {
             Say ("  present: " + $p) 'Green'
         } else {
@@ -69,49 +75,55 @@ if ($Verify) {
     exit 0
 }
 
-# --- KVRT: always fetch fresh from Kaspersky's official URL --------------
-Say 'Downloading KVRT.exe (Kaspersky Virus Removal Tool)...'
-try {
-    Invoke-WebRequest -Uri 'https://devbuilds.s.kaspersky-labs.com/kvrt/latest/full/KVRT.exe' -OutFile $kvrtPath -ErrorAction Stop
-    Say ("  OK: " + $kvrtPath) 'Green'
-} catch {
-    Say ("  FAILED: " + $_.Exception.Message) 'Yellow'
+function Get-DownloadFile {
+    param([string]$Url, [string]$Dest, [string]$Label)
+    Say ("Downloading " + $Label + "...")
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $Dest -UseBasicParsing -ErrorAction Stop
+        Say ("  OK: " + $Dest) 'Green'
+        return $true
+    } catch {
+        Say ("  FAILED: " + $_.Exception.Message) 'Yellow'
+        return $false
+    }
 }
 
-# --- ESET Online Scanner + Malwarebytes: copy from the internal share ----
-# if reachable. GUI-only tools, staged for attended use - not invoked by
-# the automated pipeline.
-if ($InternalShare -and (Test-Path -LiteralPath $InternalShare)) {
-    $srcAv = Join-Path $InternalShare 'AV\esetonlinescanner.exe'
-    if (Test-Path -LiteralPath $srcAv) {
-        try {
-            Copy-Item -LiteralPath $srcAv -Destination $eosPath -Force -ErrorAction Stop
-            Say ("  OK: " + $eosPath + " (from " + $srcAv + ")") 'Green'
-        } catch {
-            Say ("  FAILED to copy ESET Online Scanner: " + $_.Exception.Message) 'Yellow'
-        }
-    } else {
-        Say ("  ESET Online Scanner not found at " + $srcAv + " - skipping.") 'Yellow'
-    }
+# --- KVRT: always fetch fresh from Kaspersky's official URL ---------------
+# Endpoint verified live 2026-08-26 (HTTP 200, application/octet-stream).
+$null = Get-DownloadFile -Url 'https://devbuilds.s.kaspersky-labs.com/kvrt/latest/full/KVRT.exe' -Dest $kvrtPath -Label 'KVRT.exe (Kaspersky Virus Removal Tool)'
 
-    $srcMb = Join-Path $InternalShare 'MBSetup.exe'
-    if (Test-Path -LiteralPath $srcMb) {
-        try {
-            Copy-Item -LiteralPath $srcMb -Destination $mbPath -Force -ErrorAction Stop
-            Say ("  OK: " + $mbPath + " (from " + $srcMb + ")") 'Green'
-        } catch {
-            Say ("  FAILED to copy Malwarebytes: " + $_.Exception.Message) 'Yellow'
+# --- AdwCleaner: always fetch fresh from Malwarebytes' official URL -------
+# downloads.malwarebytes.com/file/adwcleaner/ 302-redirects to
+# adwcleaner.malwarebytes.com (channel=release). Endpoint verified live
+# 2026-08-26 (final HTTP 200, application/octet-stream, ~9.6 MB).
+# Invoke-WebRequest follows redirects by default.
+$null = Get-DownloadFile -Url 'https://downloads.malwarebytes.com/file/adwcleaner/' -Dest $adwPath -Label 'adwcleaner.exe (Malwarebytes AdwCleaner)'
+
+# --- ESET Online Scanner: fetch fresh from ESET's official download host --
+# GUI-only tool staged for attended technician use - not launched by the
+# pipeline. Endpoint verified live 2026-08-26 (HTTP 200, ~8.4 MB).
+$null = Get-DownloadFile -Url 'https://download.eset.com/com/eset/tools/online_scanner/latest/esetonlinescanner.exe' -Dest $eosPath -Label 'esetonlinescanner.exe (ESET Online Scanner, GUI-only)'
+
+# --- Optional offline fallback: copy from an internal share if reachable --
+if ($InternalShare -and (Test-Path -LiteralPath $InternalShare)) {
+    foreach ($pair in @(@('AV\esetonlinescanner.exe', $eosPath, 'ESET Online Scanner'), @('MBSetup.exe', (Join-Path $ToolDir 'MBSetup.exe'), 'Malwarebytes'))) {
+        $src = Join-Path $InternalShare $pair[0]
+        if (Test-Path -LiteralPath $src) {
+            try {
+                Copy-Item -LiteralPath $src -Destination $pair[1] -Force -ErrorAction Stop
+                Say ("  OK (share): " + $pair[1]) 'Green'
+            } catch {
+                Say ("  FAILED to copy " + $pair[2] + ": " + $_.Exception.Message) 'Yellow'
+            }
         }
-    } else {
-        Say ("  Malwarebytes installer not found at " + $srcMb + " - skipping.") 'Yellow'
     }
-} else {
-    Say ("Internal share not reachable (" + $InternalShare + ") - ESET Online Scanner and Malwarebytes must be staged manually into " + $ToolDir) 'Yellow'
 }
 
 Say ''
-Say 'Done. KVRT.exe runs unattended via scanners\Invoke-KVRTScan.ps1 (Stage 5).' 'Cyan'
-Say 'esetonlinescanner.exe and MBSetup.exe are GUI tools - no verified silent-scan' 'Cyan'
-Say 'switches exist for either, so run them by hand from tools\AV\ if you want' 'Cyan'
-Say 'that extra coverage; the automated pipeline does not launch them.' 'Cyan'
+Say 'Done. Unattended-capable (driven by Stage 5 adapters):' 'Cyan'
+Say '  KVRT.exe       -> scanners\Invoke-KVRTScan.ps1  (-accepteula -silent)' 'Cyan'
+Say '  adwcleaner.exe -> scanners\Invoke-AdwCleanerScan.ps1  (/eula /scan)' 'Cyan'
+Say 'Attended only (GUI, no documented CLI):' 'Cyan'
+Say '  esetonlinescanner.exe -> technician double-click during Stage 5;' 'Cyan'
+Say '  the automated pipeline does not launch it.' 'Cyan'
 exit 0

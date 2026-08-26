@@ -39,16 +39,30 @@ Do **not** copy:
 A prebuilt zip with exactly the layout above is produced by
 `make-deploy-bundle.sh` (Linux side) as `../screenconnect-cleanup-deploy.zip`.
 
-> **Note (2026-08-25):** `tools/Get-ToolPack.ps1` (Sysinternals pack: download +
-> hash-verify from the official Microsoft `download.sysinternals.com` endpoint,
-> against `tools/manifest.json`) and `tools/Get-AVTools.ps1` (AV scanner staging)
-> are both present. `Get-AVTools.ps1` downloads KVRT fresh from Kaspersky's
-> official distribution URL each run, and copies the GUI-only ESET Online Scanner
-> + Malwarebytes installer from an internal tools share (`-InternalShare`,
-> default `\\10.0.0.5\Public\Tools`) when reachable, else leaves them for the
-> technician to supply manually. Never hand-copy the Sysinternals binaries into
+> **Note (2026-08-25, updated 2026-08-26):** `tools/Get-ToolPack.ps1` (Sysinternals
+> pack: download + hash-verify from the official Microsoft
+> `download.sysinternals.com` endpoint, against `tools/manifest.json`) and
+> `tools/Get-AVTools.ps1` (AV scanner staging) are both present.
+> `Get-AVTools.ps1` downloads KVRT fresh from Kaspersky's official URL,
+> AdwCleaner fresh from Malwarebytes' official URL, and ESET Online Scanner
+> from ESET's official download host (all three endpoints verified live
+> 2026-08-26); an internal share (`-InternalShare`, default
+> `\\10.0.0.5\Public\Tools`) remains an optional offline fallback for the
+> GUI-only installers. Never hand-copy the Sysinternals binaries into
 > `tools\` - `Get-ToolPack.ps1` is the only thing that fetches and hash-verifies
 > them.
+
+**Running the GUI-only scanners (ESET Online Scanner, Malwarebytes, AdwCleaner):**
+
+```
+powershell -ExecutionPolicy Bypass -File .\Invoke-GUIScanner.ps1 -Scanner ESET
+powershell -ExecutionPolicy Bypass -File .\Invoke-GUIScanner.ps1 -Scanner Malwarebytes
+powershell -ExecutionPolicy Bypass -File .\Invoke-GUIScanner.ps1 -Scanner AdwCleaner
+```
+
+Each launches the scanner's normal GUI and WAITS until you close it (4-hour
+safety cap; on timeout the process is left running). Run them after Stage 5
+so Stage 7's after-snapshot captures whatever the GUI scans cleaned.
 
 ## 2. First run on a Windows machine
 

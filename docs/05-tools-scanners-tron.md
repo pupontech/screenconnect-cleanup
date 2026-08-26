@@ -12,11 +12,16 @@ Where this document is uncertain, it says so. A stub adapter that honestly repor
 `NotVerified` is worth more than a plausible-looking one built on invented switches that
 fires on a paying client's machine.
 
-**The `scanners/` folder is now built** (3 adapters: Defender, KVRT, ESET), each with
-documented switches, WhatIf support, and timeout handling. AdwCleaner and MSERT adapters
-are still not built (see the table below). Note: `tools/Get-AVTools.ps1` — which would
-stage KVRT/ESET/MSERT binaries — is **not currently in the repo** (never committed); the
-adapters exist but their binaries must be fetched from the official vendor URLs.
+**The `scanners/` folder is built** (3 adapters: Defender, KVRT, ESET), each with
+documented switches, WhatIf support, and timeout handling. The MSERT adapter is still
+not built. `tools/Get-AVTools.ps1` stages KVRT, AdwCleaner, and ESET Online Scanner
+binaries from their official vendor download URLs (all three endpoints verified live
+2026-08-26).
+
+**GUI-only scanners are run ATTENDED, not driven by CLI (owner decision 2026-08-26):**
+ESET Online Scanner, Malwarebytes, and AdwCleaner are launched for the technician via
+`Invoke-GUIScanner.ps1`, which starts the EXE as a normal visible window and blocks
+until the technician closes it. The pipeline never invents silent-scan flags for these.
 
 ---
 
@@ -47,9 +52,9 @@ before it.
 | **Defender `MpCmdRun.exe`** | Baseline scan | Microsoft-documented. `-Scan -ScanType 2` (full), `-SignatureUpdate`; results also via `Get-MpThreatDetection` / `Start-MpScan`. Log under `%ProgramData%\Microsoft\Windows Defender\Support\`. **Confident, but confirm against current docs.** | **None. Present on every machine. Build this adapter first.** |
 | **KVRT** | Kaspersky removal tool | Has a documented CLI. **Every switch must be verified against the current build** — they changed between the 2020 and current releases. Report directory is under `%SystemDrive%\KVRT*_Data\`, name varies by version. | **APPROVED by the owner (decision D2).** Do not block on licensing. |
 | **ESET command-line scanner** | On-demand scan | Ships with licensed endpoint products. Verify: standalone use, exit-code table, detection export format. | **APPROVED (D3)** — the MSP's ESET license covers technician scans. |
-| **AdwCleaner** | PUP / adware / junk — **closest match to what scam sessions actually leave behind** | Has a documented CLI (EULA accept / clean / no-reboot). Verify current flags and log path. | Free. Verify technician-use terms. |
+| **AdwCleaner** | PUP / adware / junk — **closest match to what scam sessions actually leave behind** | **Run attended via `Invoke-GUIScanner.ps1`** (launch + wait). A documented CLI exists (`/eula /scan /clean /noreboot /path`) but the owner's policy is to run AV through the GUI, so no CLI adapter is built. Staged by `tools\Get-AVTools.ps1`. | Free. Verify technician-use terms. |
 | **MSERT** (Microsoft Safety Scanner) | Free Microsoft second opinion, self-expiring | Verify switches; log believed to be `%SystemRoot%\debug\msert.log`. | Likely none. Verify. |
-| **Malwarebytes** | On-demand scan | Consumer MBAM has **no** supported CLI. The CLI product is a **paid business SKU**. Verify what is currently sold before designing an adapter. | Paid, per-endpoint. Not approved. |
+| **Malwarebytes** | On-demand scan | **Run attended via `Invoke-GUIScanner.ps1`** (`-Scanner Malwarebytes`, launches MBSetup.exe / the installed MBAM GUI and waits). Consumer MBAM has no CLI; the CLI-capable product is a paid business SKU — not approved. | Paid, per-endpoint. Not approved for automation. |
 | **RKill** | Kill malware processes before scanning (Tron's stage-0 trick) | Minimal CLI documentation. | Verify commercial-use terms. |
 | **TDSSKiller** | **RECOMMEND EXCLUDING** | — | Deprecated by Kaspersky, and reportedly abused by threat actors in 2024 to disable EDR — meaning dropping it on a client machine may trip the client's own security stack. Bad trade. **[VERIFY the reporting, but the recommendation stands.]** |
 
