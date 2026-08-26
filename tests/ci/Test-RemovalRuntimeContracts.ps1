@@ -134,6 +134,7 @@ Write-Host "--- Test 7: RebootPending resume skips the vendor uninstaller ---"
 Assert-True ($scriptContent -match 'RebootPendingInstanceIds') "Tracks RebootPending instance IDs separately"
 Assert-True ($scriptContent -match 'vendor uninstaller already succeeded|RebootPending resume') "Documents the RebootPending fast path"
 Assert-True ($scriptContent -match 'Clean-Persistence -InstallDir \$installDir') "RebootPending resume still runs persistence cleanup"
+Assert-True ($scriptContent -match 'RebootPendingInstanceIds -contains \$id') "Resume marker seeding preserves RebootPending status across interrupted resumes"
 
 # ---------------------------------------------------------------------------
 # TEST 8: PS 5.1 compatibility - no .NET APIs unavailable in 5.1

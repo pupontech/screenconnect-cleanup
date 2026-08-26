@@ -643,6 +643,7 @@ function Initialize-ResumeMarker {
         $id = Get-PlanInstanceId -Instance $instItem
         $status = 'Pending'
         if ($script:CompletedInstanceIds -contains $id) { $status = 'Completed' }
+        elseif ($script:RebootPendingInstanceIds -contains $id) { $status = 'RebootPending' }
         [void]$script:ResumeStatuses.Add([PSCustomObject]@{
             InstanceId = $id
             Status     = $status
@@ -1211,7 +1212,18 @@ function Set-RunOnceResume {
     try {
         $runOncePath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce'
         $scriptPath = Join-Path $PSScriptRoot 'remove-screenconnect.ps1'
-        $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -PlanFile `"$PlanFile`" -WorkDir `"$WorkDir`" -Execute -Resume"
+        # Resolve to absolute paths: RunOnce executes from the system context
+        # (working directory is not the tool folder), so a relative PlanFile or
+        # WorkDir would break the post-reboot resume run.
+        $planPath = $PlanFile
+        $workPath = $WorkDir
+        if ($PlanFile -and (Test-Path -LiteralPath $PlanFile)) {
+            $planPath = (Resolve-Path -LiteralPath $PlanFile).Path
+        }
+        if ($WorkDir -and (Test-Path -LiteralPath $WorkDir)) {
+            $workPath = (Resolve-Path -LiteralPath $WorkDir).Path
+        }
+        $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -PlanFile `"$planPath`" -WorkDir `"$workPath`" -Execute -Resume"
         if (-not (Test-Path -LiteralPath $runOncePath)) {
             $null = New-Item -Path $runOncePath -Force
         }
