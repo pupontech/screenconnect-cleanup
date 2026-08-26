@@ -4,6 +4,16 @@
 BeforeAll {
     if (-not $env:TEMP) { $env:TEMP = [System.IO.Path]::GetTempPath() }
     if (-not $env:TMP) { $env:TMP = $env:TEMP }
+    # Compute once: are we on Windows Server? The safety.serverOsRefusal guard
+    # blocks New-SccRun on server OS; unit tests are non-destructive so they
+    # pass -ForceServer when running on a server (e.g. Windows CI runners).
+    $script:fs = $false
+    if ($env:OS -eq 'Windows_NT') {
+        try {
+            $prodType = (Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue).ProductType
+            if ($null -ne $prodType -and $prodType -ne 1) { $script:fs = $true }
+        } catch { $script:fs = $false }
+    }
     # Save original env so we can restore in AfterAll and not pollute other containers.
     $script:origLocalAppData = $env:LocalAppData
     $script:origProgramData = $env:ProgramData
@@ -120,7 +130,7 @@ Describe 'New-SccRun and run state' {
     }
 
     It 'creates correct dir tree with 9 Pending stages and valid RunId' {
-        $run = New-SccRun -ReportRoot $script:reportRoot -Technician 'T1' -Client 'C1'
+        $run = New-SccRun -ReportRoot $script:reportRoot -Technician 'T1' -Client 'C1' -ForceServer:$script:fs
         $run.RunId | Should -Match '^SC-\d{8}-[A-Z0-9_]{1,20}-\d{6}$'
         Test-Path -LiteralPath $run.RunDir | Should -BeTrue
         foreach ($s in @('evidence','snapshots','scanner-results','logs','quarantine-meta')) {
@@ -263,7 +273,7 @@ Describe 'runstate shape (resume contract)' {
                 try { $script:rtCfgBackup = [System.IO.File]::ReadAllText($script:rtCfgFile) } catch { $script:rtCfgBackup = $null }
             }
             Set-SccConfigValue -Name 'paths.reportRoot' -Value $script:rtRoot -UserScope
-            $script:rtRun = New-SccRun -Technician 'rt' -Client 'c'
+            $script:rtRun = New-SccRun -Technician 'rt' -Client 'c' -ForceServer:$script:fs
             # Guard: New-SccRun should create ReportRoot dir, but ensure it exists (Windows race).
             if (-not (Test-Path -LiteralPath $script:rtRun.RunDir)) {
                 New-Item -ItemType Directory -Path $script:rtRun.RunDir -Force | Out-Null

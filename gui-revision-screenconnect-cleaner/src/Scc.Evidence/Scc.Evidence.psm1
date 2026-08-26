@@ -4,6 +4,7 @@
 # host. Without this, module functions fail with CommandNotFoundException on Windows
 # when the module is loaded through Pester or a nested session state.
 $null = Import-Module -Name 'Microsoft.PowerShell.Utility' -ErrorAction SilentlyContinue
+$null = Import-Module -Name 'Microsoft.PowerShell.Management' -ErrorAction SilentlyContinue
 
 <#
   Scc.Evidence.psm1 - Snapshot collection for ScreenConnect Cleaner
@@ -748,7 +749,7 @@ function Invoke-SectionParallel {
         [System.Collections.Generic.List[object]]$ErrorList
     )
 
-    if (-not (Test-IsWindows)) {
+    if (-not ($env:OS -eq 'Windows_NT')) {
         # On Linux, run inline
         $results = @{}
         foreach ($name in $SectionMap.Keys) {
@@ -827,7 +828,7 @@ function New-SccSnapshot {
     $script:CollectionErrors = [System.Collections.Generic.List[object]]::new()
 
     $startTime = [datetime]::UtcNow
-    $isWindows = Test-IsWindows
+    $isWindows = ($env:OS -eq 'Windows_NT')
     $isAdmin = $false
     $osCaption = ''
 

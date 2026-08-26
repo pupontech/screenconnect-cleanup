@@ -4,6 +4,7 @@
 # host. Without this, module functions fail with CommandNotFoundException on Windows
 # when the module is loaded through Pester or a nested session state.
 $null = Import-Module -Name 'Microsoft.PowerShell.Utility' -ErrorAction SilentlyContinue
+$null = Import-Module -Name 'Microsoft.PowerShell.Management' -ErrorAction SilentlyContinue
 
 <#
   Scc.Detection.psm1 - Detection module for ScreenConnect Cleaner
