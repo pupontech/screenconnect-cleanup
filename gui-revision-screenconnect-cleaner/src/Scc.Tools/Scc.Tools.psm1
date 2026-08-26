@@ -632,16 +632,29 @@ function Test-SccToolIntegrity {
             $reasons += 'signature valid'
         }
         'NotChecked' {
+            # Authenticode is a Windows API; on this (non-Windows) platform we
+            # record NotChecked and accept with a note (documented platform
+            # limitation, recorded in Provenance). This is NOT a Windows trust
+            # decision and must never be treated as a trusted signature.
             $reasons += 'signature not checked on this platform, accepted'
         }
         'Invalid' { $passed = $false; $reasons += 'signature invalid' }
         'HashMismatch' { $passed = $false; $reasons += 'signature hash mismatch' }
         'NotSigned' { $passed = $false; $reasons += 'binary is not signed' }
+        'NotTrusted' { $passed = $false; $reasons += 'signature not trusted (chain does not reach a trusted root)' }
+        'UnknownError' { $passed = $false; $reasons += 'signature verification returned UnknownError' }
+        'NotSupported' { $passed = $false; $reasons += 'signature verification not supported on this host' }
         'Error' {
-            $reasons += 'signature check errored, accepted with note'
+            # A genuine Authenticode failure (incl. the catch -> Error path):
+            # never mark Verified; treat as failed verification with a reason.
+            $passed = $false
+            $reasons += 'signature check errored, verification failed'
         }
         default {
-            $reasons += 'signature status unhandled (' + $facts.SignatureStatus + '), accepted'
+            # Any unhandled status is a trust gap: never silently accept, never
+            # mark Verified. Fail verification and record the raw status.
+            $passed = $false
+            $reasons += 'signature status unhandled (' + $facts.SignatureStatus + '), verification failed'
         }
     }
 
@@ -653,10 +666,20 @@ function Test-SccToolIntegrity {
                     $reasons += 'version ' + $facts.FileVersion + ' below minimum ' + $cat.MinVersion
                 }
             } catch {
-                $reasons += 'version unparsable, accepted'
+                $passed = $false
+                $reasons += 'version unparsable, rejected (MinVersion enforced)'
             }
         } else {
-            $reasons += 'version unknown for ' + $Tool
+            # FileVersion empty but a MinVersion is required. Enforce the
+            # minimum unless a catalog SHA256 baseline already provides
+            # equivalent assurance (a pinned, hash-verified binary is trusted
+            # regardless of the embedded version resource).
+            if ($cat.ExpectedSha256) {
+                $reasons += 'version unknown for ' + $Tool + '; accepted because a catalog SHA256 baseline exists'
+            } else {
+                $passed = $false
+                $reasons += 'version unknown for ' + $Tool + ' but MinVersion ' + $cat.MinVersion + ' is enforced'
+            }
         }
     }
 
@@ -691,9 +714,16 @@ function Save-SccToolToCache {
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string]$Tool,
         [string]$Source = 'Cached',
-        [string]$DownloadUrl = ''
+        [string]$DownloadUrl = '',
+        $Integrity = $null
     )
-    $check = Test-SccToolIntegrity -Path $Path -Tool $Tool
+    # Prefer a caller-supplied integrity result (e.g. from Resolve-SccTool) so
+    # we never re-hash a file that was already validated in this pass (B3).
+    if ($null -eq $Integrity) {
+        $check = Test-SccToolIntegrity -Path $Path -Tool $Tool
+    } else {
+        $check = $Integrity
+    }
     if (-not $check.Passed) {
         Write-Warning ('Refusing to cache ' + $Tool + ' from ' + $Path + ': ' + ($check.Reasons -join '; '))
         return $false
@@ -802,7 +832,7 @@ function Resolve-SccTool {
                             $check = Test-SccToolIntegrity -Path $nasFile -Tool $Tool
                             $prov.Warnings += $check.Reasons
                             if ($check.Passed) {
-                                $null = Save-SccToolToCache -Path $nasFile -Tool $Tool -Source 'Nas'
+                                $null = Save-SccToolToCache -Path $nasFile -Tool $Tool -Source 'Nas' -Integrity $check
                                 $cached = Join-Path $cfg.ToolCacheDir (Join-Path $Tool $cat.FileName)
                                 $prov.Warnings += 'copied from NAS to local cache'
                                 $resolved = New-SccResolvedTool -Name $Tool -Path $cached `
@@ -864,7 +894,7 @@ function Resolve-SccTool {
 
                 if ($check.Passed) {
                     $null = Save-SccToolToCache -Path $validationPath -Tool $Tool `
-                        -Source 'Official' -DownloadUrl $cat.OfficialUrl
+                        -Source 'Official' -DownloadUrl $cat.OfficialUrl -Integrity $check
                     $cached = Join-Path $cfg.ToolCacheDir (Join-Path $Tool $cat.FileName)
                     $resolved = New-SccResolvedTool -Name $Tool -Path $cached `
                         -Source 'Official' -Facts $check.Facts -Provenance $prov

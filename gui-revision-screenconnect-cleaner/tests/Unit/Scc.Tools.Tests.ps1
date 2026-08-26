@@ -352,4 +352,119 @@ InModuleScope Scc.Tools {
             Test-Path -LiteralPath $out | Should -BeTrue
         }
     }
+
+    Describe 'Scc.Tools signature trust and MinVersion rejection (hardening B1/B2/B3)' {
+        BeforeAll {
+            $script:scratchRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('scc_tools_hard_' + [guid]::NewGuid().ToString('N'))
+            $script:userData    = Join-Path $script:scratchRoot 'userdata'
+            $script:cache       = Join-Path $script:userData 'tools'
+            $script:nas         = Join-Path $script:scratchRoot 'nas'
+            $null = New-Item -ItemType Directory -Path $script:cache -Force
+            $null = New-Item -ItemType Directory -Path $script:nas -Force
+            $script:config = @{
+                ToolCacheDir    = $script:cache
+                NasEnabled      = $true
+                NasPath         = $script:nas
+                PriorityOrder   = @('local', 'nas', 'official')
+                DownloadAllowed = $true
+            }
+        }
+
+        BeforeEach {
+            Set-SccToolRuntimeConfig -Config $script:config
+            Get-ChildItem -LiteralPath $script:cache -Recurse -File -ErrorAction SilentlyContinue |
+                Remove-Item -Force -ErrorAction SilentlyContinue
+            Get-ChildItem -LiteralPath $script:nas -Recurse -File -ErrorAction SilentlyContinue |
+                Remove-Item -Force -ErrorAction SilentlyContinue
+            $manifestFile = Join-Path $script:cache 'tool-cache-manifest.json'
+            if (Test-Path -LiteralPath $manifestFile) {
+                Remove-Item -LiteralPath $manifestFile -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        AfterAll {
+            if (Test-Path -LiteralPath $script:scratchRoot) {
+                Remove-Item -LiteralPath $script:scratchRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        # Helper is defined at the InModuleScope top level (New-FakeFacts).
+
+        foreach ($badStatus in @('NotTrusted', 'NotSigned', 'UnknownError', 'NotSupported', 'Error')) {
+            It ('Test-SccToolIntegrity fails a binary whose signature status is ' + $badStatus) {
+                Mock Get-SccToolFacts { return (New-FakeFacts -Status $badStatus -Version '') }
+                $c = Test-SccToolIntegrity -Path 'anything.exe' -Tool 'KVRT'
+                $c.Passed | Should -BeFalse
+                (@($c.Reasons) -join ';') | Should -Match 'signature'
+            }
+
+            It ('Resolve-SccTool refuses (Source=None + warning) a binary whose signature status is ' + $badStatus) {
+                Mock Get-SccToolFacts { return (New-FakeFacts -Status $badStatus -Version '') }
+                Mock Find-SccNasFile { return $null }
+                Mock Get-SccWebDownload {
+                    param([string]$Url, [string]$Dest)
+                    Set-Content -LiteralPath $Dest -Value 'X' -Encoding ASCII
+                    return @{ Success = $true; LocalPath = $Dest; FinalUrl = $Url; Redirects = @(); Error = '' }
+                }
+                $r = Resolve-SccTool -Tool 'KVRT'
+                $r.Source | Should -Be 'None'
+                (@($r.Provenance.Warnings) -join ';') | Should -Match 'signature'
+            }
+        }
+
+        It 'Test-SccToolIntegrity still accepts NotChecked on a non-Windows host (platform limitation)' {
+            Mock Get-SccToolFacts { return (New-FakeFacts -Status 'NotChecked' -Version '') }
+            $c = Test-SccToolIntegrity -Path 'anything.exe' -Tool 'KVRT'
+            $c.Passed | Should -BeTrue
+            (@($c.Reasons) -join ';') | Should -Match 'not checked'
+        }
+
+        It 'Test-SccToolIntegrity refuses an unversioned binary when MinVersion is set (B2)' {
+            Mock Get-SccToolFacts { return (New-FakeFacts -Status 'NotChecked' -Version '') }
+            $c = Test-SccToolIntegrity -Path 'mb.exe' -Tool 'Malwarebytes'
+            $c.Passed | Should -BeFalse
+            (@($c.Reasons) -join ';') | Should -Match 'MinVersion'
+        }
+
+        It 'Test-SccToolIntegrity accepts an unversioned binary when a catalog SHA256 baseline exists (B2 escape)' {
+            Mock Get-SccToolFacts {
+                return [PSCustomObject]@{
+                    Path = 'x'; Exists = $true; SizeBytes = 9
+                    SHA256 = 'A2EFFF8D5BCE9DB4B899D38AFAA706BDFD822711F929616A51B0DBC9F76C6281'
+                    FileVersion = ''; Publisher = ''; SignatureStatus = 'NotChecked'; LastWriteUtc = (Get-Date).ToUniversalTime()
+                }
+            }
+            $c = Test-SccToolIntegrity -Path 'sig.exe' -Tool 'sigcheck64'
+            $c.Passed | Should -BeTrue
+        }
+
+        It 'Resolve-SccTool refuses an unversioned binary when MinVersion is set (B2)' {
+            Mock Get-SccToolFacts { return (New-FakeFacts -Status 'NotChecked' -Version '') }
+            Mock Find-SccNasFile { return $null }
+            Mock Get-SccWebDownload {
+                param([string]$Url, [string]$Dest)
+                Set-Content -LiteralPath $Dest -Value 'X' -Encoding ASCII
+                return @{ Success = $true; LocalPath = $Dest; FinalUrl = $Url; Redirects = @(); Error = '' }
+            }
+            $r = Resolve-SccTool -Tool 'Malwarebytes'
+            $r.Source | Should -Be 'None'
+            (@($r.Provenance.Warnings) -join ';') | Should -Match 'MinVersion'
+        }
+
+        It 'Save-SccToolToCache does not re-hash when a pre-computed integrity result is supplied (B3)' {
+            Mock Get-SccToolFacts { throw 'Get-SccToolFacts must not be called when -Integrity is supplied' }
+            $check = [PSCustomObject]@{
+                Passed  = $true
+                Reasons = @('signature not checked on this platform, accepted')
+                Facts   = (New-FakeFacts -Status 'NotChecked' -Version '')
+            }
+            $seed = Join-Path $script:nas 'KVRT.exe'
+            Set-Content -LiteralPath $seed -Value 'B3-DATA' -Encoding ASCII
+            Save-SccToolToCache -Path $seed -Tool 'KVRT' -Source 'Nas' -Integrity $check | Should -BeTrue
+            Should -Invoke Get-SccToolFacts -Times 0
+            # The supplied facts were used (manifest carries the faked SHA256).
+            $entry = @(Get-SccCacheManifest | Where-Object { $_.Name -eq 'KVRT' })[0]
+            $entry.SHA256 | Should -Be 'FAKEHASH00000000000000000000000000000000000000000000000000000000000000'
+        }
+    }
 }

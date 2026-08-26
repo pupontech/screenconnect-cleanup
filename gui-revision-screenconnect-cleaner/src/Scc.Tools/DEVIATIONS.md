@@ -50,12 +50,33 @@ provenance. On Windows (env:OS = Windows_NT) the real Get-AuthenticodeSignature
 check runs and enforces that a Valid signature's publisher matches the catalog
 Publisher. This is the documented, testable-on-Linux split.
 
+### 5a. Unverified signature statuses are NEVER marked Verified (hardening B1)
+The following `SignatureStatus` values cause `Test-SccToolIntegrity` to set
+`Passed=$false` (mirroring the existing `Invalid`/`HashMismatch`/`NotSigned`
+behavior): `NotTrusted` (chain does not reach a trusted root), `UnknownError`,
+`NotSupported`, `Error` (including the catch -> Error path), and any unhandled
+`default`. An unverified tool must never be cached or reported as Verified: the
+distinction is enforced for these states. Only `Valid` and `NotChecked`
+(non-Windows platform limitation) are accepted. Config may later downgrade a
+specific status to a warning, but the module never silently marks such a binary
+Verified.
+
 ## 6. Save-SccToolToCache returns bool rather than throwing
 An invalid source makes the function warn and return `$false` (it does not
 throw), so a caller can recover; a valid file is copied and the manifest is
 updated. Resolve-SccTool ignores the bool after it has already validated the
 candidate. Extra optional `-Source` and `-DownloadUrl` parameters let
 Resolve-SccTool stamp the manifest entry with the acquisition tier and URL.
+
+### 6a. No redundant hashing (hardening B3)
+`Save-SccToolToCache` gains an optional `-Integrity` parameter. When the caller
+already computed an integrity result (as `Resolve-SccTool` does for every
+candidate it validates), it passes that result in and `Save-SccToolToCache` does
+NOT re-run `Test-SccToolIntegrity` (and therefore does not re-hash the file).
+This removes the double-hash observed when `Resolve-SccTool` validated a path
+and then `Save-SccToolToCache` re-validated it on the same resolve. When
+`-Integrity` is omitted the function validates the file itself, preserving the
+original standalone behavior.
 
 ## 7. Version baselines
 Only Malwarebytes carries a MinVersion ('5.0.0.0', MB5 - the live FileVersion
@@ -64,6 +85,13 @@ are deliberately fresh-every-run / self-expiring and have no upstream pinned
 minimum to cite; Sysinternals EULAs do not publish a minimum. When MinVersion is
 set the version is compared numerically via [version]; when it is not set the
 version is recorded as actual data only.
+
+### 7a. Empty FileVersion + MinVersion fails (hardening B2)
+When `FileVersion` is empty but the catalog sets `MinVersion`, integrity now
+FAILS unless a valid catalog `ExpectedSha256` baseline exists (a pinned,
+hash-verified binary is trusted regardless of its embedded version resource).
+This closes the gap where an unversioned binary with a required minimum was
+accepted with only a note.
 
 ## 8. Cache manifest schema
 The manifest file (userData/tools/tool-cache-manifest.json) is a JSON array of

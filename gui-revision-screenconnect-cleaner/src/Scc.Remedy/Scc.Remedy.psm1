@@ -77,14 +77,20 @@ function Get-SccSha256Hex {
 
 function Get-SccRemedyQuarantineRoot {
     param($Run)
+    $isWindows = ($env:OS -eq 'Windows_NT')
     $qBase = $null
-    try {
-        $paths = Get-SccPaths -Run $Run -ErrorAction SilentlyContinue
-        if ($paths -and $paths.QuarantineRoot) { $qBase = $paths.QuarantineRoot }
-    } catch { }
-    # On non-Windows the resolved ProgramData path can stay un-expanded (contains
-    # a literal '%'); fall back to a run-local quarantine directory so the module
-    # remains fully testable on Linux. Documented in DEVIATIONS.md.
+    if ($isWindows) {
+        try {
+            $paths = Get-SccPaths -Run $Run -ErrorAction SilentlyContinue
+            if ($paths -and $paths.QuarantineRoot) { $qBase = $paths.QuarantineRoot }
+        } catch { }
+    }
+    # F4 fix: use platform check (not % heuristic) - on non-Windows always
+    # fall back to RunDir\Quarantine so the module is testable on Linux.
+    if (-not $isWindows) {
+        if ($Run -and $Run.RunDir) { $qBase = Join-Path $Run.RunDir 'Quarantine' }
+        else { $qBase = Join-Path (Get-Location).Path 'Quarantine' }
+    }
     if ([string]::IsNullOrEmpty($qBase) -or $qBase -like '*%*') {
         if ($Run -and $Run.RunDir) { $qBase = Join-Path $Run.RunDir 'Quarantine' }
         else { $qBase = Join-Path (Get-Location).Path 'Quarantine' }
@@ -230,20 +236,44 @@ function Test-SccScreenConnectTarget {
     param($PlanItem)
     $prod = Get-Prop $PlanItem 'Product'
     if ($null -eq $prod -or $prod.ToString().ToLowerInvariant() -ne 'screenconnect') { return $false }
-    $svc      = Get-Prop $PlanItem 'ServiceName'
-    $dir      = Get-Prop $PlanItem 'InstallDir'
-    $mainExe  = Get-Prop $PlanItem 'MainExe'
-    $hint = $false
-    if ($svc -and $svc.ToString() -like 'ScreenConnect*') { $hint = $true }
-    if ($dir -and $dir.ToString() -like '*\ScreenConnect*') { $hint = $true }
-    if ($mainExe -and $mainExe.ToString() -like '*ScreenConnect*') { $hint = $true }
-    if (-not $hint -and $svc) {
+    $svc     = [string](Get-Prop $PlanItem 'ServiceName')
+    $dir     = [string](Get-Prop $PlanItem 'InstallDir')
+    $mainExe = [string](Get-Prop $PlanItem 'MainExe')
+    $hasSvc = (-not [string]::IsNullOrEmpty($svc))
+    $hasDir = (-not [string]::IsNullOrEmpty($dir))
+    $hasExe = (-not [string]::IsNullOrEmpty($mainExe))
+    if (-not $hasSvc -and -not $hasDir -and -not $hasExe) { return $false }
+    if ($hasSvc) {
+        $svcOk = $false
         try {
-            $s = Get-Service -Name $svc.ToString() -ErrorAction SilentlyContinue
-            if ($s) { $hint = $true }
+            $s = Get-Service -Name $svc -ErrorAction SilentlyContinue
+            if ($null -ne $s -and $s.Name -like 'ScreenConnect*') { $svcOk = $true }
         } catch { }
+        if (-not $svcOk) { return $false }
     }
-    return $hint
+    if ($hasDir) {
+        $dirOk = $false
+        if ($dir -like '*\ScreenConnect*' -and (Test-Path -LiteralPath $dir)) { $dirOk = $true }
+        if (-not $dirOk) { return $false }
+    }
+    if ($hasExe) {
+        $exeOk = $false
+        if ($mainExe -like '*ScreenConnect*') {
+            if (-not [string]::IsNullOrEmpty($dir)) {
+                $exePath = Join-Path $dir $mainExe
+                if (Test-Path -LiteralPath $exePath) { $exeOk = $true }
+            }
+        }
+        if (-not $exeOk) { return $false }
+    }
+    if ((-not $hasSvc) -and (-not $hasDir) -and (-not $hasExe)) {
+        try {
+            $s = Get-Service -Name 'ScreenConnect*' -ErrorAction SilentlyContinue
+            if ($null -ne $s) { return $true }
+        } catch { }
+        return $false
+    }
+    return $true
 }
 
 # ===========================================================================
@@ -275,6 +305,23 @@ function Stop-SccTargetService {
     }
 }
 
+function Get-SccAncestorPids {
+    param([int]$ProcessId)
+    $chain = New-Object System.Collections.Generic.List[int]
+    $walk = $ProcessId
+    for ($i = 0; $i -lt 12 -and $walk -gt 0; $i++) {
+        $chain.Add([int]$walk)
+        $parent = $null
+        try {
+            $pObj = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$walk" -ErrorAction SilentlyContinue
+            if ($pObj) { $parent = $pObj.ParentProcessId }
+        } catch { }
+        if (-not $parent -or $chain.Contains([int]$parent)) { break }
+        $walk = [int]$parent
+    }
+    return $chain
+}
+
 function Stop-SccTargetProcesses {
     param([string]$InstallDir, [string]$ServiceName, $PlanItem, $Run)
     $started = (Get-Date).ToUniversalTime().ToString('o')
@@ -294,6 +341,18 @@ function Stop-SccTargetProcesses {
         }
         if (@($pids).Count -eq 0) {
             Add-RemediationAction -Run $Run -Action 'KillProcesses' -Target $InstallDir -Command $cmd -Result 'Skipped' -Error 'no processes found' -StartedUtc $started
+            return $true
+        }
+        # F5: self-protection - build ancestor PID chain and refuse to kill
+        # ancestors of the current process (legacy remove-screenconnect.ps1:815-834).
+        $selfChain = Get-SccAncestorPids -ProcessId $PID
+        $skipped = @($pids | Where-Object { $selfChain.Contains([int]$_) })
+        foreach ($sp in @($skipped)) {
+            Add-RemediationAction -Run $Run -Action 'KillProcesses' -Target "PID $sp" -Command $cmd -Result 'Skipped' -Error 'Self/ancestor process - refused'
+        }
+        $pids = @($pids | Where-Object { -not $selfChain.Contains([int]$_) })
+        if (@($pids).Count -eq 0) {
+            Add-RemediationAction -Run $Run -Action 'KillProcesses' -Target $InstallDir -Command $cmd -Result 'Skipped' -Error 'no processes left after self-protection filter' -StartedUtc $started
             return $true
         }
         foreach ($pidVal in @($pids)) {
@@ -350,9 +409,28 @@ function Invoke-SccUninstallCommand {
     } catch { return $false }
 }
 
+function Test-SccUninstallExeValid {
+    param([string]$ExePath, [string]$InstallDir)
+    if ([string]::IsNullOrEmpty($ExePath)) { return $false }
+    $leaf = [System.IO.Path]::GetFileName($ExePath)
+    $allowlist = @('ScreenConnect', 'App_', 'unins')
+    $leafOk = $false
+    foreach ($pattern in $allowlist) {
+        if ($leaf -like ('*' + $pattern + '*')) { $leafOk = $true; break }
+    }
+    if (-not $leafOk) { return $false }
+    if ([string]::IsNullOrEmpty($InstallDir)) { return $false }
+    $underInstall = $false
+    if ($ExePath -like ($InstallDir + '*')) { $underInstall = $true }
+    if (-not $underInstall) { return $false }
+    if (-not (Test-Path -LiteralPath $ExePath)) { return $false }
+    return $true
+}
+
 function Uninstall-SccTarget {
     param($PlanItem, $Run)
     $fid = [string](Get-Prop $PlanItem 'FindingId')
+    $installDir = [string](Get-Prop $PlanItem 'InstallDir')
     $started = (Get-Date).ToUniversalTime().ToString('o')
     try {
         $data = $null
@@ -368,8 +446,27 @@ function Uninstall-SccTarget {
                 -Error 'manual-cleanup-only: no uninstaller discovered (no UninstallString/QuietUninstallString or ProductCode); will quarantine artifacts' -StartedUtc $started
             return $false
         }
-        $ran = $false
-        try { $ran = Invoke-SccUninstallCommand -Command $cmd -PlanItem $PlanItem -Run $Run } catch { $ran = $false }
+        # F2: validate non-MSI uninstaller before execution.
+        $isMsi = $cmd -like 'msiexec*'
+        if (-not $isMsi) {
+            $bareExe = $null
+            $mm = [regex]::Match($cmd, '^\s*"([^"]+)"')
+            if ($mm.Success) { $bareExe = $mm.Groups[1].Value }
+            else {
+                $mm2 = [regex]::Match($cmd, '^(\S+\.exe)')
+                if ($mm2.Success) { $bareExe = $mm2.Groups[1].Value }
+            }
+            if (-not (Test-SccUninstallExeValid -ExePath $bareExe -InstallDir $installDir)) {
+                Add-RemediationAction -Run $Run -Action 'Uninstall' -Target $fid -Command $cmd -Result 'Failed' `
+                    -Error ('uninstaller-validation-failed: exe not validated (not an allowlisted ScreenConnect uninstaller under the verified install dir); manual surgery required. Raw: ' + $cmd) -StartedUtc $started
+                return $false
+            }
+            # Run with NO arguments (legacy: ScreenConnect uninstallers need no registry-supplied args)
+            try { $ran = Invoke-SccUninstallCommand -Command $bareExe -PlanItem $PlanItem -Run $Run } catch { $ran = $false }
+        } else {
+            $ran = $false
+            try { $ran = Invoke-SccUninstallCommand -Command $cmd -PlanItem $PlanItem -Run $Run } catch { $ran = $false }
+        }
         if ($ran) {
             Add-RemediationAction -Run $Run -Action 'Uninstall' -Target $fid -Command $cmd -Result 'Succeeded' -Error '' -StartedUtc $started
             return $true
@@ -528,6 +625,21 @@ function Remove-SccTargetFirewallRule {
     }
 }
 
+function Write-SccResumeMarker {
+    param($Run, [string]$Phase, [array]$PendingMoves)
+    if (-not $Run -or -not $Run.RunDir) { return }
+    try {
+        $marker = [PSCustomObject]@{
+            Module      = 'Scc.Remedy'
+            Phase       = $Phase
+            UpdatedUtc  = (Get-Date).ToUniversalTime().ToString('o')
+            PendingMoves = @($PendingMoves)
+        }
+        $mp = Join-Path $Run.RunDir 'resume-marker.json'
+        [System.IO.File]::WriteAllText($mp, (ConvertTo-SccJson -InputObject $marker -Depth 10), [System.Text.Encoding]::ASCII)
+    } catch { }
+}
+
 function Move-SccTargetToQuarantine {
     param([string]$SourcePath, $PlanItem, $Run, [string]$Reason, [string]$ActionType)
     $fid = [string](Get-Prop $PlanItem 'FindingId')
@@ -546,11 +658,77 @@ function Move-SccTargetToQuarantine {
             $suffix = (Get-SccSha256Hex -Text $SourcePath).Substring(0, 8)
             $dest = Join-Path $qDir ($suffix + '-' + $leaf)
         }
+        $isDirectory = $false
+        try { $isDirectory = (Get-Item -LiteralPath $SourcePath -Force).PSIsContainer } catch { }
         $sha  = $null
         $size = $null
-        try { $sha = (Get-FileHash -LiteralPath $SourcePath -Algorithm SHA256 -ErrorAction Stop).Hash } catch { }
-        try { $size = (Get-Item -LiteralPath $SourcePath -Force).Length } catch { }
-        Move-Item -LiteralPath $SourcePath -Destination $dest -Force -ErrorAction Stop
+        $hashNote = ''
+        if ($isDirectory) {
+            # F7: directory quarantine - hash each file individually, skip
+            # reparse points (junctions/symlinks) per legacy 1099-1130.
+            $rows = New-Object System.Collections.ArrayList
+            $reparseSkipped = 0
+            try {
+                $children = @(Get-ChildItem -LiteralPath $SourcePath -File -Recurse -Force -ErrorAction SilentlyContinue)
+                foreach ($f in @($children)) {
+                    $isReparse = $false
+                    try { $attrs = $f.Attributes; $isReparse = [bool]($attrs -band [System.IO.FileAttributes]::ReparsePoint) } catch { }
+                    if ($isReparse) { $reparseSkipped++; continue }
+                    $fh = $null
+                    try { $fh = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256 -ErrorAction Stop).Hash } catch { }
+                    [void]$rows.Add([PSCustomObject]@{
+                        Path   = $f.FullName
+                        Length = $f.Length
+                        SHA256 = $fh
+                    })
+                }
+            } catch { }
+            $hashNote = ('directory, ' + @($rows).Count + ' file(s) hashed')
+            if ($reparseSkipped -gt 0) { $hashNote += ('; ' + $reparseSkipped + ' reparse point(s) skipped') }
+            $sha = $hashNote
+            $size = $null
+            try {
+                $totalLen = 0
+                foreach ($r in @($rows)) { $totalLen += $r.Length }
+                $size = $totalLen
+            } catch { }
+        } else {
+            try { $sha = (Get-FileHash -LiteralPath $SourcePath -Algorithm SHA256 -ErrorAction Stop).Hash } catch { }
+            try { $size = (Get-Item -LiteralPath $SourcePath -Force).Length } catch { }
+        }
+        # F7: try Move-Item; on failure (in-use file), record resume marker
+        # + pending move instead of silently losing the artifact.
+        $moveOk = $false
+        try {
+            Move-Item -LiteralPath $SourcePath -Destination $dest -Force -ErrorAction Stop
+            $moveOk = $true
+        } catch {
+            # F7: record resume marker + pending move for reboot-resume.
+            $pendingEntry = [PSCustomObject]@{
+                FindingId   = $fid
+                SourcePath  = $SourcePath
+                DestPath    = $dest
+                Error       = $_.Exception.Message
+            }
+            Write-SccResumeMarker -Run $Run -Phase 'quarantine-pending' -PendingMoves @($pendingEntry)
+            # Write manifest entry for the pending move.
+            $itemId = [guid]::NewGuid().ToString()
+            $entry = [PSCustomObject]@{
+                ItemId            = $itemId
+                OriginalPath      = $SourcePath
+                QuarantinePath    = $dest
+                SHA256            = $sha
+                SizeBytes         = $size
+                MovedUtc          = (Get-Date).ToUniversalTime().ToString('o')
+                FindingId         = $fid
+                Reason            = $Reason
+                ActionType        = $ActionType
+                RestoreInstructions = ('Pending reboot - move failed (in-use): ' + $_.Exception.Message)
+            }
+            Add-SccQuarantineManifestEntry -Run $Run -Entry $entry
+            Add-RemediationAction -Run $Run -Action 'Quarantine' -Target $SourcePath -Command ('Move-Item -> ' + $dest) -Result 'PendingReboot' -Error $_.Exception.Message -StartedUtc $started
+            return $true
+        }
         # ACL hardening: lock down on Windows; best-effort chmod on Linux.
         $isWin = ($env:OS -eq 'Windows_NT')
         if ($isWin) {
@@ -685,6 +863,16 @@ function Test-SccPlan {
     return @(Get-SccPlanPreview -Plan $p)
 }
 
+function Test-SccIsAdmin {
+    $isWindows = ($env:OS -eq 'Windows_NT')
+    if (-not $isWindows) { return $true }
+    try {
+        $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $p = New-Object Security.Principal.WindowsPrincipal($id)
+        return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch { return $false }
+}
+
 function Invoke-SccRemediation {
     [CmdletBinding()]
     param(
@@ -705,6 +893,12 @@ function Invoke-SccRemediation {
     if (-not $Execute) {
         Write-SccRemedyLog -Level INFO -Stage 'Remedy' -Message 'Dry-run: no changes made (pass -Execute to perform remediation).'
         return $preview
+    }
+
+    # F6: admin gate before any -Execute mutation (legacy remove-screenconnect.ps1:80-87).
+    # On non-Windows where admin check is meaningless, gate on $env:OS so tests pass.
+    if (-not (Test-SccIsAdmin)) {
+        throw [System.InvalidOperationException]::new('Execute requires an elevated (Administrator) shell. Aborting remediation.')
     }
 
     # Config-driven "stop on first item failure" (default: continue the run).
@@ -784,6 +978,25 @@ function Invoke-SccRemediation {
     return $preview
 }
 
+function Test-SccRestorePathSafe {
+    param([string]$OriginalPath, [string]$QuarantineRoot)
+    if ([string]::IsNullOrEmpty($OriginalPath)) { return $false }
+    if ($OriginalPath -like '*..*') { return $false }
+    $resolved = $null
+    try { $resolved = [System.IO.Path]::GetFullPath($OriginalPath) } catch { return $false }
+    if ($resolved -ne $OriginalPath) { return $false }
+    $isAbsolute = ($resolved -match '^[A-Za-z]:\\') -or ($resolved -match '^/')
+    if (-not $isAbsolute) { return $false }
+    if (-not [string]::IsNullOrEmpty($QuarantineRoot)) {
+        $qResolved = $null
+        try { $qResolved = [System.IO.Path]::GetFullPath($QuarantineRoot) } catch { }
+        if (-not [string]::IsNullOrEmpty($qResolved)) {
+            if ($resolved -like ($qResolved + '*')) { return $false }
+        }
+    }
+    return $true
+}
+
 function Restore-SccQuarantineItem {
     [CmdletBinding()]
     param(
@@ -792,7 +1005,7 @@ function Restore-SccQuarantineItem {
     )
     $list = @(Get-SccQuarantineManifest -Run $Run)
     $entry = $null
-    foreach ($e in $list) {
+    foreach ($e in @($list)) {
         if ([string]$e.ItemId -eq $ItemId) { $entry = $e; break }
     }
     if ($null -eq $entry) {
@@ -800,6 +1013,12 @@ function Restore-SccQuarantineItem {
     }
     $src = [string]$entry.QuarantinePath
     $dst = [string]$entry.OriginalPath
+    # F3: validate OriginalPath is safe - no traversal, absolute, not inside
+    # quarantine scope. Canonicalize and reject if unsafe.
+    $qRoot = Get-SccRemedyQuarantineRoot -Run $Run
+    if (-not (Test-SccRestorePathSafe -OriginalPath $dst -QuarantineRoot $qRoot)) {
+        throw [System.InvalidOperationException]::new(('Refusing to restore: OriginalPath is unsafe (traversal, non-absolute, or escapes quarantine scope): ' + $dst))
+    }
     if (-not (Test-Path -LiteralPath $src)) {
         throw [System.InvalidOperationException]::new(('Quarantine file not present: ' + $src))
     }
