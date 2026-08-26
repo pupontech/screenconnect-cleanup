@@ -182,6 +182,84 @@ function Get-DetectionsFromLog {
 }
 
 # ---------------------------------------------------------------------------
+# Invoke-ProcessWithTimeout
+#   Run a child process with both stdio streams redirected and a hard timeout
+#   (contract: a hung scanner must not hang the run; a chatty scanner must not
+#   deadlock on a full redirect pipe and defeat the timeout).
+#
+#   PS 5.1-safe drain pattern:
+#     - Both redirected streams are read ASYNCHRONOUSLY via ReadToEndAsync()
+#       as soon as the process starts. A redirected pipe buffers only a few KB;
+#       waiting until exit to read (the old HasExited poll + sync ReadToEnd)
+#       let a tool filling the buffer block forever inside its own write and
+#       never flip HasExited - so the advertised timeout never fired.
+#     - WaitForExit(milliseconds) does the bounded wait honoring the timeout.
+#     - On timeout the child is terminated and reaped within a bounded window;
+#       both async stream tasks are then collected so diagnostics survive.
+#
+#   Returns a hashtable: TimedOut (bool), ExitCode (int or $null when timed
+#   out), StdOut and StdErr (string, best-effort diagnostics).
+# ---------------------------------------------------------------------------
+function Invoke-ProcessWithTimeout {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string[]]$ArgumentList,
+        [Parameter(Mandatory = $true)][int]$TimeoutSeconds
+    )
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $FilePath
+    $psi.Arguments = ($ArgumentList -join ' ')
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $proc = [System.Diagnostics.Process]::Start($psi)
+
+    # Drain both streams concurrently BEFORE the bounded wait so a full pipe
+    # can never block the child. ReadToEndAsync is available on the .NET
+    # Framework 4.5+ that Windows PowerShell 5.1 runs on.
+    $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+    $stderrTask = $proc.StandardError.ReadToEndAsync()
+
+    $timedOut = -not $proc.WaitForExit($TimeoutSeconds * 1000)
+    if ($timedOut) {
+        # Hard timeout: terminate the direct child and reap within a bounded
+        # window so the async readers reach EOF and can be read below.
+        try { $proc.Kill() } catch { }
+        try { $null = $proc.WaitForExit(2000) } catch { }
+    }
+
+    # Collect both stream tasks with a BOUNDED WaitAll so a child that holds a
+    # pipe handle open past termination can never make this step block forever.
+    # Only read results for tasks that actually completed; otherwise report a
+    # degraded (incomplete) drain via StreamDrainTimedOut.
+    $stdout = ''
+    $stderrText = ''
+    $streamDrainTimedOut = $false
+    $streamTasks = [System.Threading.Tasks.Task[]]@($stdoutTask, $stderrTask)
+    $allDrained = [System.Threading.Tasks.Task]::WaitAll($streamTasks, 5000)
+    if ($allDrained) {
+        try { $stdout = [string]$stdoutTask.GetAwaiter().GetResult() } catch { $stdout = '' }
+        try { $stderrText = [string]$stderrTask.GetAwaiter().GetResult() } catch { $stderrText = '' }
+    } else {
+        $streamDrainTimedOut = $true
+    }
+
+    $exitCode = $null
+    if (-not $timedOut) {
+        try { $exitCode = $proc.ExitCode } catch { }
+    }
+
+    return @{
+        TimedOut            = $timedOut
+        StreamDrainTimedOut = $streamDrainTimedOut
+        ExitCode            = $exitCode
+        StdOut              = $stdout
+        StdErr              = $stderrText
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -247,33 +325,26 @@ if ($WhatIf) {
     return $r
 }
 
-# Run the scan with a hard timeout (contract: a hung scanner must not hang the run).
-$proc = $null
-$timedOut = $false
+# Run the scan with a hard timeout (contract: a hung scanner must not hang the
+# run). Invoke-ProcessWithTimeout drains stdout/stderr concurrently, so a tool
+# that fills a redirect pipe can never block itself and defeat the timeout.
+$run = $null
 try {
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $tool
-    $psi.Arguments = (($argList + $targets) -join ' ')
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $proc = [System.Diagnostics.Process]::Start($psi)
-
-    $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
-    while (-not $proc.HasExited -and (Get-Date) -lt $deadline) {
-        Start-Sleep -Seconds 5
-    }
-    if (-not $proc.HasExited) {
-        $timedOut = $true
-        try { $proc.Kill() } catch { }
-        $proc.WaitForExit(10000) | Out-Null
-    }
-    $stdout = $proc.StandardOutput.ReadToEnd()
-    $stderrText = $proc.StandardError.ReadToEnd()
-    $exitCode = $proc.ExitCode
+    $run = Invoke-ProcessWithTimeout -FilePath $tool -ArgumentList ($argList + $targets) -TimeoutSeconds ($TimeoutMinutes * 60)
 } catch {
     $errors += ('Scan execution failed: ' + $_.Exception.Message)
-    $exitCode = $null
+}
+$timedOut = $false
+$exitCode = $null
+if ($null -ne $run) {
+    $timedOut = $run.TimedOut
+    $exitCode = $run.ExitCode
+    if ($timedOut) {
+        $errors += ('Scanner did not finish within ' + $TimeoutMinutes + ' minute(s); process was terminated.')
+    }
+    if ($run.StreamDrainTimedOut) {
+        $errors += 'Scanner output streams did not close within the drain window after termination; captured output may be incomplete.'
+    }
 }
 
 $end = Get-Date
