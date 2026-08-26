@@ -71,7 +71,7 @@ Two further consequences worth stating plainly:
 | **2 — Detection** | **ScreenConnect instance identity + other RAT presence** | **PoC works** (verified on a real machine) |
 | 3 — Technician review | approval gate — nothing is removed without it | **built** (interactive y/n prompt; no GUI) |
 | 4 — Remove / quarantine | stop, uninstall, quarantine, clean persistence | **built, dry-run default** (never run on live Windows; skipped by default via `-sr`) |
-| 5 — Scanners | Defender, KVRT, ESET (AdwCleaner, MSERT not built) | **built** (3 adapters, Linux-verified WhatIf; real exec unverified) |
+| 5 — Scanners | Defender, KVRT, ESET (MSERT not built; AdwCleaner removed 2026-08-26) | **built** (3 adapters, Linux-verified WhatIf; real exec unverified) |
 | 6 — Procmon (targeted) | "something reinstalled it — what?" | **not started** (opt-in stub only) |
 | 7 — Snapshot (after) + diff | prove it is gone, catch resurrections | **built** (Linux-verified) |
 | 8 — Report | HTML + JSON + tech summary | **built** (XSS + empty-case verified) |

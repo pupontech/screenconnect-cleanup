@@ -22,7 +22,7 @@ box" tool has value on day one.
 | **M1** | Stages 0, 1, 8 — snapshot + report, read-only | Usable immediately, cannot hurt anything | **Built & Linux-verified** (Windows content paths still unverified — see below) |
 | **M2** | Stage 2 — ScreenConnect + RAT detection | `-sr` detect-only mode | **PoC DONE** (verified on a real machine) |
 | **M3** | Stage 7 — after-snapshot + diff | Catches resurrections | **Built & Linux-verified** |
-| **M4** | Stage 5 — scanner adapters (Defender first) | Optional, skippable | **Built** — Defender, KVRT, ESET adapters (Linux WhatIf-verified; real exec unverified). AdwCleaner/MSERT not built. |
+| **M4** | Stage 5 — scanner adapters (Defender first) | Optional, skippable | **Built** — Defender, KVRT, ESET adapters (Linux WhatIf-verified; real exec unverified). MSERT not built; AdwCleaner removed from scope 2026-08-26 (owner). |
 | **M5** | Stages 3, 4 — approval gate + removal + quarantine + reboot resume | **Only after heavy VM-snapshot testing** | **LIVE-VALIDATED (field, 2026-08-26):** full removal executed with ExecuteMode=true on INPIRON4SANITY2 via the manual-surgery path (quarantine + service delete + uninstall-key cleanup), manifest truthful after the UninstallFallback fix. 3010 reboot-resume path still needs a lab run |
 | **M6** | Stage 6 — targeted Procmon | Respawn investigation | **Not started** (opt-in stub only) |
 | **M7** | Top-level `sc-cleanup.ps1` stage runner tying it together | The actual product | **Built & Linux end-to-end verified** (detect-remote-access stubbed on Linux) |
@@ -87,8 +87,9 @@ from memory.**
 
 > **Status (2026-08-23):** Resolved for the three built adapters. Every switch in
 > `Invoke-DefenderScan.ps1`, `Invoke-KVRTScan.ps1`, and `Invoke-ESETScan.ps1` was taken
-> from vendor docs fetched during authoring (URLs cited in each script header). AdwCleaner
-> and MSERT adapters are **still not built**. A real-box run is still required to confirm
+> from vendor docs fetched during authoring (URLs cited in each script header). MSERT
+> is still not built, and AdwCleaner was removed from scope on 2026-08-26 (owner
+> decision). A real-box run is still required to confirm
 > the detection parsers and exit-code mappings behave as documented.
 
 ### Q5 — Sysinternals download URL pattern

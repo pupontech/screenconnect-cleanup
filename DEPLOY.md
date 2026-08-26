@@ -43,21 +43,22 @@ A prebuilt zip with exactly the layout above is produced by
 > pack: download + hash-verify from the official Microsoft
 > `download.sysinternals.com` endpoint, against `tools/manifest.json`) and
 > `tools/Get-AVTools.ps1` (AV scanner staging) are both present.
-> `Get-AVTools.ps1` downloads KVRT fresh from Kaspersky's official URL,
-> AdwCleaner + Malwarebytes MB5 (MBSetup.exe) from Malwarebytes' official
-> URLs, and ESET Online Scanner from ESET's official download host (all four
-> endpoints verified live 2026-08-26); an internal share (`-InternalShare`,
-> default `\\10.0.0.5\Public\Tools`) remains an optional offline fallback that
-> never overwrites a fresh official download. Never hand-copy the Sysinternals binaries into
+> `Get-AVTools.ps1` downloads KVRT fresh from Kaspersky's official URL and
+> Malwarebytes MB5 (MBSetup.exe) from Malwarebytes' official URL, and ESET
+> Online Scanner from ESET's official download host (all three endpoints
+> verified live 2026-08-26); an internal share (`-InternalShare`, default
+> `\\10.0.0.5\Public\Tools`) remains an optional offline fallback that
+> never overwrites a fresh official download. AdwCleaner was removed from
+> staging by owner decision (2026-08-26). Never hand-copy the Sysinternals
+> binaries into
 > `tools\` - `Get-ToolPack.ps1` is the only thing that fetches and hash-verifies
 > them.
 
-**Running the GUI-only scanners (ESET Online Scanner, Malwarebytes, AdwCleaner):**
+**Running the GUI-only scanners (ESET Online Scanner, Malwarebytes):**
 
 ```
 powershell -ExecutionPolicy Bypass -File .\Invoke-GUIScanner.ps1 -Scanner ESET
 powershell -ExecutionPolicy Bypass -File .\Invoke-GUIScanner.ps1 -Scanner Malwarebytes
-powershell -ExecutionPolicy Bypass -File .\Invoke-GUIScanner.ps1 -Scanner AdwCleaner
 ```
 
 Each launches the scanner's normal GUI and WAITS until you close it (4-hour

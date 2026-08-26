@@ -62,7 +62,7 @@ Two corollaries that shape the whole design:
 | **2 Detection** | **ScreenConnect instance identity + other RAT presence** | **BUILT + TESTED** |
 | 3 Technician review | approval gate — nothing removed without it | built (interactive y/n, was "not started") |
 | 4 Remove / quarantine | stop, uninstall, quarantine, clean persistence | **built, dry-run default** (was "not started") |
-| 5 Scanners | Defender, KVRT, ESET, AdwCleaner, MSERT | built (3 adapters; AdwCleaner/MSERT not built) |
+| 5 Scanners | Defender, KVRT, ESET, MSERT (AdwCleaner removed 2026-08-26) | built (3 adapters; MSERT not built) |
 | 6 Procmon (targeted) | "something reinstalled it — what?" | stub (opt-in only) |
 | 7 Snapshot (after) + diff | prove removal, catch resurrections | built |
 | 8 Report | HTML + JSON + tech summary | built (XSS + empty-case verified) |

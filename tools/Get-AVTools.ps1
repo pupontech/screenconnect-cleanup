@@ -12,12 +12,6 @@
                            silent CLI (-accepteula -silent), which
                            scanners\Invoke-KVRTScan.ps1 already drives.
 
-    adwcleaner.exe         Malwarebytes AdwCleaner (free) - downloaded fresh
-                           from Malwarebytes' official distribution URL every
-                           run. Documented CLI (/eula /scan, see scanners\
-                           Invoke-AdwCleanerScan.ps1) makes it drivable
-                           unattended in detect-only mode.
-
     esetonlinescanner.exe  ESET Online Scanner (consumer, GUI-only). No
                            officially documented unattended/silent scan
                            switches exist (verified 2026-08-26 against
@@ -27,6 +21,12 @@
                            download host for a technician to run by
                            double-click during Stage 5 - the automated
                            pipeline never launches it.
+
+    MBSetup.exe            Malwarebytes 5 consumer installer (GUI). No CLI;
+                           staged for attended use via Invoke-GUIScanner.
+
+    (AdwCleaner was removed from staging on 2026-08-26 by owner decision:
+    not needed for this tool's workflow.)
 
   Usage:
     Get-AVTools.ps1 -ToolDir .\tools\AV
@@ -58,13 +58,12 @@ function Say {
 }
 
 $kvrtPath   = Join-Path $ToolDir 'KVRT.exe'
-$adwPath    = Join-Path $ToolDir 'adwcleaner.exe'
 $eosPath    = Join-Path $ToolDir 'esetonlinescanner.exe'
 $mbPath     = Join-Path $ToolDir 'MBSetup.exe'
 
 if ($Verify) {
     $ok = $true
-    foreach ($p in @($kvrtPath, $adwPath, $eosPath, $mbPath)) {
+    foreach ($p in @($kvrtPath, $eosPath, $mbPath)) {
         if (Test-Path -LiteralPath $p) {
             Say ("  present: " + $p) 'Green'
         } else {
@@ -99,11 +98,8 @@ function Get-DownloadFile {
 # Endpoint verified live 2026-08-26 (HTTP 200, application/octet-stream).
 $null = Get-DownloadFile -Url 'https://devbuilds.s.kaspersky-labs.com/kvrt/latest/full/KVRT.exe' -Dest $kvrtPath -Label 'KVRT.exe (Kaspersky Virus Removal Tool)'
 
-# --- AdwCleaner: always fetch fresh from Malwarebytes' official URL -------
-# downloads.malwarebytes.com/file/adwcleaner/ 302-redirects to
-# adwcleaner.malwarebytes.com (channel=release). Endpoint verified live
-# 2026-08-26 (final HTTP 200, application/octet-stream).
-$null = Get-DownloadFile -Url 'https://downloads.malwarebytes.com/file/adwcleaner/' -Dest $adwPath -Label 'adwcleaner.exe (Malwarebytes AdwCleaner)'
+# --- AdwCleaner: REMOVED from staging 2026-08-26 (owner decision) ----------
+# No download is performed; see the header note.
 
 # --- ESET Online Scanner: fetch fresh from ESET's official download host --
 # This is the exact URL behind the "One-time scan"/"Scan now" buttons on
@@ -143,10 +139,10 @@ if ($InternalShare -and (Test-Path -LiteralPath $InternalShare)) {
 
 Say ''
 Say ('Done. GUI scanners staged in ' + $ToolDir + ':') 'Cyan'
-Say '  KVRT.exe, adwcleaner.exe, esetonlinescanner.exe, MBSetup.exe' 'Cyan'
+Say '  KVRT.exe, esetonlinescanner.exe, MBSetup.exe' 'Cyan'
 Say 'Run each one attended:' 'Cyan'
-Say '  .\Invoke-GUIScanner.ps1 -Scanner ESET          (or Malwarebytes / AdwCleaner / KVRT)' 'Cyan'
+Say '  .\Invoke-GUIScanner.ps1 -Scanner ESET          (or Malwarebytes / KVRT)' 'Cyan'
 Say 'KVRT can also run unattended via scanners\Invoke-KVRTScan.ps1 (Stage 5).' 'Cyan'
-Say 'ESET Online Scanner / Malwarebytes / AdwCleaner are GUI-only: the' 'Cyan'
+Say 'ESET Online Scanner / Malwarebytes are GUI-only: the' 'Cyan'
 Say 'pipeline never invents silent-scan flags for them (owner decision 2026-08-26).' 'Cyan'
 exit 0
