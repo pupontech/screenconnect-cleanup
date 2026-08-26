@@ -8,40 +8,40 @@
 
 ScreenConnect Cleaner is a Windows GUI technician application for investigating and cleaning machines with unauthorized ScreenConnect / ConnectWise Control installations, other remote-access software, and scam-related malware. It follows a **Detect -> Review -> Remediate -> Verify** workflow designed for professional incident response.
 
-The application is built on Windows PowerShell 5.1 + WPF, packaged as a portable folder (primary) with an optional Program Files installer. All logic lives in PowerShell modules under `src/Scc.*/` — testable on Linux via `pwsh` + Pester, runnable on Windows without any build chain.
+The application is built on Windows PowerShell 5.1 + WPF, packaged as a portable folder (primary) with an optional Program Files installer. All logic lives in PowerShell modules under `src/Scc.*/`  -  testable on Linux via `pwsh` + Pester, runnable on Windows without any build chain.
 
 ---
 
 ## Safety model (Detect -> Review -> Remediate -> Verify; 12 rules)
 
-1. **Snapshot before any change** — Stage 1 runs first and cannot be skipped.
-2. **Hard approval gate before removal** — No unattended removal; no detect-and-remove flag.
-3. **Quarantine, never delete** — Deletion is a separate double-confirmed operation.
-4. **Restore point + registry export before first change** — Default on, verifies restore actually enabled.
-5. **Vendor uninstaller first** — Read from registry at runtime; manual surgery is fallback.
-6. **Never clean temp before looking at it** — The scammer's installer in `%TEMP%` is evidence.
-7. **Never clear event logs** — Event ID 7045 survives uninstall and is valuable.
-8. **Server OS refuses by default** — Config override required.
-9. **Scanner failure is non-fatal AND reported as failure** — Never silently swallowed into a "clean" verdict.
-10. **Report says what it did NOT check** — If scanners skipped, report says "scanners skipped," never "no malware found."
-11. **Post-remediation verification re-collects fresh from system** — Not from the actor's own record.
-12. **Removal != remediation** — Credential-reset checklist always in report.
+1. **Snapshot before any change**  -  Stage 1 runs first and cannot be skipped.
+2. **Hard approval gate before removal**  -  No unattended removal; no detect-and-remove flag.
+3. **Quarantine, never delete**  -  Deletion is a separate double-confirmed operation.
+4. **Restore point + registry export before first change**  -  Default on, verifies restore actually enabled.
+5. **Vendor uninstaller first**  -  Read from registry at runtime; manual surgery is fallback.
+6. **Never clean temp before looking at it**  -  The scammer's installer in `%TEMP%` is evidence.
+7. **Never clear event logs**  -  Event ID 7045 survives uninstall and is valuable.
+8. **Server OS refuses by default**  -  Config override required.
+9. **Scanner failure is non-fatal AND reported as failure**  -  Never silently swallowed into a "clean" verdict.
+10. **Report says what it did NOT check**  -  If scanners skipped, report says "scanners skipped," never "no malware found."
+11. **Post-remediation verification re-collects fresh from system**  -  Not from the actor's own record.
+12. **Removal != remediation**  -  Credential-reset checklist always in report.
 
 ---
 
 ## Features
 
-- **Deep ScreenConnect detection** — Extracts instance identity (relay host, server key, session type, custom properties, install timestamp) from services, processes, config files, and registry.
-- **Broad remote-access presence detection** — AnyDesk, TeamViewer, UltraViewer, Supremo, RustDesk, Splashtop, LogMeIn/GoTo, Zoho Assist, Atera, DWAgent, MeshCentral, NetSupport, Remote Utilities, VNC family (configurable via `targets.json`).
-- **Trusted relay matching** — Technician-maintained `trusted-relays.json` marks known infrastructure as "Known"; unknown relays are "Unknown" (never auto-classified malicious).
-- **NAS-first tool acquisition** — Local cache -> NAS -> official vendor, with signature/hash/size/version validation and provenance recording.
-- **Scanner adapters** — Defender (MpCmdRun), KVRT, MSERT (CLI); AdwCleaner, ESET Online, Malwarebytes (attended GUI launch per owner policy).
-- **Plan-gated remediation** — Dry-run default; only ScreenConnect entries removable; quarantine with ACL (SYSTEM + Admins only); vendor uninstaller first.
-- **Before/after snapshots + diff** — Catches resurrection (something reinstalled the agent).
-- **HTML/JSON/Technician summary reports** — Self-contained HTML (XSS-safe), machine-readable JSON, <=60 line plain-text handoff.
-- **GUI workflow** — Dashboard -> Preflight -> Snapshot A -> Detection -> Review (Findings UI, default KEEP) -> Remediate -> Scanners -> Snapshot B -> Compare -> Report.
-- **Headless mode** — Same state machine without WPF (CI, automation).
-- **Resume interrupted runs** — Reloads `runstate.json`, re-enters at first non-completed stage.
+- **Deep ScreenConnect detection**  -  Extracts instance identity (relay host, server key, session type, custom properties, install timestamp) from services, processes, config files, and registry.
+- **Broad remote-access presence detection**  -  AnyDesk, TeamViewer, UltraViewer, Supremo, RustDesk, Splashtop, LogMeIn/GoTo, Zoho Assist, Atera, DWAgent, MeshCentral, NetSupport, Remote Utilities, VNC family (configurable via `targets.json`).
+- **Trusted relay matching**  -  Technician-maintained `trusted-relays.json` marks known infrastructure as "Known"; unknown relays are "Unknown" (never auto-classified malicious).
+- **NAS-first tool acquisition**  -  Local cache -> NAS -> official vendor, with signature/hash/size/version validation and provenance recording.
+- **Scanner adapters**  -  Defender (MpCmdRun), KVRT, MSERT (CLI); AdwCleaner, ESET Online, Malwarebytes (attended GUI launch per owner policy).
+- **Plan-gated remediation**  -  Dry-run default; only ScreenConnect entries removable; quarantine with ACL (SYSTEM + Admins only); vendor uninstaller first.
+- **Before/after snapshots + diff**  -  Catches resurrection (something reinstalled the agent).
+- **HTML/JSON/Technician summary reports**  -  Self-contained HTML (XSS-safe), machine-readable JSON, <=60 line plain-text handoff.
+- **GUI workflow**  -  Dashboard -> Preflight -> Snapshot A -> Detection -> Review (Findings UI, default KEEP) -> Remediate -> Scanners -> Snapshot B -> Compare -> Report.
+- **Headless mode**  -  Same state machine without WPF (CI, automation).
+- **Resume interrupted runs**  -  Reloads `runstate.json`, re-enters at first non-completed stage.
 
 ---
 
@@ -85,16 +85,16 @@ Use `-WhatIf` to preview. Use `-Uninstall` to remove only what the installer pla
 
 ## GUI workflow walkthrough
 
-1. **Dashboard** — System info, admin status, internet/NAS connectivity, tool status, disk space, app version. Actions: Start Full Investigation, Detection Only, Scan Only, Review Previous Report, Settings, Advanced Tools.
-2. **Preflight (Stage 0)** — Admin check, restore point, working dir, tool pack. Can be skipped (`-SkipPreflight`).
-3. **Snapshot A (Stage 1)** — Services, scheduled tasks, autoruns, startup folders, processes, connections, installed programs, local accounts, firewall rules, WMI persistence, recent files, SC installations, system settings (RDP, hosts file). Runs before any change.
-4. **Detection (Stage 2)** — ScreenConnect instance identity + other RAT presence. Read-only. Writes `findings.json`.
-5. **Review (Stage 3)** — **Findings screen**: per-finding checkbox KEEP/REMOVE with full SC identity fields, trust badge (Known/Unknown), evidence links. **Default KEEP for everything.** Only ScreenConnect entries may be switched to REMOVE. Technician approves -> writes `plan.json`.
-6. **Remediate (Stage 4)** — Consumes `plan.json`. Dry-run default (`-Execute` required for real actions). Sequence per approved item: stop service, kill processes, vendor uninstaller, validate removal, manual cleanup (service, scheduled task, Run key, firewall rule), quarantine leftovers (ACL-locked). Writes `remediation.json` + `quarantine-manifest.json`.
-7. **Scanners (Stage 5)** — Runs enabled CLI scanners sequentially (Defender, KVRT, MSERT). Attended scanners (AdwCleaner, ESET Online, Malwarebytes) launch visible GUI and wait for close. Results in `scanner-results/`. Skippable.
-8. **Snapshot B (Stage 6)** — Same collection as Stage 1, post-remediation.
-9. **Compare (Stage 7)** — Diffs Snapshot A vs B: Removed / Still Present / New / Changed per section. Flags resurrections in SC installations and remote-access services.
-10. **Report (Stage 8)** — Generates `report.html`, `report.json`, `technician-summary.txt` in the run directory.
+1. **Dashboard**  -  System info, admin status, internet/NAS connectivity, tool status, disk space, app version. Actions: Start Full Investigation, Detection Only, Scan Only, Review Previous Report, Settings, Advanced Tools.
+2. **Preflight (Stage 0)**  -  Admin check, restore point, working dir, tool pack. Can be skipped (`-SkipPreflight`).
+3. **Snapshot A (Stage 1)**  -  Services, scheduled tasks, autoruns, startup folders, processes, connections, installed programs, local accounts, firewall rules, WMI persistence, recent files, SC installations, system settings (RDP, hosts file). Runs before any change.
+4. **Detection (Stage 2)**  -  ScreenConnect instance identity + other RAT presence. Read-only. Writes `findings.json`.
+5. **Review (Stage 3)**  -  **Findings screen**: per-finding checkbox KEEP/REMOVE with full SC identity fields, trust badge (Known/Unknown), evidence links. **Default KEEP for everything.** Only ScreenConnect entries may be switched to REMOVE. Technician approves -> writes `plan.json`.
+6. **Remediate (Stage 4)**  -  Consumes `plan.json`. Dry-run default (`-Execute` required for real actions). Sequence per approved item: stop service, kill processes, vendor uninstaller, validate removal, manual cleanup (service, scheduled task, Run key, firewall rule), quarantine leftovers (ACL-locked). Writes `remediation.json` + `quarantine-manifest.json`.
+7. **Scanners (Stage 5)**  -  Runs enabled CLI scanners sequentially (Defender, KVRT, MSERT). Attended scanners (AdwCleaner, ESET Online, Malwarebytes) launch visible GUI and wait for close. Results in `scanner-results/`. Skippable.
+8. **Snapshot B (Stage 6)**  -  Same collection as Stage 1, post-remediation.
+9. **Compare (Stage 7)**  -  Diffs Snapshot A vs B: Removed / Still Present / New / Changed per section. Flags resurrections in SC installations and remote-access services.
+10. **Report (Stage 8)**  -  Generates `report.html`, `report.json`, `technician-summary.txt` in the run directory.
 
 ---
 
@@ -111,10 +111,10 @@ Configure in Settings or `config/scc-config.json`:
 }
 ```
 
-- **Priority order** — Acquisition order for each tool. Default: local cache -> NAS -> official vendor.
-- **Path** — UNC path to technician tools share. Supports `%ENVVAR%` expansion.
-- **Timeout** — NAS reachability test timeout (default 15s). Failure is WARNING, proceeds to next source.
-- **Layout** — NAS expected at `<nas.path>\<Tool>\<FileName>` (case-insensitive). Flat layout also accepted.
+- **Priority order**  -  Acquisition order for each tool. Default: local cache -> NAS -> official vendor.
+- **Path**  -  UNC path to technician tools share. Supports `%ENVVAR%` expansion.
+- **Timeout**  -  NAS reachability test timeout (default 15s). Failure is WARNING, proceeds to next source.
+- **Layout**  -  NAS expected at `<nas.path>\<Tool>\<FileName>` (case-insensitive). Flat layout also accepted.
 
 ---
 
@@ -146,9 +146,9 @@ File: `config/trusted-relays.json` (template included). Format:
 }
 ```
 
-- **Matching** — Case-insensitive hostname match. Optional fingerprint match (16 hex chars, lowercase) against detected `ServerKeyFingerprint`.
-- **Result** — Finding shows **Known** (exact match) or **Unknown** (no match). Unknown is NEVER auto-classified malicious — technician decides.
-- **Editor** — GUI Settings tab includes a trusted-relays editor.
+- **Matching**  -  Case-insensitive hostname match. Optional fingerprint match (16 hex chars, lowercase) against detected `ServerKeyFingerprint`.
+- **Result**  -  Finding shows **Known** (exact match) or **Unknown** (no match). Unknown is NEVER auto-classified malicious  -  technician decides.
+- **Editor**  -  GUI Settings tab includes a trusted-relays editor.
 
 ---
 
@@ -157,8 +157,8 @@ File: `config/trusted-relays.json` (template included). Format:
 - **Location**: `%ProgramData%\ScreenConnectCleaner\Quarantine\<RunId>\q\...`
 - **ACL**: SYSTEM + Administrators full control; Users removed. Never inside `%TEMP%`.
 - **Manifest**: `quarantine-manifest.json` records `OriginalPath`, `QuarantinePath`, `SHA256`, `SizeBytes`, `MovedUtc`, `FindingId`, `Reason`, `ActionType`, `RestoreInstructions`.
-- **Restore**: `Restore-SccQuarantineItem -Run -ItemId` — moves file back to original path (explicit confirmation required).
-- **Permanent delete**: `Clear-SccQuarantine -Run -Approved` — double-confirmation required, never automatic, logged + reported.
+- **Restore**: `Restore-SccQuarantineItem -Run -ItemId`  -  moves file back to original path (explicit confirmation required).
+- **Permanent delete**: `Clear-SccQuarantine -Run -Approved`  -  double-confirmation required, never automatic, logged + reported.
 
 ---
 
@@ -167,9 +167,9 @@ File: `config/trusted-relays.json` (template included). Format:
 Per-run directory: `%USERPROFILE%\Documents\ScreenConnect Cleanup\Reports\SC-<date>-<host>-<time>\`
 
 Files:
-- `report.html` — Self-contained, XSS-safe, all sections (Executive Summary, System Info, Incident Timeline, ScreenConnect Findings with trust column, Other Remote Access, Persistence, Network, Scanner Results, Remediation Actions, Quarantine, Before/After Comparison, Outstanding Concerns, Errors/Warnings, Tool Provenance, Credential/Incident Follow-up Checklist, Raw Evidence Index).
-- `report.json` — Machine-readable everything.
-- `technician-summary.txt` — <= 60 lines plain text for quick handoff.
+- `report.html`  -  Self-contained, XSS-safe, all sections (Executive Summary, System Info, Incident Timeline, ScreenConnect Findings with trust column, Other Remote Access, Persistence, Network, Scanner Results, Remediation Actions, Quarantine, Before/After Comparison, Outstanding Concerns, Errors/Warnings, Tool Provenance, Credential/Incident Follow-up Checklist, Raw Evidence Index).
+- `report.json`  -  Machine-readable everything.
+- `technician-summary.txt`  -  <= 60 lines plain text for quick handoff.
 
 ---
 
@@ -231,15 +231,15 @@ Exit codes: 0 = finished, 1 = failed/incomplete/awaiting review, 2 = missing dep
 
 | What | CI-Tested (Linux pwsh + Windows runners) | Needs Live Windows Testing |
 |------|------------------------------------------|----------------------------|
-| Parse checks (PS 5.1 + pwsh) | YES (both) | — |
-| ASCII/BOM scan | YES | — |
-| Pester unit tests (all modules) | YES | — |
-| Headless smoke (DetectOnly) | YES (synthetic fixtures) | — |
-| Config parsing (defaults/overrides/malformed) | YES | — |
-| Snapshot diff (synthetic) | YES | — |
-| Report XSS escaping / empty cases | YES | — |
-| Tool acquisition paths (mock NAS/official/signature/hash fail) | YES | — |
-| State machine transitions (headless) | YES | — |
+| Parse checks (PS 5.1 + pwsh) | YES (both) |  -  |
+| ASCII/BOM scan | YES |  -  |
+| Pester unit tests (all modules) | YES |  -  |
+| Headless smoke (DetectOnly) | YES (synthetic fixtures) |  -  |
+| Config parsing (defaults/overrides/malformed) | YES |  -  |
+| Snapshot diff (synthetic) | YES |  -  |
+| Report XSS escaping / empty cases | YES |  -  |
+| Tool acquisition paths (mock NAS/official/signature/hash fail) | YES |  -  |
+| State machine transitions (headless) | YES |  -  |
 | **WPF GUI on real box** | NO | **YES** |
 | **Real KVRT / MSERT execution** | NO | **YES** |
 | **Real ScreenConnect install/uninstall** | NO | **YES** |
@@ -255,12 +255,12 @@ Exit codes: 0 = finished, 1 = failed/incomplete/awaiting review, 2 = missing dep
 
 ## Known limitations
 
-- **SC key map ASSUMED NOT CONFIRMED** — The relay-identity extraction (keys `h`=relay host, `e`=session type, `k`=server key, etc.) is based on legacy analysis, not validated against a live ScreenConnect install. M0 live lab validation is the top priority and out of scope for agents.
-- **Windows-only forensic decoders unverified** — ShimCache offsets, BAM/DAM P/Invoke, UserAssist offset, Prefetch naming, SRUM live-copy all need real-box cross-check against known-good forensic tooling.
-- **Scanner detection parsers heuristic** — KVRT/ESET/MSERT log parsers are best-effort against vendor docs, not sample logs. Keep copied logs; require real-box eyeball before trusting counts.
-- **GUI untested on real machines** — WPF workflow, Findings UI, RemediationPreview, attended scanner launches all need manual walkthrough on Windows.
-- **Amcache collector missing** — Stage 1 retrospective expansion implements Prefetch, ShimCache, BAM/DAM, UserAssist, SRUM but no Amcache collector/schema field/diff class.
-- **Defender historical detections** — `Get-ThreatDetections` reads all history and reports as this run's detections; pre-existing detections may be mis-attributed.
+- **SC key map ASSUMED NOT CONFIRMED**  -  The relay-identity extraction (keys `h`=relay host, `e`=session type, `k`=server key, etc.) is based on legacy analysis, not validated against a live ScreenConnect install. M0 live lab validation is the top priority and out of scope for agents.
+- **Windows-only forensic decoders unverified**  -  ShimCache offsets, BAM/DAM P/Invoke, UserAssist offset, Prefetch naming, SRUM live-copy all need real-box cross-check against known-good forensic tooling.
+- **Scanner detection parsers heuristic**  -  KVRT/ESET/MSERT log parsers are best-effort against vendor docs, not sample logs. Keep copied logs; require real-box eyeball before trusting counts.
+- **GUI untested on real machines**  -  WPF workflow, Findings UI, RemediationPreview, attended scanner launches all need manual walkthrough on Windows.
+- **Amcache collector missing**  -  Stage 1 retrospective expansion implements Prefetch, ShimCache, BAM/DAM, UserAssist, SRUM but no Amcache collector/schema field/diff class.
+- **Defender historical detections**  -  `Get-ThreatDetections` reads all history and reports as this run's detections; pre-existing detections may be mis-attributed.
 
 ---
 
@@ -271,7 +271,7 @@ Exit codes: 0 = finished, 1 = failed/incomplete/awaiting review, 2 = missing dep
   - Output: `ScreenConnectCleaner-<Version>-portable.zip` + `.sha256` sidecar
   - SHA256SUMS.txt with relative paths (forward slashes, ASCII)
 - **Tests**: `pwsh -NoProfile -Command "Invoke-Pester tests/Unit, tests/Integration -PassThru"` (Pester 6.1.0)
-- **CI**: `.github/workflows/gui-revision-ci.yml` — linux-static (pwsh parse + unit + ASCII) + windows-dynamic (PS 5.1 + pwsh parse, unit, self-tests, headless smoke, malformed-config, build)
+- **CI**: `.github/workflows/gui-revision-ci.yml`  -  linux-static (pwsh parse + unit + ASCII) + windows-dynamic (PS 5.1 + pwsh parse, unit, self-tests, headless smoke, malformed-config, build)
 - **House rules**: `tests/ci/Test-HouseRules.ps1` (ASCII, BOM, JSON parse, CRLF .bat, no binaries), `tests/ci/Test-Parse.ps1` (Parser::ParseFile), `tests/ci/Test-SelfTests.ps1` (module self-test hooks)
 
 ---

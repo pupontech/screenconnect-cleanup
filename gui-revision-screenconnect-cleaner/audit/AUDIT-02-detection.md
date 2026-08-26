@@ -205,8 +205,8 @@ Per-instance fields (the Get-Slot template, lines 405-431):
 
 | Component | Verdict | Justification |
 |-----------|---------|---------------|
-| detect-remote-access.ps1 (整体) | REFACTOR | Solid detection logic but monolithic. Needs decomposition into modules, output model cleanup, and GUI integration hooks. Core detection quality is good; architecture is the problem. |
-| targets.json (配置) | RETAIN -> CONFIG | Schema is clean and extensible. Should become a proper config file in the new architecture, possibly with schema validation. The `_comment` field and the embedded-fallback pattern are valuable. |
+| detect-remote-access.ps1 (??) | REFACTOR | Solid detection logic but monolithic. Needs decomposition into modules, output model cleanup, and GUI integration hooks. Core detection quality is good; architecture is the problem. |
+| targets.json (??) | RETAIN -> CONFIG | Schema is clean and extensible. Should become a proper config file in the new architecture, possibly with schema validation. The `_comment` field and the embedded-fallback pattern are valuable. |
 | ScreenConnect deep module | REWRITE | Logic is sound but implementation is monolithic (267 lines in one function). Needs decomposition: service scan, directory scan, registry scan, process scan, config file parse, connection lookup should be separate functions. Output model needs a PSCustomObject class or hashtables with consistent schema. |
 | Generic presence module | REFACTOR | Simple and correct. Should become a reusable "generic detector" that takes any target config. Minor: the Kind/Name/Detail/Path/State/StartMode output shape is inconsistent with ScreenConnect output. |
 | System inventory collectors | RETAIN | Get-AllServices, Get-AllProcesses, Get-AllUninstallEntries, Get-ServiceInstallEvents are solid and reusable. Minor: add error handling granularity and optional caching. |
