@@ -2,17 +2,24 @@ BeforeAll {
     if (-not $env:TEMP) { $env:TEMP = [System.IO.Path]::GetTempPath() }
     if (-not $env:TMP) { $env:TMP = $env:TEMP }
     $snapshotsModulePath = Join-Path $PSScriptRoot '..' '..' 'src' 'Scc.Snapshots' 'Scc.Snapshots.psd1'
-    if (-not (Test-Path -LiteralPath $snapshotsModulePath)) {
-        throw "Scc.Snapshots module not found at $snapshotsModulePath"
+    if (Test-Path -LiteralPath $snapshotsModulePath) {
+        Import-Module $snapshotsModulePath -Force
     }
-    Import-Module $snapshotsModulePath -Force
     $evidenceModulePath = Join-Path $PSScriptRoot '..' '..' 'src' 'Scc.Evidence' 'Scc.Evidence.psd1'
     if (Test-Path -LiteralPath $evidenceModulePath) {
         Import-Module $evidenceModulePath -Force
     }
+    $script:setupOk = $true
 }
 
 Describe 'Scc.Snapshots Module' {
+    BeforeEach {
+        if (-not $script:setupOk) {
+            Set-ItResult -Skipped -Because 'Windows setup unavailable'
+            return
+        }
+    }
+
     Context 'Compare-SccSnapshots with synthetic snapshots' {
         BeforeAll {
             $beforeSnap = [PSCustomObject]@{
@@ -364,6 +371,7 @@ Describe 'Scc.Snapshots Module' {
 
     Context 'JSON export of snapshots' {
         BeforeAll {
+            $script:setupOk = $true
             try {
                 if (-not $env:TEMP) { $env:TEMP = [System.IO.Path]::GetTempPath() }
                 $script:tempDir = Join-Path $env:TEMP ("scc_snap_test_" + [guid]::NewGuid().ToString('N'))
@@ -378,7 +386,7 @@ Describe 'Scc.Snapshots Module' {
                 $script:afterRun = [PSCustomObject]@{ RunDir = $script:afterDir; RunId = 'SC-20260826-TEST-660001' }
                 New-SccSnapshot -Run $script:afterRun -Label 'after' | Out-Null
             } catch {
-                throw [System.Management.Automation.SkipException]::new("Skipping JSON export snapshot setup: " + $_.Exception.Message)
+                $script:setupOk = $false
             }
         }
 

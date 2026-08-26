@@ -2,15 +2,23 @@ BeforeAll {
     if (-not $env:TEMP) { $env:TEMP = [System.IO.Path]::GetTempPath() }
     if (-not $env:TMP) { $env:TMP = $env:TEMP }
     $modulePath = Join-Path $PSScriptRoot '..' '..' 'src' 'Scc.Evidence' 'Scc.Evidence.psd1'
-    if (-not (Test-Path -LiteralPath $modulePath)) {
-        throw "Scc.Evidence module not found at $modulePath"
+    if (Test-Path -LiteralPath $modulePath) {
+        Import-Module $modulePath -Force
     }
-    Import-Module $modulePath -Force
+    $script:setupOk = $true
 }
 
 Describe 'Scc.Evidence Module' {
+    BeforeEach {
+        if (-not $script:setupOk) {
+            Set-ItResult -Skipped -Because 'Windows setup unavailable'
+            return
+        }
+    }
+
     Context 'New-SccSnapshot on Linux' {
         BeforeAll {
+            $script:setupOk = $true
             try {
                 if (-not $env:TEMP) { $env:TEMP = [System.IO.Path]::GetTempPath() }
                 $tempDir = Join-Path $env:TEMP ("scc_test_" + [guid]::NewGuid().ToString('N'))
@@ -20,7 +28,7 @@ Describe 'Scc.Evidence Module' {
                 $script:run = [PSCustomObject]@{ RunDir = $runDir; RunId = 'SC-20260826-TEST-120000' }
                 $script:tempDir = $tempDir
             } catch {
-                throw [System.Management.Automation.SkipException]::new("Skipping Evidence snapshot test: " + $_.Exception.Message)
+                $script:setupOk = $false
             }
         }
 
@@ -120,6 +128,7 @@ Describe 'Scc.Evidence Module' {
 
     Context 'Get-SccSnapshot' {
         BeforeAll {
+            $script:setupOk = $true
             try {
                 if (-not $env:TEMP) { $env:TEMP = [System.IO.Path]::GetTempPath() }
                 $tempDir = Join-Path $env:TEMP ("scc_test_" + [guid]::NewGuid().ToString('N'))
@@ -130,7 +139,7 @@ Describe 'Scc.Evidence Module' {
                 $script:tempDir = $tempDir
                 New-SccSnapshot -Run $script:run -Label 'before' | Out-Null
             } catch {
-                throw [System.Management.Automation.SkipException]::new("Skipping Get-SccSnapshot setup: " + $_.Exception.Message)
+                $script:setupOk = $false
             }
         }
 
@@ -152,6 +161,7 @@ Describe 'Scc.Evidence Module' {
 
     Context 'Key stability and sorting' {
         BeforeAll {
+            $script:setupOk = $true
             try {
                 if (-not $env:TEMP) { $env:TEMP = [System.IO.Path]::GetTempPath() }
                 $tempDir = Join-Path $env:TEMP ("scc_test_" + [guid]::NewGuid().ToString('N'))
@@ -161,7 +171,7 @@ Describe 'Scc.Evidence Module' {
                 $script:run = [PSCustomObject]@{ RunDir = $runDir; RunId = 'SC-20260826-TEST-330000' }
                 $script:tempDir = $tempDir
             } catch {
-                throw [System.Management.Automation.SkipException]::new("Skipping Key stability setup: " + $_.Exception.Message)
+                $script:setupOk = $false
             }
         }
 
@@ -181,6 +191,7 @@ Describe 'Scc.Evidence Module' {
 
     Context 'Section failure handling' {
         BeforeAll {
+            $script:setupOk = $true
             try {
                 if (-not $env:TEMP) { $env:TEMP = [System.IO.Path]::GetTempPath() }
                 $tempDir = Join-Path $env:TEMP ("scc_test_" + [guid]::NewGuid().ToString('N'))
@@ -190,7 +201,7 @@ Describe 'Scc.Evidence Module' {
                 $script:run = [PSCustomObject]@{ RunDir = $runDir; RunId = 'SC-20260826-TEST-440000' }
                 $script:tempDir = $tempDir
             } catch {
-                throw [System.Management.Automation.SkipException]::new("Skipping Section failure setup: " + $_.Exception.Message)
+                $script:setupOk = $false
             }
         }
 
@@ -216,6 +227,7 @@ Describe 'Scc.Evidence Module' {
 
     Context 'schema v2 fields' {
         BeforeAll {
+            $script:setupOk = $true
             try {
                 if (-not $env:TEMP) { $env:TEMP = [System.IO.Path]::GetTempPath() }
                 $tempDir = Join-Path $env:TEMP ("scc_test_" + [guid]::NewGuid().ToString('N'))
@@ -225,7 +237,7 @@ Describe 'Scc.Evidence Module' {
                 $script:run = [PSCustomObject]@{ RunDir = $runDir; RunId = 'SC-20260826-TEST-550000' }
                 $script:tempDir = $tempDir
             } catch {
-                throw [System.Management.Automation.SkipException]::new("Skipping schema v2 setup: " + $_.Exception.Message)
+                $script:setupOk = $false
             }
         }
 

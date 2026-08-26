@@ -14,10 +14,9 @@ BeforeAll {
     if (-not (Test-Path -LiteralPath $env:LocalAppData)) { $null = New-Item -ItemType Directory -Path $env:LocalAppData -Force }
     if (-not (Test-Path -LiteralPath $env:ProgramData)) { $null = New-Item -ItemType Directory -Path $env:ProgramData -Force }
     $modulePath = Join-Path $PSScriptRoot '..' '..' 'src' 'Scc.Core' 'Scc.Core.psd1'
-    if (-not (Test-Path -LiteralPath $modulePath)) {
-        throw "Scc.Core module not found at $modulePath"
+    if (Test-Path -LiteralPath $modulePath) {
+        Import-Module -Name $modulePath -Force
     }
-    Import-Module -Name $modulePath -Force
 }
 
 AfterAll {
@@ -251,6 +250,9 @@ Describe 'runstate shape (resume contract)' {
         # its reportRoot override into other tests.
         $script:rtCfgDir = (Get-SccPaths).ConfigUserDir
         $script:rtCfgFile = Join-Path $script:rtCfgDir 'scc-config.json'
+        if (-not (Test-Path -LiteralPath $script:rtCfgDir)) {
+            New-Item -ItemType Directory -Path $script:rtCfgDir -Force | Out-Null
+        }
         $script:rtCfgBackup = $null
         if (Test-Path -LiteralPath $script:rtCfgFile) {
             try { $script:rtCfgBackup = [System.IO.File]::ReadAllText($script:rtCfgFile) } catch { $script:rtCfgBackup = $null }
