@@ -49,6 +49,24 @@ else {
     } else { Write-Host '  OK Invoke-GUIScanner.ps1: ValidateSet = Malwarebytes only.' }
 }
 
+# --- Contract 3: AV-uninstaller is attended-only (never silent) ----------
+Write-Host 'Section 3: Invoke-AVUninstaller.ps1 (attended AV removal)'
+$avUninstaller = Join-Path $repoRoot 'Invoke-AVUninstaller.ps1'
+if (-not (Test-Path -LiteralPath $avUninstaller)) { Add-Failure 'Invoke-AVUninstaller.ps1 missing.' }
+else {
+    $text = [System.IO.File]::ReadAllText($avUninstaller)
+    if ($text -notmatch 'function Get-InstalledAv') { Add-Failure 'Invoke-AVUninstaller.ps1 missing Get-InstalledAv discovery.' }
+    if ($text -notmatch 'function Open-Uninstaller') { Add-Failure 'Invoke-AVUninstaller.ps1 missing Open-Uninstaller launch+wait.' }
+    # Must NOT drive a silent/unattended uninstall. The only command we build is
+    # "cmd /c <uninstallstring>" (Open-Uninstaller) - verify no silent flag token
+    # appears in actual code (ignore comment prose, which mentions /quiet by way
+    # of telling the technician we do NOT use it).
+    $codeOnly = $text -replace '(?s)<#.*?#>', '' -replace '(?m)^\s*#.*$', ''
+    if ($codeOnly -match '/quiet|/silent|/passive|/S\s|/S"') { Add-Failure 'Invoke-AVUninstaller.ps1 appears to pass silent uninstall flags - must be attended only.' }
+    if ($text -match 'Windows Defender' -and $text -notmatch 'osExclude') { Add-Failure 'Invoke-AVUninstaller.ps1 does not exclude Windows Defender from removal.' }
+    if ($failures.Count -eq 0) { Write-Host '  OK Invoke-AVUninstaller.ps1: attended-only, Defender excluded.' }
+}
+
 # --- Fail/exit ----------------------------------------------------------
 if ($script:failures.Count -gt 0) {
     foreach ($f in $script:failures) { Write-Host ("FAIL: " + $f) -ForegroundColor Red }

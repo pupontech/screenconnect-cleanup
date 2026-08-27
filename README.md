@@ -72,10 +72,11 @@ Two further consequences worth stating plainly:
 | 3 — Technician review | approval gate — nothing is removed without it | **built** (interactive y/n prompt; no GUI) |
 | 4 — Remove / quarantine | stop, uninstall, quarantine, clean persistence | **built, dry-run default** (never run on live Windows; skipped by default via `-sr`) |
 | 5 — Scanners | Malwarebytes (GUI, attended) | **built** (Invoke-GUIScanner launches MBSetup; KVRT/ESET/AdwCleaner/Defender removed 2026-08-26 by owner; real exec unverified) |
-| 6 — Procmon (targeted) | "something reinstalled it — what?" | **not started** (opt-in stub only) |
-| 7 — Snapshot (after) + diff | prove it is gone, catch resurrections | **built** (Linux-verified) |
-| 8 — Report | HTML + JSON + tech summary | **built** (XSS + empty-case verified) |
-| — Top-level runner | `sc-cleanup.ps1` ties all 9 stages together | **built** (Linux end-to-end, detect stubbed) |
+| 6 — Uninstall installed AV | open each detected third-party AV uninstaller (attended GUI) | **built** (Invoke-AVUninstaller; Windows Defender excluded; results in report) |
+| 7 — Procmon (targeted) | "something reinstalled it — what?" | **not started** (opt-in stub only) |
+| 8 — Snapshot (after) + diff | prove it is gone, catch resurrections | **built** (Linux-verified) |
+| 9 — Report | HTML + JSON + tech summary | **built** (XSS + empty-case verified; now includes AV-uninstall section) |
+| — Top-level runner | `sc-cleanup.ps1` ties all 10 stages together | **built** (Linux end-to-end, detect stubbed) |
 
 Deliberate build order: **every non-destructive stage ships before any destructive one.**
 Removal comes last, on top of machinery already proven in the field.

@@ -13,6 +13,7 @@ param(
     [Parameter(Mandatory=$true)][string]$FindingsJson,
     [string]$OutputPath,
     [string]$RemovalManifest,
+    [string]$AVUninstall,
     [switch]$PassThru
 )
 
@@ -528,6 +529,47 @@ if ($groupsWithHits.Count -eq 0) {
 }
 
 # ---------------------------------------------------------------------------
+# Installed-AV uninstall (Stage 6) - attended results
+# ---------------------------------------------------------------------------
+$avUninstallSectionHtml = ''
+if ($AVUninstall) {
+    $avData = $null
+    $avError = $null
+    if (Test-Path -LiteralPath $AVUninstall) {
+        try { $avData = (Get-Content -LiteralPath $AVUninstall -Raw) | ConvertFrom-Json }
+        catch { $avError = $_.Exception.Message }
+    } else { $avError = "results file not found: $AVUninstall" }
+
+    $rows = ''
+    if ($avData -and $avData.Results) {
+        foreach ($r in $avData.Results) {
+            $name  = Get-Prop $r 'DisplayName'
+            $status = Get-Prop $r 'Status'
+            $opened = Get-Prop $r 'OpenedAt'
+            $closed = Get-Prop $r 'ClosedAt'
+            $cmd = Get-Prop $r 'UninstallString'
+            $rows += "<tr><td>$(Fmt $name)</td><td>$(Fmt $status)</td><td>$(Fmt $opened)</td><td>$(Fmt $closed)</td><td class='mono'>$(Fmt $cmd)</td></tr>`n"
+        }
+    }
+    if (-not $rows) {
+        if ($avError) {
+            $rows = "<tr><td colspan='5'>Could not load AV-uninstall results: $(Fmt $avError)</td></tr>"
+        } else {
+            $rows = '<tr><td colspan="5">No installed third-party AV was detected (or the step was skipped).</td></tr>'
+        }
+    }
+    $avNote = if ($avError) { "<p class='warn-line'>$avError</p>" } else { "<p class='muted'>Uninstallers were opened for the technician to drive (attended). Source: $(Fmt $AVUninstall)</p>" }
+    $avUninstallSectionHtml = @"
+<section id="av-uninstall">
+  <h2>Installed antivirus / security products uninstalled</h2>
+  $avNote
+  <div class="table-scroll"><table class="data-table"><thead><tr><th>Product</th><th>Status</th><th>Opened (UTC)</th><th>Closed (UTC)</th><th>Uninstall command</th></tr></thead><tbody>$rows</tbody></table></div>
+  <p class="muted">These products were opened for attended removal. Confirm each was fully uninstalled before leaving the site; a machine should not be left without working AV unless a replacement is being deployed.</p>
+</section>
+"@
+}
+
+# ---------------------------------------------------------------------------
 # Removal manifest and credential-reset reminder
 # ---------------------------------------------------------------------------
 $removalSectionHtml = ''
@@ -793,6 +835,7 @@ $headerHtml
 $summaryHtml
 $scSectionHtml
 $otherSectionHtml
+$avUninstallSectionHtml
 $removalSectionHtml
 $histSectionHtml
 $parseSectionHtml

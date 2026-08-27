@@ -20,6 +20,7 @@ Run-DetectRemoteAccess.bat
 targets.json
 New-InvestigationReport.ps1
 Invoke-GUIScanner.ps1          <- launches Malwarebytes GUI and waits (Stage 5)
+Invoke-AVUninstaller.ps1        <- opens installed-AV uninstallers, attended (Stage 6)
 tools\Get-ToolPack.ps1          <- downloader ONLY; do NOT copy tools\* exes
 tools\Get-AVTools.ps1           <- Malwarebytes (MBSetup.exe) stager
 docs\                           <- optional but recommended (work log + roadmap)

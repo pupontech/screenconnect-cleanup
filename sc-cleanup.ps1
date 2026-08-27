@@ -8,9 +8,10 @@
   Stage 3: Technician review gate
   Stage 4: Contain + Remove  [skip: -sr; explicit confirmation required]
   Stage 5: Scanners  [skip: -sa]
-  Stage 6: Procmon  [opt-in: -procmon]
-  Stage 7: Snapshot (AFTER) + Diff
-  Stage 8: Report
+  Stage 6: Uninstall installed AV  [skip: -avu; attended GUI]
+  Stage 7: Procmon  [opt-in: -procmon]
+  Stage 8: Snapshot (AFTER) + Diff
+  Stage 9: Report
 
   Nothing destructive is reachable without explicit flags and the review gate.
   -ExecuteRemoval pre-authorizes Stage 4 for lab/VM testing: every detected
@@ -24,6 +25,7 @@ param(
     # Skip flags
     [switch]$sa,          # skip antivirus scanners (Stage 5)
     [switch]$sr,          # skip removal (detect + report only)
+    [switch]$avu,         # skip uninstalling installed AV (Stage 6)
     [switch]$np,          # no restore point
     [switch]$offline,     # use pre-staged tool pack, do not download
     [switch]$procmon,     # force Procmon stage
@@ -50,7 +52,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Constants & script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.5.0'
+$ScriptVersion = '1.6.0'
 $ScriptName = 'sc-cleanup.ps1'
 $PipelineStages = @(
     @{ Id = 0; Name = 'Preflight';            SkipFlag = '' },
@@ -59,9 +61,10 @@ $PipelineStages = @(
     @{ Id = 3; Name = 'Review Gate';          SkipFlag = '' },
     @{ Id = 4; Name = 'Contain + Remove';     SkipFlag = 'sr' },
     @{ Id = 5; Name = 'Scanners';             SkipFlag = 'sa' },
-    @{ Id = 6; Name = 'Procmon';              SkipFlag = 'procmon' },
-    @{ Id = 7; Name = 'Snapshot (After)+Diff'; SkipFlag = '' },
-    @{ Id = 8; Name = 'Report';               SkipFlag = '' }
+    @{ Id = 6; Name = 'Uninstall installed AV'; SkipFlag = 'avu' },
+    @{ Id = 7; Name = 'Procmon';              SkipFlag = 'procmon' },
+    @{ Id = 8; Name = 'Snapshot (After)+Diff'; SkipFlag = '' },
+    @{ Id = 9; Name = 'Report';               SkipFlag = '' }
 )
 
 # -----------------------------------------------------------------------------
@@ -755,11 +758,47 @@ $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 'sa' -St
 }
 
 # -----------------------------------------------------------------------------
-# Stage 6: Procmon (opt-in only via -procmon)
+# Stage 6: Uninstall installed third-party AV (opt-in via -avu; attended GUI)
 # -----------------------------------------------------------------------------
-$stage6Result = Invoke-Stage -StageId 6 -StageName 'Procmon' -SkipFlag 'procmon' -StageBlock {
+$stage6Result = Invoke-Stage -StageId 6 -StageName 'Uninstall installed AV' -SkipFlag 'avu' -StageBlock {
+    if ($avu) {
+        Write-StageLog "Stage 6 SKIPPED via -avu (no AV uninstall)"
+        return @{ Skipped = $true }
+    }
+
+    # Attended only: open each detected AV product's uninstaller GUI and wait
+    # for the technician to finish. Never invents silent uninstall flags.
+    $avUninstaller = Join-Path $ScriptRoot 'Invoke-AVUninstaller.ps1'
+    $logsDir = Join-Path $WorkDir 'logs'
+    $null = New-Item -ItemType Directory -Path $logsDir -Force
+
+    if (-not (Test-Path $avUninstaller)) {
+        Write-StageLog ("Invoke-AVUninstaller.ps1 not found at " + $avUninstaller) 'Warn'
+        return @{ Skipped = $false; Error = 'script-not-found' }
+    }
+
+    Write-StageLog "Launching installed-AV uninstallers (attended - technician drives each GUI)..."
+    try {
+        $avJson = & $avUninstaller -LogDir $logsDir -TimeoutMinutes 240 -ErrorAction Stop
+        $avPath = Join-Path $logsDir 'av-uninstall-results.json'
+        if (Test-Path -LiteralPath $avPath) {
+            Write-StageLog ("AV uninstall session recorded: " + $avPath) 'Cyan'
+        } else {
+            Write-StageLog "AV uninstaller produced no results file." 'Warn'
+        }
+        return @{ Skipped = $false; ResultsPath = $avPath; Raw = $avJson }
+    } catch {
+        Write-StageLog ("AV uninstaller launch failed: " + $_.Exception.Message) 'Warn'
+        return @{ Skipped = $false; Error = $_.Exception.Message }
+    }
+}
+
+# -----------------------------------------------------------------------------
+# Stage 7: Procmon (opt-in only via -procmon)
+# -----------------------------------------------------------------------------
+$stage7Result = Invoke-Stage -StageId 7 -StageName 'Procmon' -SkipFlag 'procmon' -StageBlock {
     if (-not $procmon) {
-        Write-StageLog "Stage 6 SKIPPED (not requested via -procmon)"
+        Write-StageLog "Stage 7 SKIPPED (not requested via -procmon)"
         return @{ Skipped = $true; Note = 'Opt-in only' }
     }
 
@@ -775,9 +814,9 @@ $stage6Result = Invoke-Stage -StageId 6 -StageName 'Procmon' -SkipFlag 'procmon'
 }
 
 # -----------------------------------------------------------------------------
-# Stage 7: Snapshot (AFTER) + Diff
+# Stage 8: Snapshot (AFTER) + Diff
 # -----------------------------------------------------------------------------
-$stage7Result = Invoke-Stage -StageId 7 -StageName 'Snapshot (After)+Diff' -SkipFlag '' -StageBlock {
+$stage8Result = Invoke-Stage -StageId 8 -StageName 'Snapshot (After)+Diff' -SkipFlag '' -StageBlock {
     $collectSnapshot = Join-Path $ScriptRoot 'collect-snapshot.ps1'
     if (-not (Test-Path $collectSnapshot)) {
         throw "collect-snapshot.ps1 not found at $collectSnapshot"
@@ -878,9 +917,9 @@ $stage7Result = Invoke-Stage -StageId 7 -StageName 'Snapshot (After)+Diff' -Skip
 }
 
 # -----------------------------------------------------------------------------
-# Stage 8: Report
+# Stage 9: Report
 # -----------------------------------------------------------------------------
-$stage8Result = Invoke-Stage -StageId 8 -StageName 'Report' -SkipFlag '' -StageBlock {
+$stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageBlock {
     $reportScript = Join-Path $ScriptRoot 'New-InvestigationReport.ps1'
     if (-not (Test-Path $reportScript)) {
         throw "New-InvestigationReport.ps1 not found at $reportScript"
@@ -892,8 +931,8 @@ $stage8Result = Invoke-Stage -StageId 8 -StageName 'Report' -SkipFlag '' -StageB
 
     Write-StageLog ("Generating HTML report from " + $findingsJson)
     $repArgs = @('-FindingsJson', $findingsJson, '-OutputPath', $reportHtml)
-    $removalManifest = Join-Path $WorkDir 'removal-manifest.json'
-    if (Test-Path -LiteralPath $removalManifest) { $repArgs += @('-RemovalManifest', $removalManifest) }
+    $avUninstallResults = if ($stage6Result -and $stage6Result.Result -and $stage6Result.Result.ResultsPath) { $stage6Result.Result.ResultsPath } else { $null }
+    if ($avUninstallResults -and (Test-Path -LiteralPath $avUninstallResults)) { $repArgs += @('-AVUninstall', $avUninstallResults) }
     $rc = Invoke-ChildScript -ScriptPath $reportScript -ArgumentList $repArgs -LogTag 'Report'
     if ($rc -ne 0) { throw ("New-InvestigationReport.ps1 exited with code " + $rc) }
     Write-StageLog ("Report generated: " + $reportHtml)
@@ -966,11 +1005,11 @@ Write-StageLog ("Working directory: " + $WorkDir)
 Write-StageLog ("Master log: " + $MasterLogPath)
 $reportHtml = $null
 $resultsJson = $null
-if ($stage8Result -and $stage8Result.ContainsKey('Result') -and $stage8Result.Result -and $stage8Result.Result.ContainsKey('ReportHtml')) {
-    $reportHtml = $stage8Result.Result.ReportHtml
+if ($stage9Result -and $stage9Result.ContainsKey('Result') -and $stage9Result.Result -and $stage9Result.Result.ContainsKey('ReportHtml')) {
+    $reportHtml = $stage9Result.Result.ReportHtml
 }
-if ($stage8Result -and $stage8Result.ContainsKey('Result') -and $stage8Result.Result -and $stage8Result.Result.ContainsKey('ResultsJson')) {
-    $resultsJson = $stage8Result.Result.ResultsJson
+if ($stage9Result -and $stage9Result.ContainsKey('Result') -and $stage9Result.Result -and $stage9Result.Result.ContainsKey('ResultsJson')) {
+    $resultsJson = $stage9Result.Result.ResultsJson
 }
 if ($reportHtml) {
     Write-StageLog ("HTML report: " + $reportHtml)

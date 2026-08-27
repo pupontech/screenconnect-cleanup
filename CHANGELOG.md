@@ -3,6 +3,19 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.6.0] - 2026-08-27
+Uninstall-installed-AV option (owner directive: "add an option to uninstall the installed av as the third to last option, open the uninstaller, add it to the report").
+- New `Invoke-AVUninstaller.ps1`: discovers installed third-party AV via the
+  Uninstall registry keys, opens each product's uninstaller as an attended GUI
+  (waits for the technician to finish; never silent-uninstalls), and writes
+  `av-uninstall-results.json`. Windows Defender / MSRT excluded (OS component).
+- New Stage 6 in `sc-cleanup.ps1` (skip via `-avu`); wired into the report.
+- `New-InvestigationReport.ps1` gains an "Installed antivirus / security
+  products uninstalled" section (driven by `-AVUninstall`).
+- `START-HERE.bat` is now 10 steps; Step 8 = uninstall installed AV (third-to-last:
+  8 uninstall-AV, 9 after-snap+diff, 10 report).
+- CI contract test extended to assert the AV-uninstaller is attended-only.
+
 ## [1.5.0] - 2026-08-26
 Malwarebytes-only scanner line-up (owner decision: "i just want malwarebytes").
 - `Get-AVTools.ps1` stages **only MBSetup.exe** (Malwarebytes MB5); KVRT, ESET,
