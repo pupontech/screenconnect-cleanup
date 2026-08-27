@@ -3,6 +3,15 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.6.1] - 2026-08-27
+Human-readable removal report.
+- `remove-screenconnect.ps1` now also writes **`removal-report.txt`** (plain
+  English) alongside `removal-manifest.json`: problems/failures called out up
+  top, a summary, and a full chronological action log. The JSON is retained for
+  the report stage + resurrection logic; the .txt is the human-facing file.
+- `sc-cleanup.ps1` Stage 4 return carries `ReportTxtPath`; the HTML report's
+  removal section points to `removal-report.txt`.
+
 ## [1.6.0] - 2026-08-27
 Uninstall-installed-AV option (owner directive: "add an option to uninstall the installed av as the third to last option, open the uninstaller, add it to the report").
 - New `Invoke-AVUninstaller.ps1`: discovers installed third-party AV via the

@@ -52,7 +52,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Constants & script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.6.0'
+$ScriptVersion = '1.6.1'
 $ScriptName = 'sc-cleanup.ps1'
 $PipelineStages = @(
     @{ Id = 0; Name = 'Preflight';            SkipFlag = '' },
@@ -711,7 +711,8 @@ $stage4Result = Invoke-Stage -StageId 4 -StageName 'Contain + Remove' -SkipFlag 
         Add-Content -Path $MasterLogPath -Value ("Removal: INCOMPLETE (exit " + $rc + ")") -Encoding UTF8
     }
     $manifest = Join-Path $WorkDir 'removal-manifest.json'
-    return @{ Skipped = $false; ManifestPath = $manifest; Executed = ($confirmed -and -not $sr); ExitCode = $rc }
+    $reportTxt = Join-Path $WorkDir 'removal-report.txt'
+    return @{ Skipped = $false; ManifestPath = $manifest; ReportTxtPath = $reportTxt; Executed = ($confirmed -and -not $sr); ExitCode = $rc }
 }
 
 # -----------------------------------------------------------------------------

@@ -579,7 +579,7 @@ if ($RemovalManifest -or $removalManifestError) {
         $rows += "<tr><td>$(Fmt (Get-Prop $entry 'InstanceId'))</td><td>$(Fmt (Get-Prop $entry 'Action'))</td><td>$(Fmt (Get-Prop $entry 'Target'))</td><td>$(Fmt (Get-Prop $entry 'Result'))</td><td>$(Fmt (Get-Prop $entry 'Details'))</td></tr>`n"
     }
     if (-not $rows) { $rows = '<tr><td colspan="5">No removal actions were recorded.</td></tr>' }
-    $manifestNote = if ($removalManifestError) { "<p class='warn-line'>Removal manifest could not be loaded: $(Fmt $removalManifestError)</p>" } else { "<p class='muted'>Manifest: $(Fmt $RemovalManifest)</p>" }
+    $manifestNote = if ($removalManifestError) { "<p class='warn-line'>Removal manifest could not be loaded: $(Fmt $removalManifestError)</p>" } else { "<p class='muted'>Machine-readable manifest: $(Fmt $RemovalManifest). A plain-English copy is in <code>removal-report.txt</code> alongside it.</p>" }
     $removalSectionHtml = @"
 <section id="removal">
   <h2>Removed and quarantined items</h2>

@@ -61,7 +61,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.6.0'
+$ScriptVersion = '1.6.1'
 $ScriptName = 'remove-screenconnect.ps1'
 
 # We need the helper in scope before the elevation gate below runs.
@@ -1689,6 +1689,81 @@ try {
     Write-Log "Failed to write manifest: $($_.Exception.Message)" 'Error'
     $overallSuccess = $false
 }
+
+# -----------------------------------------------------------------------------
+# Write a HUMAN-READABLE removal report (plain English .txt)
+#
+# The JSON manifest above is machine-readable (consumed by the report stage and
+# resurrection logic), but it is not easy for a technician or client to read.
+# This .txt file is the human-facing deliverable: every action in plain English,
+# with the problems/failures called out up top.
+# -----------------------------------------------------------------------------
+$reportTxtPath = Join-Path $WorkDir 'removal-report.txt'
+try {
+    $lines = New-Object System.Collections.ArrayList
+    [void]$lines.Add("========================================================")
+    [void]$lines.Add(" SCREENCONNECT REMOVAL REPORT")
+    [void]$lines.Add("========================================================")
+    [void]$lines.Add("")
+    [void]$lines.Add("Generated (UTC) : $($manifestObj.GeneratedUtc)")
+    [void]$lines.Add("Computer        : $($manifestObj.ComputerName)")
+    [void]$lines.Add("Tool version    : $($manifestObj.Version)")
+    [void]$lines.Add("Mode            : $(if ($manifestObj.ExecuteMode) { 'EXECUTE (real removal)' } else { 'DRY-RUN (no changes made)' })")
+    [void]$lines.Add("Plan file       : $($manifestObj.PlanFile)")
+    [void]$lines.Add("Working dir     : $($manifestObj.WorkDir)")
+    [void]$lines.Add("Quarantine dir  : $($manifestObj.QuarantineDir)")
+    [void]$lines.Add("")
+
+    # --- PROBLEMS / FAILURES first (most important for a human) -------------
+    $problems = @($script:Manifest | Where-Object { $_.Result -in @('Failed','Rejected','PRODUCT_VERIFICATION_FAILED','LaunchFailed','TimeoutLeftRunning') })
+    [void]$lines.Add("--------------------------------------------------------")
+    if ($problems.Count -eq 0) {
+        [void]$lines.Add(" PROBLEMS: NONE - every attempted action succeeded.")
+    } else {
+        [void]$lines.Add(" PROBLEMS (" + $problems.Count + "):")
+        [void]$lines.Add("--------------------------------------------------------")
+        foreach ($p in $problems) {
+            $who = if ($p.InstanceId) { "Instance $($p.InstanceId): " } else { '' }
+            [void]$lines.Add("- $($who)$($p.Action) on [$($p.Target)] -> $($p.Result)")
+            if ($p.Details) { [void]$lines.Add("    $($p.Details)") }
+            if ($null -ne $p.ExitCode -and $p.ExitCode -ne '') { [void]$lines.Add("    Exit code: $($p.ExitCode)") }
+        }
+    }
+    [void]$lines.Add("")
+
+    # --- Plain-English summary counts -------------------------------------
+    [void]$lines.Add("--------------------------------------------------------")
+    [void]$lines.Add(" SUMMARY")
+    [void]$lines.Add("--------------------------------------------------------")
+    [void]$lines.Add(" Successful actions : $successCount")
+    [void]$lines.Add(" Failed actions     : $failedCount")
+    [void]$lines.Add(" Dry-run actions    : $dryRunCount")
+    [void]$lines.Add(" Deferred to reboot : $deferredCount")
+    [void]$lines.Add(" Verification skips : $verifFailCount (product could not be verified; left installed on purpose)")
+    [void]$lines.Add("")
+
+    # --- Full action log, in plain English, chronological ------------------
+    [void]$lines.Add("--------------------------------------------------------")
+    [void]$lines.Add(" FULL ACTION LOG")
+    [void]$lines.Add("--------------------------------------------------------")
+    foreach ($e in $script:Manifest.ToArray()) {
+        $when = $e.TimestampUtc
+        $who  = if ($e.InstanceId) { " [$($e.InstanceId)]" } else { '' }
+        $line = "$when$who  $($e.Action): $($e.Target) -> $($e.Result)"
+        [void]$lines.Add($line)
+        if ($e.Details) { [void]$lines.Add("            $($e.Details)") }
+    }
+    [void]$lines.Add("")
+    [void]$lines.Add("End of report. Machine-readable details are in removal-manifest.json.")
+    [void]$lines.Add("========================================================")
+
+    [System.IO.File]::WriteAllText($reportTxtPath, ($lines -join "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+    Write-Log "Human-readable report written: $reportTxtPath"
+} catch {
+    Write-Log "Failed to write removal report: $($_.Exception.Message)" 'Error'
+    $overallSuccess = $false
+}
+
 
 # -----------------------------------------------------------------------------
 # Final summary
