@@ -309,18 +309,37 @@ function Copy-SccMSERTScanLogs {
 }
 
 # ---------------------------------------------------------------------------
+# Private: PSObject-safe config property checks (configs arrive as either
+# hashtables (defaults) or PSCustomObject (ConvertFrom-Json)); .ContainsKey
+# does not exist on PSCustomObject and ['key'] indexing is unreliable.
+# ---------------------------------------------------------------------------
+function Test-SccConfigHas {
+    param($Obj, [string]$Key)
+    if ($null -eq $Obj) { return $false }
+    try {
+        if ($Obj -is [System.Collections.IDictionary]) {
+            return $Obj.ContainsKey($Key)
+        }
+        return (@($Obj.PSObject.Properties.Name) -contains $Key)
+    } catch {
+        return $false
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Public: Get-SccScannerList
 # ---------------------------------------------------------------------------
 function Get-SccScannerList {
     [CmdletBinding()]
     param(
         [switch]$EnabledOnly,
-        [hashtable]$Config
+        $Config
     )
 
     $cfg = $script:DefaultScanners
-    if ($Config -and $Config.ContainsKey('scanners')) {
-        $cfg = $Config['scanners']
+    if (Test-SccConfigHas -Obj $Config -Key 'scanners') {
+        $sc = $Config.scanners
+        if ($null -ne $sc) { $cfg = $sc }
     }
 
     $allScanners = @(
@@ -333,13 +352,22 @@ function Get-SccScannerList {
     )
 
     $enabledSet = @{}
-    if ($cfg.ContainsKey('Enabled')) {
-        foreach ($n in @($cfg['Enabled'])) { $enabledSet[$n] = $true }
+    if (Test-SccConfigHas -Obj $cfg -Key 'Enabled') {
+        foreach ($n in @($cfg.Enabled)) {
+            # Config files historically name Defender 'Defender'; the
+            # authoritative adapter name is 'MicrosoftDefender'.
+            if ($n -eq 'Defender') { $n = 'MicrosoftDefender' }
+            $enabledSet[$n] = $true
+        }
     }
     $orderMap = @{}
-    if ($cfg.ContainsKey('Order')) {
+    if (Test-SccConfigHas -Obj $cfg -Key 'Order') {
         $idx = 1
-        foreach ($n in @($cfg['Order'])) { $orderMap[$n] = $idx; $idx++ }
+        foreach ($n in @($cfg.Order)) {
+            if ($n -eq 'Defender') { $n = 'MicrosoftDefender' }
+            $orderMap[$n] = $idx
+            $idx++
+        }
     }
 
     $result = @()
@@ -391,9 +419,9 @@ function Invoke-SccScanner {
 
     # Default timeout from config
     if ($TimeoutMinutes -lt 1) {
-        if ($config -and $config.ContainsKey('scanners') -and
-            $config['scanners'].ContainsKey('defaultTimeoutMinutes')) {
-            $TimeoutMinutes = [int]$config['scanners']['defaultTimeoutMinutes']
+        if ((Test-SccConfigHas -Obj $config -Key 'scanners') -and
+            (Test-SccConfigHas -Obj $config.scanners -Key 'defaultTimeoutMinutes')) {
+            $TimeoutMinutes = [int]$config.scanners.defaultTimeoutMinutes
         } else {
             $TimeoutMinutes = 120
         }

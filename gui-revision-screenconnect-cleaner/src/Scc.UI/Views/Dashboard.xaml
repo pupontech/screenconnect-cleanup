@@ -68,13 +68,17 @@
         </StackPanel>
       </TabItem>
     </TabControl>
-    <WrapPanel Grid.Row="2" HorizontalAlignment="Left">
-      <Button x:Name="BtnFullInvestigation" Content="Start Full Investigation"/>
-      <Button x:Name="BtnDetectionOnly" Content="Detection Only"/>
-      <Button x:Name="BtnScanOnly" Content="Scan Only"/>
-      <Button x:Name="BtnReviewPrevious" Content="Review Previous Report"/>
-      <Button x:Name="BtnSettings" Content="Settings"/>
-      <Button x:Name="BtnAdvanced" Content="Advanced Tools"/>
-    </WrapPanel>
+    <StackPanel Grid.Row="2" HorizontalAlignment="Stretch">
+      <WrapPanel HorizontalAlignment="Left">
+        <Button x:Name="BtnFullInvestigation" Content="Start Full Investigation"/>
+        <Button x:Name="BtnDetectionOnly" Content="Detection Only"/>
+        <Button x:Name="BtnScanOnly" Content="Scan Only"/>
+        <Button x:Name="BtnReviewPrevious" Content="Review Previous Report"/>
+        <Button x:Name="BtnSettings" Content="Settings"/>
+        <Button x:Name="BtnAdvanced" Content="Advanced Tools"/>
+      </WrapPanel>
+      <TextBlock x:Name="TxtStatus" Margin="6,6,6,0" Text="Ready."
+                 FontWeight="Bold" Foreground="#0A6EBE" TextWrapping="Wrap"/>
+    </StackPanel>
   </Grid>
 </UserControl>

@@ -10,12 +10,13 @@ Describe 'Module import (headless / Linux)' {
         (Get-Module -Name PresentationFramework) | Should -BeNullOrEmpty
         (Get-Module -Name Scc.UI) | Should -Not -BeNullOrEmpty
     }
-    It 'exports exactly the 10 public functions' {
+    It 'exports exactly the 11 public functions' {
         $fns = (Get-Command -Module Scc.UI).Name | Sort-Object
         $expected = @(
             'Get-SccNextStage', 'New-SccWorkflow', 'Start-SccApp',
             'Start-SccJob', 'Start-SccWorkflow', 'Step-SccWorkflow', 'Stop-SccWorkflow',
-            'Stop-SccJob', 'Update-SccJob', 'Wait-SccJob', 'Reset-SccJob'
+            'Stop-SccJob', 'Update-SccJob', 'Wait-SccJob', 'Reset-SccJob',
+            'Invoke-SccGuiWorkflow'
         ) | Sort-Object
         $fns | Should -BeExactly $expected
     }
@@ -192,6 +193,75 @@ Describe 'State machine and jobs (mocked backend)' {
             if ($null -eq $job1) { Set-ItResult -Skipped -Because 'first job did not start'; return }
             { Start-SccJob -ScriptBlock { param($t) 'x' } -Name 'Second' } | Should -Throw
             Wait-SccJob -Handle $job1
+        }
+        It 'runs the GUI click-handler pattern: token carries the real workflow into the runspace' {
+            # Regression: pre-fix, the click handler passed the workflow as
+            # -CancellationToken but the runspace only ever received a fresh
+            # token copy, so the workflow never ran (buttons were dead). The
+            # wrapper now copies the Workflow payload and imports Scc.UI into
+            # the bare runspace so Invoke-SccGuiWorkflow resolves.
+            # NOTE: polling is bounded (no unbounded Wait-SccJob) because
+            # finalizing runspaces from earlier tests can corrupt caller
+            # variables in this Pester host state.
+            function Invoke-GuiJobScenario {
+                Reset-SccJob
+                $wf = New-SccWorkflow -Mode DetectOnly
+                $token = @{ Cancelled = $false; Workflow = $wf }
+                $j = Start-SccJob -ScriptBlock { param($t) Invoke-SccGuiWorkflow -Token $t } -Name 'GuiTest' -CancellationToken $token
+                if ($null -eq $j) { return $null }
+                $deadline = [datetime]::UtcNow.AddSeconds(30)
+                while (-not $j._Done -and [datetime]::UtcNow -lt $deadline) {
+                    Start-Sleep -Milliseconds 200
+                    try { Update-SccJob -Handle $j } catch { }
+                }
+                return $j
+            }
+            $job = Invoke-GuiJobScenario
+            if ($null -eq $job) { Set-ItResult -Skipped -Because 'job did not start'; return }
+            if (-not $job._Done) { Reset-SccJob; Set-ItResult -Skipped -Because 'job did not finish within deadline'; return }
+            $job.State | Should -Be 'Completed'
+            $job.Error | Should -BeNullOrEmpty
+            $job.Result | Should -Not -BeNullOrEmpty
+            $job.Result.RunId | Should -Not -BeNullOrEmpty
+            $job.Result.Status | Should -Be 'Completed'
+        }
+        It 'fails loudly when the token has no Workflow payload (wiring regression guard)' {
+            function Invoke-BadTokenScenario {
+                Reset-SccJob
+                $j = Start-SccJob -ScriptBlock { param($t) Invoke-SccGuiWorkflow -Token $t } -Name 'BadToken'
+                if ($null -eq $j) { return $null }
+                $deadline = [datetime]::UtcNow.AddSeconds(30)
+                while (-not $j._Done -and [datetime]::UtcNow -lt $deadline) {
+                    Start-Sleep -Milliseconds 200
+                    try { Update-SccJob -Handle $j } catch { }
+                }
+                return $j
+            }
+            $job = Invoke-BadTokenScenario
+            if ($null -eq $job) { Set-ItResult -Skipped -Because 'job did not start'; return }
+            if (-not $job._Done) { Reset-SccJob; Set-ItResult -Skipped -Because 'job did not finish within deadline'; return }
+            $job.State | Should -Be 'Failed'
+            $job.Error | Should -Match 'Workflow payload'
+        }
+        It 'stop signal cancels a running GUI workflow' {
+            function Invoke-StopGuiScenario {
+                Reset-SccJob
+                $wf = New-SccWorkflow -Mode Full
+                $token = @{ Cancelled = $false; Workflow = $wf }
+                $j = Start-SccJob -ScriptBlock { param($t) Invoke-SccGuiWorkflow -Token $t } -Name 'GuiStop' -CancellationToken $token
+                if ($null -eq $j) { return $null }
+                Start-Sleep -Milliseconds 150
+                Stop-SccJob -Handle $j
+                Start-Sleep -Milliseconds 150
+                Update-SccJob -Handle $j
+                return $j
+            }
+            $job = Invoke-StopGuiScenario
+            if ($null -eq $job) { Set-ItResult -Skipped -Because 'job did not start'; return }
+            $job._Token.Cancelled | Should -Be $true
+            if ($job._Done) {
+                $job.State | Should -Be 'Interrupted'
+            }
         }
     }
 

@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.0] - 2026-08-27
+
+### Fixed - GUI shell actually opens and runs
+
+- **Dead action buttons (root cause of "GUI does nothing"):** the click
+  handlers passed the workflow object as `-CancellationToken`, but the job
+  runspace only ever received a fresh token copy - so `Start-SccWorkflow`
+  ran against a hashtable with no `.Stages` and completed instantly as a
+  no-op. The token now carries a `Workflow` payload and the new exported
+  `Invoke-SccGuiWorkflow` runs the real state machine; a missing payload
+  fails loudly instead of silently doing nothing.
+- **`$script:ActiveJob` now assigned** (audit SCC-003): the 200ms
+  `DispatcherTimer` polls the real job handle, shows live progress in a new
+  `TxtStatus` line on the Dashboard, cleans the job up on completion, and
+  allows subsequent runs (second click no longer throws "Only one concurrent
+  Scc job is allowed").
+- **Dashboard is populated on open:** computer name, OS/version, architecture,
+  user, admin state, free disk and app version (from `Get-SccComputerInfo`),
+  plus the previous-runs list in the Resume tab (`Find-SccRecentRuns`) with a
+  working Resume button.
+- **Runspace hygiene:** the job runspace now inherits the caller's
+  `PSModulePath` (backends resolve inside the job), runspaces are disposed
+  deterministically on reset, and `Start-SccWorkflow` no longer leaks one
+  workflow object per stage step into the pipeline (the GUI job result is
+  exactly one workflow).
+- **Crash visibility:** a GUI startup failure is now written to
+  `%TEMP%\SccCleaner-gui-error.log` and shown in a message box, so "the app
+  does not open" can no longer happen silently (elevated console flash-close
+  used to hide every startup error).
+
+### Added - Review gate (audit SCC-001)
+
+- **Findings Review window** (`Findings.xaml` wired): opens automatically
+  when a Full run reaches the Review stage. Lists detected ScreenConnect /
+  remote-access findings (deduplicated) with per-item **Remove** checkboxes
+  (default KEEP), **Preview Actions** (dry-run plan) and **Approve Plan**
+  (continues the workflow with a dry-run remediation).
+- **Remediation Preview window** (`RemediationPreview.xaml` wired): shows the
+  exact action lines, dry-run checkbox, and the Execute button guarded by
+  safety invariant #2 - two explicit confirmations (Yes/No dialog + typed
+  phrase `PERMANENTLY REMOVE`) before `Invoke-SccRemediation -Execute` is
+  allowed. The stage-4 backend wrapper only passes `-Execute` when the GUI
+  gate explicitly authorized it (`Workflow.Data.ExecuteRemediation`).
+- **Settings / Advanced / Review Previous Report** buttons open their views.
+- GUI workflows now create a real run (`New-SccRun`) so `plan.json`,
+  evidence and reports land in the run directory.
+
+### Added - GUI smoke test (Windows CI)
+
+- `tests/ci/Test-GuiSmoke.ps1`: opens the WPF shell for real on Windows
+  runners (PowerShell 5.1 and pwsh `-Sta`), auto-closes after 5 seconds and
+  asserts clean exit; also verifies the entry point stays alive (window open)
+  for 10 seconds. Wired into `gui-revision-ci.yml`.
+
+### Tests
+
+- Unit regression tests for the click-handler pattern (workflow reaches the
+  runspace), missing-payload failure, and stop-signal cancellation.
+
+---
+
 ## [0.1.0] - 2026-08-26
 
 ### Added - GUI Revision (this folder)

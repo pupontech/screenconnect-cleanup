@@ -26,6 +26,9 @@ $null = Import-Module -Name 'Microsoft.PowerShell.Management' -ErrorAction Silen
 
 $script:CurrentWorkflow = $null
 $script:ActiveJob = $null
+$script:Dash = $null
+$script:MainWindow = $null
+$script:AutoCloseAt = $null
 
 # ---------------------------------------------------------------------------
 # Private helpers
@@ -149,10 +152,13 @@ function Invoke-SccBackendDetection {
 }
 
 function Invoke-SccBackendRemediation {
-    param($Run, $Plan)
+    param($Run, $Plan, [switch]$Execute)
     Assert-SccBackendFn -Function 'Invoke-SccRemediation' -Module 'Scc.Remedy'
     if (Get-Command -Name Test-SccPlan -ErrorAction SilentlyContinue) {
         $null = Test-SccPlan -Run $Run -Plan $Plan
+    }
+    if ($Execute) {
+        return (Invoke-SccRemediation -Run $Run -Plan $Plan -Execute)
     }
     return (Invoke-SccRemediation -Run $Run -Plan $Plan)
 }
@@ -229,9 +235,15 @@ function Invoke-SccStageBody {
             $plan = $Workflow.Data.Plan
             if ($null -eq $plan) { $plan = Get-SccPlanFromRun -Workflow $Workflow }
             if ($null -eq $plan) { throw 'No remediation plan available for stage 4 (Remediate).' }
-            # Without -Execute this is a dry run only (safe, non-destructive).
-            $Workflow.Data.Remediation = Invoke-SccBackendRemediation -Run $Workflow.Run -Plan $plan
-            $Stage.Detail = 'Remediation executed (dry-run unless plan carried -Execute)'
+            # Dry-run unless the GUI review gate explicitly authorized execution
+            # (two-step typed confirmation) by setting Data.ExecuteRemediation.
+            $execute = ($Workflow.Data.ExecuteRemediation -eq $true)
+            $Workflow.Data.Remediation = Invoke-SccBackendRemediation -Run $Workflow.Run -Plan $plan -Execute:$execute
+            if ($execute) {
+                $Stage.Detail = 'Remediation EXECUTED (explicit GUI confirmation)'
+            } else {
+                $Stage.Detail = 'Remediation dry-run (no changes)'
+            }
             $Stage.Status = 'Completed'
         }
         5 {
@@ -418,7 +430,10 @@ function Start-SccWorkflow {
             $Workflow.Status = 'AwaitingReview'
             break
         }
-        Step-SccWorkflow -Workflow $Workflow
+        # Suppress Step-SccWorkflow's return value: the function emits the
+        # workflow per stage step, which would pollute the caller's pipeline
+        # (the GUI job result must be exactly ONE workflow object).
+        $null = Step-SccWorkflow -Workflow $Workflow
     } while ($true)
 
     if ($Workflow.Status -ne 'AwaitingReview') {
@@ -488,22 +503,49 @@ function Start-SccJob {
     if ($null -eq $CancellationToken) {
         $CancellationToken = @{ Cancelled = $false }
     }
-    $runspaceToken = @{ Cancelled = $CancellationToken.Cancelled }
+    # Optional payload fields (e.g. Workflow) ride along in the token copy so
+    # GUI click handlers can hand the job the real workflow object without
+    # sharing a live handle with the runspace.
+    $runspaceToken = @{ Cancelled = $CancellationToken.Cancelled; Workflow = $CancellationToken.Workflow }
 
     $rs = [runspacefactory]::CreateRunspace()
     $rs.Open()
     $ps = [powershell]::Create()
     $ps.Runspace = $rs
 
+    # The job scriptblock is executed INSIDE the runspace and must bind to the
+    # RUNSPACE's session state, never the caller's. Passing the caller's live
+    # scriptblock object lets it carry the parent module's session state into
+    # the runspace; executing module functions through it then corrupts the
+    # caller's session state (Pester host-state corruption: later commands
+    # like Start-Sleep stop resolving). Serialize to text and re-parse inside
+    # the runspace; the wrapper imports Scc.UI (by path) so exported functions
+    # (Invoke-SccGuiWorkflow, ...) resolve runspace-locally. Scriptblocks with
+    # closures are NOT supported (GUI job scriptblocks use only their $Token
+    # parameter and module functions).
+    $scriptText = $ScriptBlock.ToString()
+    $sccUiModulePath = Join-Path -Path $PSScriptRoot -ChildPath 'Scc.UI.psd1'
+    if (-not (Microsoft.PowerShell.Management\Test-Path -Path $sccUiModulePath)) {
+        $sccUiModulePath = Join-Path -Path $PSScriptRoot -ChildPath 'Scc.UI.psm1'
+    }
+    $sccSrcRoot = Split-Path -Parent $PSScriptRoot
+
     $wrapper = @'
-param($Token, $ScriptBlock)
+param($Token, $ScriptBlockText, $ModulePath, $SrcRoot)
+if ($SrcRoot -and $SrcRoot.Length -gt 0) {
+    $sep = [System.IO.Path]::PathSeparator
+    $env:PSModulePath = $SrcRoot + $sep + $env:PSModulePath
+}
+if ($ModulePath) {
+    Import-Module -Name $ModulePath -Force -ErrorAction SilentlyContinue
+}
 $state = [System.Collections.Specialized.OrderedDictionary]::new()
 $state['State'] = 'Running'
 $state['Result'] = $null
 $state['Error'] = $null
 $state['Percent'] = 0
 try {
-    $result = & $ScriptBlock $Token
+    $result = & ([scriptblock]::Create($ScriptBlockText)) $Token
     $state['State'] = 'Completed'
     $state['Result'] = $result
     $state['Percent'] = 100
@@ -518,7 +560,7 @@ try {
 [pscustomobject]$state
 '@
 
-    $null = $ps.AddScript($wrapper).AddArgument($runspaceToken).AddArgument($ScriptBlock)
+    $null = $ps.AddScript($wrapper).AddArgument($runspaceToken).AddArgument($scriptText).AddArgument($sccUiModulePath).AddArgument($sccSrcRoot)
     $async = $ps.BeginInvoke()
 
     $id = [guid]::NewGuid().ToString()
@@ -614,8 +656,8 @@ function Stop-SccJob {
 }
 
 function Reset-SccJob {
-    # Force-clear any leaked job (e.g. between tests): stop + drain + dispose
-    # the runspace, then remove it from the private store.
+    # Force-clear any leaked job (e.g. between tests): stop + drain the
+    # pipeline, then remove it from the private store.
     [CmdletBinding()]
     param()
 
@@ -625,11 +667,11 @@ function Reset-SccJob {
             if ($null -ne $job.PowerShell) {
                 try { $job.PowerShell.Stop() } catch {}
                 try { $null = $job.PowerShell.EndInvoke($job.Async) } catch {}
-                # NOTE: do NOT call PowerShell/Runspace.Dispose() here. Disposing
-                # a runspace that is still finalizing can corrupt the caller's
-                # current scope variables (PowerShell host-state corruption),
-                # which manifests as the caller's handle variable becoming null.
-                # Leaving the disposed-by-GC runspace is safe; we just drop our
+                # NOTE: deliberately do NOT call PowerShell/Runspace.Dispose()
+                # here. Disposing a runspace can corrupt the caller's current
+                # scope variables (PowerShell host-state corruption), which
+                # manifests as the caller's handle variable becoming null.
+                # Leaving the runspace to the GC is safe; we just drop our
                 # reference so a new job can start.
             }
         } catch {}
@@ -654,11 +696,352 @@ function Import-SccXaml {
     return [System.Windows.Markup.XamlReader]::Load($reader)
 }
 
+# ---------------------------------------------------------------------------
+# GUI workflow runner (exported so it resolves inside the job runspace, which
+# imports Scc.UI but cannot see private functions).
+#
+# Token shape: @{ Cancelled = <bool>; Workflow = <Scc workflow object> }
+#   - Cancelled  : set true by Stop-SccJob -> job stops the workflow first.
+#   - Workflow   : the live workflow object created by the click handler.
+# Without a Workflow payload this throws, so a wiring regression fails loudly
+# instead of silently completing a no-op run (the pre-fix behavior).
+# ---------------------------------------------------------------------------
+
+function Invoke-SccGuiWorkflow {
+    [CmdletBinding()]
+    param($Token)
+
+    if ($null -eq $Token -or $null -eq $Token.Workflow) {
+        throw 'GUI workflow token missing Workflow payload (internal wiring bug).'
+    }
+    $wf = $Token.Workflow
+    if ($Token.Cancelled) {
+        return (Stop-SccWorkflow -Workflow $wf)
+    }
+    return (Start-SccWorkflow -Workflow $wf -Mode $wf.Mode -SkipScanners:$wf.SkipScanners)
+}
+
+# ---------------------------------------------------------------------------
+# Private GUI helpers (run on the UI thread)
+# ---------------------------------------------------------------------------
+
+function Set-DashText {
+    param($Dash, [string]$Name, [string]$Text)
+    try {
+        $c = $Dash.FindName($Name)
+        if ($null -ne $c) { $c.Text = $Text }
+    } catch { }
+}
+
+function Set-SccGuiStatus {
+    param([string]$Text)
+    try {
+        if ($null -ne $script:Dash) { Set-DashText -Dash $script:Dash -Name 'TxtStatus' -Text $Text }
+    } catch { }
+}
+
+function Update-SccDashboardInfo {
+    param($Dash)
+    try {
+        $info = $null
+        if (Get-Command -Name Get-SccComputerInfo -ErrorAction SilentlyContinue) {
+            $info = Get-SccComputerInfo
+        }
+        if ($null -ne $info) {
+            Set-DashText -Dash $Dash -Name 'TxtComputer' -Text ([string]$info.ComputerName)
+            $os = [string]$info.OsCaption
+            if ($info.OsVersion) { $os += (' ' + $info.OsVersion) }
+            Set-DashText -Dash $Dash -Name 'TxtOs' -Text $os
+            Set-DashText -Dash $Dash -Name 'TxtArch' -Text ([string]$info.Architecture)
+            Set-DashText -Dash $Dash -Name 'TxtUser' -Text ([string]$info.Domain + '\' + $info.CurrentUser)
+            Set-DashText -Dash $Dash -Name 'TxtAdmin' -Text $(if ($info.IsAdmin) { 'Yes (elevated)' } else { 'No' })
+            if ($info.FreeSpaceGB -ge 0) { Set-DashText -Dash $Dash -Name 'TxtDisk' -Text ($info.FreeSpaceGB.ToString() + ' GB free') }
+        }
+    } catch { }
+    try {
+        $version = ''
+        $mod = Get-Module -Name 'Scc.UI' -ErrorAction SilentlyContinue
+        if ($null -ne $mod -and $mod.Path) {
+            $appRoot = Split-Path -Parent (Split-Path -Parent $mod.Path)
+            $vf = Join-Path $appRoot 'VERSION'
+            if (Microsoft.PowerShell.Management\Test-Path -Path $vf) {
+                $version = (Microsoft.PowerShell.Management\Get-Content -Path $vf -Raw).Trim()
+            }
+        }
+        if (-not $version) {
+            $core = Get-Module -Name 'Scc.Core' -ErrorAction SilentlyContinue
+            if ($null -ne $core -and $core.Version) { $version = $core.Version.ToString() }
+        }
+        if ($version) { Set-DashText -Dash $Dash -Name 'TxtAppVersion' -Text $version }
+    } catch { }
+}
+
+function Update-SccRecentRunsList {
+    param($Dash)
+    try {
+        if (-not (Get-Command -Name Find-SccRecentRuns -ErrorAction SilentlyContinue)) { return }
+        $runs = @(Find-SccRecentRuns -MaxAgeDays 30 | Select-Object -First 20)
+        $list = $Dash.FindName('LstPreviousRuns')
+        if ($null -eq $list) { return }
+        if ($runs.Count -gt 0) {
+            $items = @($runs | ForEach-Object {
+                [pscustomobject]@{
+                    RunId = $_.RunId
+                    RunDir = $_.RunDir
+                    Display = ($_.RunId + '  [' + $_.RunDir + ']')
+                }
+            })
+            $list.DisplayMemberPath = 'Display'
+            $list.ItemsSource = $items
+        }
+    } catch { }
+}
+
+function Start-SccGuiJobWithToken {
+    param($Token, [string]$JobName)
+    try {
+        $handle = Start-SccJob -ScriptBlock { param($t) Invoke-SccGuiWorkflow -Token $t } -Name $JobName -CancellationToken $Token
+        $script:ActiveJob = $handle
+        Set-SccGuiStatus -Text ('Running: ' + $JobName)
+    } catch {
+        [System.Windows.MessageBox]::Show($_.Exception.Message, 'ScreenConnect Cleaner', 'OK', 'Error') | Out-Null
+    }
+}
+
+function Start-SccGuiJob {
+    param([string]$Mode, [string]$JobName)
+    $wf = New-SccWorkflow -Mode $Mode -Run (New-SccGuiRun)
+    Start-SccGuiJobWithToken -Token @{ Cancelled = $false; Workflow = $wf } -JobName $JobName
+}
+
+function Show-SccViewWindow {
+    param([string]$Name)
+    try {
+        $view = Import-SccXaml -Path (Get-SccViewPath -Name $Name)
+        $w = [System.Windows.Window]::new()
+        $w.Title = ('ScreenConnect Cleaner - ' + $Name)
+        $w.Width = 1000
+        $w.Height = 700
+        $w.WindowStartupLocation = 'CenterOwner'
+        $w.Content = $view
+        $null = $w.ShowDialog()
+    } catch {
+        [System.Windows.MessageBox]::Show($_.Exception.Message, 'ScreenConnect Cleaner', 'OK', 'Error') | Out-Null
+    }
+}
+
+function New-SccGuiRun {
+    # GUI workflows need a REAL run (RunDir) so plan.json / reports /
+    # evidence have a home. Falls back to a plain run object when the
+    # Core backend is unavailable (tests / degraded environments).
+    $run = $null
+    if (Get-Command -Name New-SccRun -ErrorAction SilentlyContinue) {
+        try {
+            $tech = $env:USERNAME
+            if (-not $tech) { $tech = $env:USER }
+            if (-not $tech) { $tech = 'GUI' }
+            $run = New-SccRun -Technician $tech -Client 'GUI'
+        } catch { $run = $null }
+    }
+    if ($null -eq $run) {
+        $run = [pscustomobject]@{
+            RunId        = ('SC-' + ([datetime]::UtcNow.ToString('yyyyMMdd')) + '-HOST-' + ([datetime]::UtcNow.ToString('HHmmss')))
+            RunDir       = $null
+            ComputerName = $env:COMPUTERNAME
+        }
+    }
+    return $run
+}
+
+function New-SccGuiFindingsViewModel {
+    param($Workflow)
+    $out = @()
+    try {
+        $data = $Workflow.Data.Findings
+        if ($null -eq $data) { return $out }
+        $all = @()
+        if ($null -ne $data.ScreenConnect) { $all += @($data.ScreenConnect) }
+        if ($null -ne $data.RemoteAccess) { $all += @($data.RemoteAccess) }
+        $seen = @{}
+        foreach ($f in $all) {
+            $fid = [string]$f.FindingId
+            if (-not $fid) { $fid = 'unknown' }
+            if ($seen.ContainsKey($fid)) { continue }
+            $seen[$fid] = $true
+            $display = [string]$f.DisplayText
+            if (-not $display) { $display = ($fid + ' [' + $f.Product + ']') }
+            $identity = [string]$f.ServiceName
+            if (-not $identity) { $identity = [string]$f.InstallDir }
+            if (-not $identity) { $identity = [string]$f.MainExe }
+            if (-not $identity) { $identity = $fid }
+            $trust = [string]$f.TrustMatch
+            if (-not $trust) { $trust = 'Unknown' }
+            $evidence = [string]$f.Detail
+            $out += [pscustomobject]@{
+                DisplayText = $display
+                Identity    = $identity
+                Trust       = ('Trust: ' + $trust)
+                Evidence    = $evidence
+                Remove      = $false
+                Finding     = $f
+            }
+        }
+    } catch { }
+    return $out
+}
+
+function New-SccGuiPlan {
+    param($Workflow, $ViewModels)
+    # Build decisions from the checkbox state (default KEEP; only explicit
+    # REMOVE checks become removals - owner policy enforced by New-SccPlan).
+    $decisions = @{}
+    foreach ($vm in @($ViewModels)) {
+        if ($vm.Remove -eq $true) {
+            $fid = [string]$vm.Finding.FindingId
+            if (-not $fid) { $fid = 'unknown' }
+            $decisions[$fid] = 'REMOVE'
+        }
+    }
+    if (-not (Import-SccBackendModule 'Scc.Remedy')) {
+        throw 'Scc.Remedy backend is not available; cannot build a remediation plan.'
+    }
+    if (-not (Get-Command -Name New-SccPlan -ErrorAction SilentlyContinue)) {
+        throw 'New-SccPlan is not available; cannot build a remediation plan.'
+    }
+    $plan = New-SccPlan -Run $Workflow.Run -Findings @($ViewModels | ForEach-Object { $_.Finding }) -Decisions $decisions
+    $Workflow.Data.Plan = $plan
+    return $plan
+}
+
+function Show-SccFindingsWindow {
+    param($Workflow)
+    try {
+        $view = Import-SccXaml -Path (Get-SccViewPath -Name 'Findings')
+        $w = [System.Windows.Window]::new()
+        $w.Title = 'ScreenConnect Cleaner - Findings Review'
+        $w.Width = 1200
+        $w.Height = 800
+        $w.WindowStartupLocation = 'CenterOwner'
+        $w.Content = $view
+
+        $viewModels = New-SccGuiFindingsViewModel -Workflow $Workflow
+        $list = $view.FindName('LstFindings')
+        if ($null -ne $list) { $list.ItemsSource = $viewModels }
+
+        $btnApprove = $view.FindName('BtnApprovePlan')
+        if ($null -ne $btnApprove) {
+            $handler = {
+                param($sender, $e)
+                try {
+                    if (@($viewModels | Where-Object { $_.Remove -eq $true }).Count -eq 0) {
+                        [System.Windows.MessageBox]::Show('No items marked for removal. Check the "Remove" box on at least one ScreenConnect finding, or close this window to keep everything.', 'ScreenConnect Cleaner', 'OK', 'Information') | Out-Null
+                        return
+                    }
+                    $null = New-SccGuiPlan -Workflow $Workflow -ViewModels $viewModels
+                    $Workflow.Data.ExecuteRemediation = $false
+                    Set-SccGuiStatus -Text 'Plan approved - continuing workflow (dry-run remediation).'
+                    $w.Close()
+                    Start-SccGuiJobWithToken -Token @{ Cancelled = $false; Workflow = $Workflow } -JobName 'ContinueAfterReview'
+                } catch {
+                    [System.Windows.MessageBox]::Show($_.Exception.Message, 'ScreenConnect Cleaner', 'OK', 'Error') | Out-Null
+                }
+            }
+            $btnApprove.Add_Click($handler.GetNewClosure())
+        }
+
+        $btnPreview = $view.FindName('BtnPreviewActions')
+        if ($null -ne $btnPreview) {
+            $handler = {
+                param($sender, $e)
+                try {
+                    $plan = New-SccGuiPlan -Workflow $Workflow -ViewModels $viewModels
+                    $w.Close()
+                    Show-SccRemediationWindow -Workflow $Workflow -Plan $plan
+                } catch {
+                    [System.Windows.MessageBox]::Show($_.Exception.Message, 'ScreenConnect Cleaner', 'OK', 'Error') | Out-Null
+                }
+            }
+            $btnPreview.Add_Click($handler.GetNewClosure())
+        }
+
+        $null = $w.ShowDialog()
+    } catch {
+        [System.Windows.MessageBox]::Show($_.Exception.Message, 'ScreenConnect Cleaner', 'OK', 'Error') | Out-Null
+    }
+}
+
+function Show-SccRemediationWindow {
+    param($Workflow, $Plan)
+    try {
+        $view = Import-SccXaml -Path (Get-SccViewPath -Name 'RemediationPreview')
+        $w = [System.Windows.Window]::new()
+        $w.Title = 'ScreenConnect Cleaner - Remediation Preview'
+        $w.Width = 1200
+        $w.Height = 800
+        $w.WindowStartupLocation = 'CenterOwner'
+        $w.Content = $view
+
+        # Dry-run preview lines (Test-SccPlan also validates the plan).
+        $actions = @()
+        if (Get-Command -Name Test-SccPlan -ErrorAction SilentlyContinue) {
+            try { $actions = @(Test-SccPlan -Run $Workflow.Run -Plan $Plan) } catch { }
+        }
+        $list = $view.FindName('LstActions')
+        if ($null -ne $list) { $list.ItemsSource = $actions }
+
+        $chkDry = $view.FindName('ChkDryRun')
+        if ($null -ne $chkDry) { $chkDry.IsChecked = $true }
+
+        $btnExec = $view.FindName('BtnExecuteRemediation')
+        if ($null -ne $btnExec) {
+            $handler = {
+                param($sender, $e)
+                try {
+                    # Safety invariant #2: two explicit confirmations before any
+                    # destructive action. Nothing runs without both.
+                    if ($null -ne $chkDry -and $chkDry.IsChecked -eq $true) {
+                        [System.Windows.MessageBox]::Show('Dry run is enabled - no changes will be made. Uncheck "Dry run" to enable execution.', 'ScreenConnect Cleaner', 'OK', 'Information') | Out-Null
+                        return
+                    }
+                    $removeCount = @($Plan.Items | Where-Object { $_.Action -eq 'REMOVE' }).Count
+                    if ($removeCount -le 0) {
+                        [System.Windows.MessageBox]::Show('The approved plan contains no REMOVE actions; nothing to execute.', 'ScreenConnect Cleaner', 'OK', 'Information') | Out-Null
+                        return
+                    }
+                    $r = [System.Windows.MessageBox]::Show(('You are about to REMOVE {0} ScreenConnect item(s) from this machine. This cannot be undone (artifacts are quarantined, not deleted).' -f $removeCount), 'ScreenConnect Cleaner - FINAL CONFIRMATION', 'YesNo', 'Warning')
+                    if ($r -ne 'Yes') { return }
+                    $phrase = ''
+                    try {
+                        Add-Type -AssemblyName Microsoft.VisualBasic -ErrorAction Stop | Out-Null
+                        $phrase = [Microsoft.VisualBasic.Interaction]::InputBox(('Type exactly: PERMANENTLY REMOVE' + [Environment]::NewLine + 'to confirm remediation of ' + $removeCount + ' item(s).'), 'ScreenConnect Cleaner - Confirmation Required', '')
+                    } catch { }
+                    if ($phrase -ne 'PERMANENTLY REMOVE') {
+                        [System.Windows.MessageBox]::Show('Confirmation phrase did not match. Execution cancelled - nothing was changed.', 'ScreenConnect Cleaner', 'OK', 'Information') | Out-Null
+                        return
+                    }
+                    $Workflow.Data.ExecuteRemediation = $true
+                    Set-SccGuiStatus -Text 'Execution authorized - running remediation.'
+                    $w.Close()
+                    Start-SccGuiJobWithToken -Token @{ Cancelled = $false; Workflow = $Workflow } -JobName 'RemediateExecute'
+                } catch {
+                    [System.Windows.MessageBox]::Show($_.Exception.Message, 'ScreenConnect Cleaner', 'OK', 'Error') | Out-Null
+                }
+            }
+            $btnExec.Add_Click($handler.GetNewClosure())
+        }
+
+        $null = $w.ShowDialog()
+    } catch {
+        [System.Windows.MessageBox]::Show($_.Exception.Message, 'ScreenConnect Cleaner', 'OK', 'Error') | Out-Null
+    }
+}
+
 function Start-SccApp {
     [CmdletBinding()]
     param(
         $Config,
-        [string]$ResumeRunId
+        [string]$ResumeRunId,
+        [int]$AutoCloseSeconds = 0
     )
 
     try {
@@ -670,48 +1053,127 @@ function Start-SccApp {
     }
 
     $dash = Import-SccXaml -Path (Get-SccViewPath -Name 'Dashboard')
+    $script:Dash = $dash
 
     $window = [System.Windows.Window]::new()
     $window.Title = 'ScreenConnect Cleaner'
     $window.Width = 1200
-    $window.Height = 800
+    $window.Height = 850
     $window.Content = $dash
+    $script:MainWindow = $window
+
+    Update-SccDashboardInfo -Dash $dash
+    Update-SccRecentRunsList -Dash $dash
 
     # Wire action buttons (names defined in Dashboard.xaml). The background job
     # runs the workflow so the UI thread never blocks (ARCHITECTURE sec. 8).
     $btnFull = $dash.FindName('BtnFullInvestigation')
     if ($null -ne $btnFull) {
-        $btnFull.Add_Click({
-            $wf = New-SccWorkflow -Mode Full
-            $null = Start-SccJob -ScriptBlock { param($t) Start-SccWorkflow -Workflow $t } -Name 'FullInvestigation' -CancellationToken $wf
-        })
+        $btnFull.Add_Click({ Start-SccGuiJob -Mode Full -JobName 'FullInvestigation' })
     }
     $btnDetect = $dash.FindName('BtnDetectionOnly')
     if ($null -ne $btnDetect) {
-        $btnDetect.Add_Click({
-            $wf = New-SccWorkflow -Mode DetectOnly
-            $null = Start-SccJob -ScriptBlock { param($t) Start-SccWorkflow -Workflow $t } -Name 'DetectionOnly' -CancellationToken $wf
-        })
+        $btnDetect.Add_Click({ Start-SccGuiJob -Mode DetectOnly -JobName 'DetectionOnly' })
     }
     $btnScan = $dash.FindName('BtnScanOnly')
     if ($null -ne $btnScan) {
-        $btnScan.Add_Click({
-            $wf = New-SccWorkflow -Mode ScanOnly
-            $null = Start-SccJob -ScriptBlock { param($t) Start-SccWorkflow -Workflow $t } -Name 'ScanOnly' -CancellationToken $wf
+        $btnScan.Add_Click({ Start-SccGuiJob -Mode ScanOnly -JobName 'ScanOnly' })
+    }
+    $btnReview = $dash.FindName('BtnReviewPrevious')
+    if ($null -ne $btnReview) {
+        $btnReview.Add_Click({ Show-SccViewWindow -Name 'ReportView' })
+    }
+    $btnSettings = $dash.FindName('BtnSettings')
+    if ($null -ne $btnSettings) {
+        $btnSettings.Add_Click({ Show-SccViewWindow -Name 'Settings' })
+    }
+    $btnAdvanced = $dash.FindName('BtnAdvanced')
+    if ($null -ne $btnAdvanced) {
+        $btnAdvanced.Add_Click({ Show-SccViewWindow -Name 'Advanced' })
+    }
+    $btnResume = $dash.FindName('BtnResumeRun')
+    if ($null -ne $btnResume) {
+        $btnResume.Add_Click({
+            $list = $null
+            try { if ($null -ne $script:Dash) { $list = $script:Dash.FindName('LstPreviousRuns') } } catch { }
+            $sel = $null
+            if ($null -ne $list) { $sel = $list.SelectedItem }
+            if ($null -eq $sel -or -not $sel.RunId) {
+                [System.Windows.MessageBox]::Show('Select a previous run first.', 'ScreenConnect Cleaner', 'OK', 'Information') | Out-Null
+                return
+            }
+            Start-SccGuiJobWithToken -Token @{ Cancelled = $false; Workflow = (New-SccWorkflow -Mode Full -Resume -RunId $sel.RunId) } -JobName ('Resume ' + $sel.RunId)
         })
     }
 
-    # UI polls the active job via a DispatcherTimer (200ms) on the Linux/CI
-    # side this code path is never reached.
+    # ResumeRunId from the command line: preselect that run in the list.
+    if ($ResumeRunId) {
+        try {
+            $list = $dash.FindName('LstPreviousRuns')
+            if ($null -ne $list) {
+                foreach ($item in @($list.Items)) {
+                    if ($item.RunId -eq $ResumeRunId) { $list.SelectedItem = $item; break }
+                }
+            }
+        } catch { }
+    }
+
+    # UI polls the active job via a DispatcherTimer (200ms). On the Linux/CI
+    # side this code path is never reached (Start-SccApp requires WPF).
     $timer = [System.Windows.Threading.DispatcherTimer]::new()
     $timer.Interval = [TimeSpan]::FromMilliseconds(200)
     $timer.Add_Tick({
-        if ($null -ne $script:ActiveJob) { Update-SccJob -Handle $script:ActiveJob }
+        if ($null -ne $script:ActiveJob) {
+            try { Update-SccJob -Handle $script:ActiveJob } catch { }
+            $job = $script:ActiveJob
+            $status = ('Running: ' + $job.Name)
+            if ($job.Percent -gt 0) { $status += (' (' + $job.Percent + '%)') }
+            Set-SccGuiStatus -Text $status
+            if ($job._Done) {
+                $final = $job.State
+                $detail = ''
+                if ($job.Error) { $detail = ([string]$job.Error).Trim() }
+                elseif ($null -ne $job.Result -and $null -ne $job.Result.Status) { $detail = ('Workflow: ' + $job.Result.Status) }
+                $msg = ('Job finished: ' + $final)
+                if ($detail) { $msg += (' - ' + $detail) }
+                Set-SccGuiStatus -Text $msg
+                $awaitingReview = ($null -ne $job.Result -and $job.Result.Status -eq 'AwaitingReview')
+                $failedJob = ($final -eq 'Failed')
+                Reset-SccJob
+                $script:ActiveJob = $null
+                # Review gate: Full-mode run reached stage 3 with no plan.
+                # Open the Findings window so the technician can review and
+                # approve/execute (safety invariant #2 - nothing runs without
+                # explicit confirmation).
+                if ($awaitingReview) {
+                    try { Show-SccFindingsWindow -Workflow $job.Result } catch { }
+                }
+                if ($failedJob) {
+                    [System.Windows.MessageBox]::Show($msg, 'ScreenConnect Cleaner', 'OK', 'Warning') | Out-Null
+                }
+            }
+        }
+        # CI smoke-test hook: auto-close after AutoCloseSeconds.
+        if ($null -ne $script:AutoCloseAt -and [datetime]::UtcNow -ge $script:AutoCloseAt) {
+            $script:AutoCloseAt = $null
+            try { if ($null -ne $script:MainWindow) { $script:MainWindow.Close() } } catch { }
+        }
     })
+    if ($AutoCloseSeconds -gt 0) {
+        $script:AutoCloseAt = [datetime]::UtcNow.AddSeconds($AutoCloseSeconds)
+    }
     $timer.Start()
 
-    $null = $window.ShowDialog()
-    try { $timer.Stop() } catch {}
+    try {
+        $null = $window.ShowDialog()
+    } finally {
+        try { $timer.Stop() } catch { }
+        $script:ActiveJob = $null
+        $script:Dash = $null
+        $script:MainWindow = $null
+        $script:AutoCloseAt = $null
+        try { Reset-SccJob } catch { }
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -724,6 +1186,7 @@ Export-ModuleMember -Function @(
     'Step-SccWorkflow',
     'Get-SccNextStage',
     'Stop-SccWorkflow',
+    'Invoke-SccGuiWorkflow',
     'Start-SccJob',
     'Update-SccJob',
     'Wait-SccJob',

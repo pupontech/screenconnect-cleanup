@@ -117,6 +117,9 @@ The CI workflow `.github/workflows/gui-revision-ci.yml` runs:
   - Pester unit (pwsh)
   - Test-SelfTests.ps1
   - Headless smoke (DetectOnly -SkipScanners)
+  - GUI smoke - WPF shell actually opens and auto-closes under PS 5.1 and
+    pwsh -Sta (`tests/ci/Test-GuiSmoke.ps1`), plus entry-point stays-alive
+    check
   - Malformed-config guard
   - Build-Portable.ps1 + verification
   - Artifact upload

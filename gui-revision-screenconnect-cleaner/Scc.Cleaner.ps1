@@ -346,6 +346,18 @@ else {
             exit 2
         }
         Write-Host ("GUI failed: {0}" -f $msg) -ForegroundColor Red
+        # Persist the failure so the cause survives the console flash-close
+        # (elevated relaunch console closes on exit; without this the user
+        # only sees 'the app does not open').
+        try {
+            $errLog = Join-Path ([System.IO.Path]::GetTempPath()) 'SccCleaner-gui-error.log'
+            $stamp = [datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss')
+            [System.IO.File]::AppendAllText($errLog, ($stamp + ' GUI failed: ' + $msg + [Environment]::NewLine), [System.Text.Encoding]::UTF8)
+            Write-Host ("Error details written to: {0}" -f $errLog) -ForegroundColor Yellow
+        } catch { }
+        try {
+            $null = [System.Windows.MessageBox]::Show(('ScreenConnect Cleaner failed to start:' + [Environment]::NewLine + $msg), 'ScreenConnect Cleaner', 'OK', 'Error')
+        } catch { }
         exit 1
     }
     exit 0

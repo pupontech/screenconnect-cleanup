@@ -145,6 +145,10 @@ jobs:
           }
           Write-Host "Headless DetectOnly smoke completed (exit 0)."
 
+      - name: GUI smoke - WPF shell actually opens (5.1 + pwsh -Sta)
+        shell: pwsh
+        run: ./gui-revision-screenconnect-cleaner/tests/ci/Test-GuiSmoke.ps1
+
       - name: Malformed-config guard (does not hang, exits cleanly with defaults)
         shell: pwsh
         run: |

@@ -13,6 +13,7 @@
         'Step-SccWorkflow',
         'Get-SccNextStage',
         'Stop-SccWorkflow',
+        'Invoke-SccGuiWorkflow',
         'Start-SccJob',
         'Update-SccJob',
         'Wait-SccJob',
