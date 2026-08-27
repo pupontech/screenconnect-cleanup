@@ -90,21 +90,51 @@ try {
     # -----------------------------------------------------------------
     Write-Host 'GUI smoke: entry-point check (Scc.Cleaner.ps1 GUI path stays alive) ...'
     $entry = Join-Path $appRoot 'Scc.Cleaner.ps1'
+    $entryOut = Join-Path $tmp 'entry.out'
+    $entryErr = Join-Path $tmp 'entry.err'
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = 'powershell.exe'
     $psi.Arguments = ('-NoProfile -ExecutionPolicy Bypass -File "' + $entry + '"')
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
     $proc = [System.Diagnostics.Process]::new()
     $proc.StartInfo = $psi
     $null = $proc.Start()
+    # Read asynchronously so a chatty child cannot deadlock the harness.
+    $outTask = $proc.StandardOutput.ReadToEndAsync()
+    $errTask = $proc.StandardError.ReadToEndAsync()
     Start-Sleep -Seconds 10
-    if ($proc.HasExited) {
-        $failures += ("Entry point exited early (GUI did not stay open): exit={0}" -f $proc.ExitCode)
-        Write-Host "  FAILED: exited with $($proc.ExitCode)"
-    } else {
+    $entryOutText = ''
+    $entryErrText = ''
+    try { $entryOutText = $outTask.Result } catch { }
+    try { $entryErrText = $errTask.Result } catch { }
+    $stillAlive = -not $proc.HasExited
+    if ($stillAlive) {
         Write-Host '  OK: process alive after 10s (window open) - terminating.'
         Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    } else {
+        $exitCode = $proc.ExitCode
+        # The launcher persists GUI failures to %TEMP%\SccCleaner-gui-error.log so
+        # the cause survives the console flash-close. Dump it here for the log.
+        $errLogText = ''
+        foreach ($c in @((Join-Path $env:TEMP 'SccCleaner-gui-error.log'), (Join-Path $env:TMP 'SccCleaner-gui-error.log'), 'C:\Windows\Temp\SccCleaner-gui-error.log')) {
+            if ($c -and (Test-Path -LiteralPath $c)) {
+                try { $errLogText = [string](Get-Content -LiteralPath $c -Raw -ErrorAction Stop) } catch { }
+                if ($errLogText) { break }
+            }
+        }
+        $failures += ("Entry point exited early (GUI did not stay open): exit={0} out={1} err={2} guierrlog={3}" -f $exitCode, $entryOutText.Trim(), $entryErrText.Trim(), $errLogText.Trim())
+        Write-Host "  FAILED: exited with $exitCode"
+        Write-Host '  ---- child stdout ----'
+        Write-Host $entryOutText
+        Write-Host '  ---- child stderr ----'
+        Write-Host $entryErrText
+        if ($errLogText) {
+            Write-Host '  ---- SccCleaner-gui-error.log ----'
+            Write-Host $errLogText
+        }
     }
 } catch {
     $failures += ('Smoke harness error: ' + $_.Exception.Message)
