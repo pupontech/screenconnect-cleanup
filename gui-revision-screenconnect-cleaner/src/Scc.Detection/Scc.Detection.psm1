@@ -1047,7 +1047,13 @@ function Invoke-SccDetectionSelfTest {
         [PSCustomObject]@{ Name = 'ScreenConnect Client (a1b2c3d4e5f6a7b8)'; DisplayName = 'ScreenConnect Client (a1b2c3d4e5f6a7b8)'; PathName = '"C:\y\ScreenConnect Client (a1b2c3d4e5f6a7b8)\Client.exe" "?e=Access&h=a.example.com&k=KEY"'; State = 'Running'; StartMode = 'Auto'; StartName = 'LocalSystem'; ProcessId = 2; Description = '' }
     )
     $resolved = Resolve-SccScInstances -Services $fakeServices -Processes @() -UninstallEntries @() -Events @() -Target $scTarget -TrustedRelays @()
-    Test-Assert -Name 'multi-instance dedup -> 1 instance' -Condition { @($resolved.Instances).Count -eq 1 } -Detail ('count=' + @($resolved.Instances).Count)
+    # The two synthetic services share one identifier and must collapse into a
+    # single instance whose source set contains exactly one 'service' entry.
+    # (On a real Windows host, Resolve-SccScInstances may also pick up genuine
+    # install directories, so we assert the dedup contract rather than a fixed
+    # total instance count.)
+    $serviceInstances = @($resolved.Instances | Where-Object { $_.Sources -contains 'service' -and $_.Identifier -eq 'a1b2c3d4e5f6a7b8' })
+    Test-Assert -Name 'multi-instance dedup -> 1 instance' -Condition { $serviceInstances.Count -eq 1 } -Detail ('serviceInstances=' + $serviceInstances.Count)
 
     if ($ThrowOnFail -and $failures.Count -gt 0) {
         throw ($failures -join "`n")
