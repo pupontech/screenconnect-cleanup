@@ -10,10 +10,10 @@ Describe 'Module import (headless / Linux)' {
         (Get-Module -Name PresentationFramework) | Should -BeNullOrEmpty
         (Get-Module -Name Scc.UI) | Should -Not -BeNullOrEmpty
     }
-    It 'exports exactly the 11 public functions' {
+    It 'exports exactly the 12 public functions' {
         $fns = (Get-Command -Module Scc.UI).Name | Sort-Object
         $expected = @(
-            'Get-SccNextStage', 'New-SccWorkflow', 'Start-SccApp',
+            'Get-SccNextStage', 'Get-SccRunbookStages', 'New-SccWorkflow', 'Start-SccApp',
             'Start-SccJob', 'Start-SccWorkflow', 'Step-SccWorkflow', 'Stop-SccWorkflow',
             'Stop-SccJob', 'Update-SccJob', 'Wait-SccJob', 'Reset-SccJob',
             'Invoke-SccGuiWorkflow'
@@ -48,6 +48,24 @@ Describe 'State machine and jobs (mocked backend)' {
             $wf = New-SccWorkflow -Mode Full
             $next = Get-SccNextStage -Workflow $wf
             $next.Index | Should -Be 0
+        }
+        It 'New-SccWorkflow -Stages runs only the selected stages' {
+            $wf = New-SccWorkflow -Mode Full -Stages @('Preflight', 'SnapshotBefore', 'Detection')
+            $pending = @($wf.Stages | Where-Object { $_.Status -eq 'Pending' } | ForEach-Object { $_.Name })
+            $pending | Should -BeExactly @('Preflight', 'SnapshotBefore', 'Detection')
+            $skipped = @($wf.Stages | Where-Object { $_.Status -eq 'Skipped' } | ForEach-Object { $_.Name })
+            $skipped | Should -BeExactly @('Review', 'Remediate', 'Scanners', 'SnapshotAfter', 'Compare', 'Report')
+            $wf.Stages[4].Detail | Should -Be 'Not selected in runbook'
+        }
+        It 'New-SccWorkflow -Stages rejects unknown stage names' {
+            { New-SccWorkflow -Mode Full -Stages @('Preflight', 'NotAStage') } | Should -Throw -ExpectedMessage '*unknown stage name*'
+        }
+        It 'Get-SccRunbookStages returns the 9-stage catalog with display names' {
+            $cat = @(Get-SccRunbookStages)
+            @($cat).Count | Should -Be 9
+            $cat[2].Name | Should -Be 'Detection'
+            $cat[2].DisplayName | Should -Match 'Remote-access detection'
+            $cat[2].Description | Should -Not -BeNullOrEmpty
         }
     }
 

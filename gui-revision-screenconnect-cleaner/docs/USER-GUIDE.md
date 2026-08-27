@@ -54,23 +54,33 @@ Use `-WhatIf` to preview. Use `-Uninstall` to remove only what the installer pla
 
 ---
 
-## Dashboard (Stage 0 - Preflight)
+## Dashboard (Investigation Runbook)
 
-The Dashboard shows:
-- **System Info**: Computer name, OS, architecture, current user, admin status, free space, memory, uptime, domain/workgroup, server OS detection
-- **Admin Status**: Green = elevated, Red = not elevated (click to re-launch elevated)
-- **Connectivity**: Internet reachable, NAS reachable (with configured path)
-- **Tool Status**: Each scanner/tool shows cached version, NAS availability, verified status
-- **Disk Space**: Free space on system drive
-- **App Version**: Current version
+The main view is a **runbook**: the same script list as the cmd version, as
+checkboxes, with a Run button and a live progress bar.
 
-**Actions:**
-- **Start Full Investigation** - Runs all stages (Preflight -> Snapshot A -> Detection -> Review -> Remediate -> Scanners -> Snapshot B -> Compare -> Report)
+- **Runbook checklist** - one checkbox per stage/script, in order:
+  Preflight, BEFORE snapshot, Remote-access detection, Review findings,
+  Contain + remove, Antivirus scans, AFTER snapshot, Before/After diff,
+  Investigation report. Checking a stage automatically checks everything
+  before it (scripts need their prerequisites); unchecking a stage unchecks
+  everything after it. All stages are checked by default (= full investigation).
+- **Run Selected** - runs only the checked stages, in order, in the background.
+- **Run All** - checks every stage and runs the full investigation.
+- **Script progress bar** - shows overall progress and the currently running
+  stage with its detail text (e.g. `Running: Stage 2 - Remote-access
+  detection - Detection complete (3/9)`). Stages run sequentially; the bar
+  steps once per completed stage.
+
+**Other actions:**
 - **Detection Only** - Read-only: Preflight -> Snapshot A -> Detection -> Report (skips Review/Remediate/Scanners)
 - **Scan Only** - Runs scanners on current machine (requires previous Detection run or runs Detection first)
 - **Review Previous Report** - Opens ReportView with a selected past run
-- **Settings** - Opens Settings tab
-- **Advanced Tools** - Opens Advanced tab
+- **Settings / Advanced** - configuration and power-user tools
+
+The System / Tool Status / Resume tabs below the runbook keep the preflight
+info: computer name, OS, admin status, connectivity, tool cache state, and
+previous runs for resume.
 
 ---
 

@@ -20,10 +20,44 @@
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
       <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
+
     <TextBlock Grid.Row="0" FontSize="22" FontWeight="Bold" Foreground="#0A6EBE"
-               Text="ScreenConnect Cleaner - Dashboard"/>
-    <TabControl Grid.Row="1" Margin="0,10,0,0">
+               Text="ScreenConnect Cleaner - Investigation Runbook"/>
+
+    <!-- Runbook checklist: one checkbox per script/stage, like the cmd steps -->
+    <Border Grid.Row="1" Background="#FFFFFF" BorderBrush="#CCCCCC" BorderThickness="1"
+            Margin="0,8,0,0" Padding="6">
+      <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel x:Name="RunbookList" Margin="2"/>
+      </ScrollViewer>
+    </Border>
+
+    <!-- Script progress -->
+    <StackPanel Grid.Row="2" Margin="0,8,0,0">
+      <ProgressBar x:Name="PrgRun" Height="18" Minimum="0" Maximum="100" Value="0"/>
+      <TextBlock x:Name="TxtProgress" Margin="2,4,0,0" Text="No run started."
+                 Foreground="#333333" TextWrapping="Wrap"/>
+    </StackPanel>
+
+    <!-- Run / view actions -->
+    <WrapPanel Grid.Row="3" Margin="0,8,0,0">
+      <Button x:Name="BtnRunSelected" Content="Run Selected"/>
+      <Button x:Name="BtnRunAll" Content="Run All (Full Investigation)"/>
+      <Button x:Name="BtnDetectionOnly" Content="Detection Only"/>
+      <Button x:Name="BtnScanOnly" Content="Scan Only"/>
+      <Button x:Name="BtnReviewPrevious" Content="Review Previous Report"/>
+      <Button x:Name="BtnSettings" Content="Settings"/>
+      <Button x:Name="BtnAdvanced" Content="Advanced Tools"/>
+    </WrapPanel>
+
+    <TextBlock Grid.Row="4" x:Name="TxtStatus" Margin="6,6,6,0" Text="Ready."
+               FontWeight="Bold" Foreground="#0A6EBE" TextWrapping="Wrap"/>
+
+    <TabControl Grid.Row="5" Margin="0,8,0,0" Height="160">
       <TabItem Header="System">
         <Grid Margin="8">
           <Grid.ColumnDefinitions>
@@ -63,22 +97,10 @@
       <TabItem Header="Resume">
         <StackPanel Margin="8">
           <TextBlock Text="Previous runs:" FontWeight="Bold" Margin="2"/>
-          <ListBox x:Name="LstPreviousRuns" Height="200" Margin="2"/>
+          <ListBox x:Name="LstPreviousRuns" Height="90" Margin="2"/>
           <Button x:Name="BtnResumeRun" Content="Resume Selected Run" HorizontalAlignment="Left"/>
         </StackPanel>
       </TabItem>
     </TabControl>
-    <StackPanel Grid.Row="2" HorizontalAlignment="Stretch">
-      <WrapPanel HorizontalAlignment="Left">
-        <Button x:Name="BtnFullInvestigation" Content="Start Full Investigation"/>
-        <Button x:Name="BtnDetectionOnly" Content="Detection Only"/>
-        <Button x:Name="BtnScanOnly" Content="Scan Only"/>
-        <Button x:Name="BtnReviewPrevious" Content="Review Previous Report"/>
-        <Button x:Name="BtnSettings" Content="Settings"/>
-        <Button x:Name="BtnAdvanced" Content="Advanced Tools"/>
-      </WrapPanel>
-      <TextBlock x:Name="TxtStatus" Margin="6,6,6,0" Text="Ready."
-                 FontWeight="Bold" Foreground="#0A6EBE" TextWrapping="Wrap"/>
-    </StackPanel>
   </Grid>
 </UserControl>

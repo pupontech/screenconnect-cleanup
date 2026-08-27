@@ -9,6 +9,7 @@
     RequiredModules = @('Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Management')
     FunctionsToExport      = @(
         'New-SccWorkflow',
+        'Get-SccRunbookStages',
         'Start-SccWorkflow',
         'Step-SccWorkflow',
         'Get-SccNextStage',

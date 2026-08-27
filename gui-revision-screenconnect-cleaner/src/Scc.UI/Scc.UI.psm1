@@ -29,6 +29,10 @@ $script:ActiveJob = $null
 $script:Dash = $null
 $script:MainWindow = $null
 $script:AutoCloseAt = $null
+$script:RunbookWorkflow = $null
+$script:RunbookSelected = $null
+$script:RunbookCatalog = @()
+$script:RunbookBoxes = @()
 
 # ---------------------------------------------------------------------------
 # Private helpers
@@ -282,7 +286,8 @@ function New-SccWorkflow {
         [switch]$Resume,
         [string]$RunId,
         [int]$IncidentWindowDays = 7,
-        [int]$ScannerTimeout = 120
+        [int]$ScannerTimeout = 120,
+        [string[]]$Stages
     )
 
     if ($null -eq $Run) {
@@ -296,7 +301,9 @@ function New-SccWorkflow {
         }
     }
 
-    $stages = @(
+    # NOTE: local is $stageList - never $stages (case-insensitive collision
+    # with the -Stages parameter would clobber the caller's selection).
+    $stageList = @(
         (New-SccStageRecord 0 'Preflight'      $false)
         (New-SccStageRecord 1 'SnapshotBefore' $false)
         (New-SccStageRecord 2 'Detection'      $false)
@@ -308,6 +315,23 @@ function New-SccWorkflow {
         (New-SccStageRecord 8 'Report'         $false)
     )
 
+    # Runbook stage selection: only the named stages run; everything else is
+    # pre-skipped. Unknown names are rejected (typo protection for the GUI
+    # checklist and automation).
+    if ($null -ne $Stages -and @($Stages).Count -gt 0) {
+        $known = @($stageList | ForEach-Object { $_.Name })
+        $unknown = @($Stages | Where-Object { $known -notcontains $_ })
+        if (@($unknown).Count -gt 0) {
+            throw ('New-SccWorkflow: unknown stage name(s): {0}. Known: {1}' -f ($unknown -join ', '), ($known -join ', '))
+        }
+        foreach ($s in $stageList) {
+            if ($known -contains $s.Name -and $Stages -notcontains $s.Name) {
+                $s.Status = 'Skipped'
+                $s.Detail = 'Not selected in runbook'
+            }
+        }
+    }
+
     $wf = [pscustomobject]@{
         RunId               = $Run.RunId
         Run                 = $Run
@@ -316,7 +340,7 @@ function New-SccWorkflow {
         PlanPath            = $null
         IncidentWindowDays  = $IncidentWindowDays
         ScannerTimeout      = $ScannerTimeout
-        Stages              = $stages
+        Stages              = $stageList
         Data                = [ordered]@{}
         Status              = 'Created'
         StartedUtc          = $null
@@ -326,6 +350,25 @@ function New-SccWorkflow {
 
     if ($Resume) { Import-SccResumeState -Workflow $wf }
     return $wf
+}
+
+# ---------------------------------------------------------------------------
+# Runbook catalog for the main GUI view: the cmd-version script list, one
+# checkbox per stage. DisplayName mirrors the START-HERE.bat step wording
+# where a cmd equivalent exists.
+# ---------------------------------------------------------------------------
+function Get-SccRunbookStages {
+    return @(
+        ([pscustomobject]@{ Index = 0; Name = 'Preflight';      DisplayName = 'Stage 0 - Preflight';              Description = 'Preflight checks (admin, disk, config)' })
+        ([pscustomobject]@{ Index = 1; Name = 'SnapshotBefore'; DisplayName = 'Stage 1 - BEFORE snapshot';        Description = 'Baseline evidence (must run first)' })
+        ([pscustomobject]@{ Index = 2; Name = 'Detection';      DisplayName = 'Stage 2 - Remote-access detection'; Description = 'Read-only, automatic' })
+        ([pscustomobject]@{ Index = 3; Name = 'Review';         DisplayName = 'Stage 3 - Review findings';        Description = 'Remediation plan gate' })
+        ([pscustomobject]@{ Index = 4; Name = 'Remediate';      DisplayName = 'Stage 4 - Contain + remove';       Description = 'ScreenConnect only, plan-gated, dry-run default' })
+        ([pscustomobject]@{ Index = 5; Name = 'Scanners';       DisplayName = 'Stage 5 - Antivirus scans';        Description = 'KVRT / ESET / Malwarebytes (attended)' })
+        ([pscustomobject]@{ Index = 6; Name = 'SnapshotAfter';  DisplayName = 'Stage 6 - AFTER snapshot';         Description = 'Post-run evidence' })
+        ([pscustomobject]@{ Index = 7; Name = 'Compare';        DisplayName = 'Stage 7 - Before/After diff';      Description = 'Resurrection check' })
+        ([pscustomobject]@{ Index = 8; Name = 'Report';         DisplayName = 'Stage 8 - Investigation report';   Description = 'HTML / JSON / technician summary' })
+    )
 }
 
 function Get-SccNextStage {
@@ -802,10 +845,158 @@ function Start-SccGuiJobWithToken {
     try {
         $handle = Start-SccJob -ScriptBlock { param($t) Invoke-SccGuiWorkflow -Token $t } -Name $JobName -CancellationToken $Token
         $script:ActiveJob = $handle
+        # Drive the runbook progress bar from the SHARED workflow object the
+        # runspace mutates live (same object reference in the token copy).
+        $script:RunbookWorkflow = $Token.Workflow
+        $script:RunbookSelected = $null
+        Set-SccRunbookBusy -Busy $true
         Set-SccGuiStatus -Text ('Running: ' + $JobName)
     } catch {
         [System.Windows.MessageBox]::Show($_.Exception.Message, 'ScreenConnect Cleaner', 'OK', 'Error') | Out-Null
     }
+}
+
+# ---------------------------------------------------------------------------
+# Runbook (main view) support: checkbox checklist + progress bar.
+# ---------------------------------------------------------------------------
+
+function Update-SccRunbookList {
+    # Rebuild the checklist from the stage catalog. Chain-select semantics:
+    # checking a stage also checks all earlier stages (a script cannot run
+    # without its prerequisites); unchecking a stage unchecks everything
+    # after it. This mirrors the cmd version's ordered step list.
+    param($Dash)
+    try {
+        $list = $Dash.FindName('RunbookList')
+        if ($null -eq $list) { return }
+        $list.Children.Clear()
+        $script:RunbookCatalog = @(Get-SccRunbookStages)
+        $script:RunbookBoxes = @()
+        foreach ($rec in $script:RunbookCatalog) {
+            $box = [System.Windows.Controls.CheckBox]::new()
+            $box.Margin = [System.Windows.Thickness]::new(2, 4, 2, 4)
+            $box.FontSize = 13
+            $box.Foreground = [System.Windows.Media.Brushes]::Black
+            $box.Content = ($rec.DisplayName + ' - ' + $rec.Description)
+            $box.IsChecked = $true
+            $box.Tag = $rec.Index
+            # NOTE: use the SENDER's Tag for the chain comparison, never a
+            # loop variable - PowerShell scriptblocks capture variables by
+            # reference, so a closure over $idx would see the LAST index.
+            $box.Add_Checked({
+                param($s, $e)
+                $src = [int]$s.Tag
+                foreach ($b in $script:RunbookBoxes) {
+                    if ([int]$b.Tag -lt $src) { $b.IsChecked = $true }
+                }
+            })
+            $box.Add_Unchecked({
+                param($s, $e)
+                $src = [int]$s.Tag
+                foreach ($b in $script:RunbookBoxes) {
+                    if ([int]$b.Tag -gt $src) { $b.IsChecked = $false }
+                }
+            })
+            $null = $list.Children.Add($box)
+            $script:RunbookBoxes += $box
+        }
+    } catch {
+        Set-SccGuiStatus -Text ('Runbook list error: ' + $_.Exception.Message)
+    }
+}
+
+function Get-SccRunbookSelection {
+    # Selected stage names, in catalog order.
+    $names = @()
+    foreach ($rec in $script:RunbookCatalog) {
+        $box = $script:RunbookBoxes | Where-Object { [int]$_.Tag -eq $rec.Index }
+        if ($null -ne $box -and $box.IsChecked) { $names += $rec.Name }
+    }
+    return $names
+}
+
+function Select-SccRunbookAll {
+    param($Dash, [bool]$Checked)
+    foreach ($b in $script:RunbookBoxes) { $b.IsChecked = $Checked }
+}
+
+function Start-SccRunbookJob {
+    param($Dash)
+    try {
+        $names = @(Get-SccRunbookSelection)
+        if (@($names).Count -eq 0) {
+            [System.Windows.MessageBox]::Show('Select at least one stage to run.', 'ScreenConnect Cleaner', 'OK', 'Warning') | Out-Null
+            return
+        }
+        $wf = New-SccWorkflow -Mode Full -Stages $names -Run (New-SccGuiRun)
+        $script:RunbookSelected = @($script:RunbookCatalog | Where-Object { $names -contains $_.Name } | ForEach-Object { $_.Index })
+        Set-SccGuiStatus -Text ('Runbook: ' + (@($names).Count) + ' stage(s) selected - starting.')
+        Start-SccGuiJobWithToken -Token @{ Cancelled = $false; Workflow = $wf } -JobName ('Runbook (' + @($names).Count + ' stages)')
+    } catch {
+        [System.Windows.MessageBox]::Show($_.Exception.Message, 'ScreenConnect Cleaner', 'OK', 'Error') | Out-Null
+    }
+}
+
+function Set-SccRunbookBusy {
+    param([bool]$Busy)
+    try {
+        if ($null -eq $script:Dash) { return }
+        foreach ($n in @('BtnRunSelected', 'BtnRunAll', 'BtnDetectionOnly', 'BtnScanOnly')) {
+            $b = $script:Dash.FindName($n)
+            if ($null -ne $b) { $b.IsEnabled = -not $Busy }
+        }
+    } catch { }
+}
+
+function Update-SccRunbookProgress {
+    # Called from the dispatcher timer while a job runs. Progress is computed
+    # from the live workflow object shared with the runspace: completed
+    # (selected) stages / selected total, plus the running stage's label.
+    try {
+        if ($null -eq $script:Dash) { return }
+        $bar = $script:Dash.FindName('PrgRun')
+        $txt = $script:Dash.FindName('TxtProgress')
+        if ($null -eq $bar -or $null -eq $txt) { return }
+        $wf = $script:RunbookWorkflow
+        if ($null -eq $wf) { return }
+        $selIdx = $script:RunbookSelected
+        if ($null -eq $selIdx -or @($selIdx).Count -eq 0) { $selIdx = @(0, 1, 2, 3, 4, 5, 6, 7, 8) }
+        $total = @($selIdx).Count
+        $selected = @($wf.Stages | Where-Object { $selIdx -contains $_.Index })
+        $done = @($selected | Where-Object { $_.Status -eq 'Completed' -or $_.Status -eq 'Skipped' }).Count
+        $running = @($selected | Where-Object { $_.Status -eq 'Running' } | Select-Object -First 1)
+        $pct = [int]((($done + $(if ($null -ne $running) { 0.5 } else { 0 })) / $total) * 100)
+        if ($pct -gt 100) { $pct = 100 }
+        if ($pct -lt 0) { $pct = 0 }
+        $bar.Value = $pct
+        $label = ''
+        if ($null -ne $running) {
+            $rec = $script:RunbookCatalog | Where-Object { $_.Index -eq $running.Index } | Select-Object -First 1
+            $dn = $running.Name
+            if ($null -ne $rec) { $dn = $rec.DisplayName }
+            $label = ('Running: ' + $dn)
+            if ($running.Detail) { $label += (' - ' + $running.Detail) }
+            $label += (' ({0}/{1})' -f ($done + 1), $total)
+        } else {
+            $label = ('Progress: {0} of {1} stages done ({2}%)' -f $done, $total, $pct)
+        }
+        $txt.Text = $label
+    } catch { }
+}
+
+function Complete-SccRunbookProgress {
+    # Called when the active job finishes: finalize the progress bar.
+    try {
+        if ($null -eq $script:Dash) { return }
+        $bar = $script:Dash.FindName('PrgRun')
+        $txt = $script:Dash.FindName('TxtProgress')
+        $script:RunbookWorkflow = $null
+        $script:RunbookSelected = $null
+        Set-SccRunbookBusy -Busy $false
+        if ($null -eq $bar -or $null -eq $txt) { return }
+        $bar.Value = 100
+        $txt.Text = 'Run finished.'
+    } catch { }
 }
 
 function Start-SccGuiJob {
@@ -1064,9 +1255,21 @@ function Start-SccApp {
 
     Update-SccDashboardInfo -Dash $dash
     Update-SccRecentRunsList -Dash $dash
+    Update-SccRunbookList -Dash $dash
 
     # Wire action buttons (names defined in Dashboard.xaml). The background job
     # runs the workflow so the UI thread never blocks (ARCHITECTURE sec. 8).
+    $btnRunSel = $dash.FindName('BtnRunSelected')
+    if ($null -ne $btnRunSel) {
+        $btnRunSel.Add_Click({ Start-SccRunbookJob -Dash $script:Dash })
+    }
+    $btnRunAll = $dash.FindName('BtnRunAll')
+    if ($null -ne $btnRunAll) {
+        $btnRunAll.Add_Click({
+            Select-SccRunbookAll -Dash $script:Dash -Checked $true
+            Start-SccRunbookJob -Dash $script:Dash
+        })
+    }
     $btnFull = $dash.FindName('BtnFullInvestigation')
     if ($null -ne $btnFull) {
         $btnFull.Add_Click({ Start-SccGuiJob -Mode Full -JobName 'FullInvestigation' })
@@ -1129,6 +1332,9 @@ function Start-SccApp {
             $status = ('Running: ' + $job.Name)
             if ($job.Percent -gt 0) { $status += (' (' + $job.Percent + '%)') }
             Set-SccGuiStatus -Text $status
+            # Live runbook progress bar (shared workflow object mutated by the
+            # runspace; stages complete atomically, so the bar steps per stage).
+            Update-SccRunbookProgress
             if ($job._Done) {
                 $final = $job.State
                 $detail = ''
@@ -1139,6 +1345,7 @@ function Start-SccApp {
                 Set-SccGuiStatus -Text $msg
                 $awaitingReview = ($null -ne $job.Result -and $job.Result.Status -eq 'AwaitingReview')
                 $failedJob = ($final -eq 'Failed')
+                Complete-SccRunbookProgress
                 Reset-SccJob
                 $script:ActiveJob = $null
                 # Review gate: Full-mode run reached stage 3 with no plan.
@@ -1182,6 +1389,7 @@ function Start-SccApp {
 
 Export-ModuleMember -Function @(
     'New-SccWorkflow',
+    'Get-SccRunbookStages',
     'Start-SccWorkflow',
     'Step-SccWorkflow',
     'Get-SccNextStage',
