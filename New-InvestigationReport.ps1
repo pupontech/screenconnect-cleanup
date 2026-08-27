@@ -548,22 +548,28 @@ if ($AVUninstall) {
             $opened = Get-Prop $r 'OpenedAt'
             $closed = Get-Prop $r 'ClosedAt'
             $cmd = Get-Prop $r 'UninstallString'
-            $rows += "<tr><td>$(Fmt $name)</td><td>$(Fmt $status)</td><td>$(Fmt $opened)</td><td>$(Fmt $closed)</td><td class='mono'>$(Fmt $cmd)</td></tr>`n"
+            $left = Get-Prop $r 'LeftoversMoved'
+            $leftCell = ''
+            if ($left) { $leftCell = "$left item(s) quarantined" }
+            $rows += "<tr><td>$(Fmt $name)</td><td>$(Fmt $status)</td><td>$(Fmt $opened)</td><td>$(Fmt $closed)</td><td class='mono'>$(Fmt $cmd)</td><td>$(Fmt $leftCell)</td></tr>`n"
         }
     }
     if (-not $rows) {
         if ($avError) {
-            $rows = "<tr><td colspan='5'>Could not load AV-uninstall results: $(Fmt $avError)</td></tr>"
+            $rows = "<tr><td colspan='6'>Could not load AV-uninstall results: $(Fmt $avError)</td></tr>"
         } else {
-            $rows = '<tr><td colspan="5">No installed third-party AV was detected (or the step was skipped).</td></tr>'
+            $rows = '<tr><td colspan="6">No installed third-party AV was detected (or the step was skipped).</td></tr>'
         }
     }
-    $avNote = if ($avError) { "<p class='warn-line'>$avError</p>" } else { "<p class='muted'>Uninstallers were opened for the technician to drive (attended). Source: $(Fmt $AVUninstall)</p>" }
+    $qRoot = Get-Prop $avData 'QuarantineRoot'
+    $qNote = ''
+    if ($qRoot) { $qNote = " <span class='muted'>Leftover shortcuts/folders were moved (not deleted) to <code>$(Fmt $qRoot)</code>.</span>" }
+    $avNote = if ($avError) { "<p class='warn-line'>$avError</p>" } else { "<p class='muted'>Uninstallers were opened for the technician to drive (attended). Source: $(Fmt $AVUninstall)</p>$qNote" }
     $avUninstallSectionHtml = @"
 <section id="av-uninstall">
   <h2>Installed antivirus / security products uninstalled</h2>
   $avNote
-  <div class="table-scroll"><table class="data-table"><thead><tr><th>Product</th><th>Status</th><th>Opened (UTC)</th><th>Closed (UTC)</th><th>Uninstall command</th></tr></thead><tbody>$rows</tbody></table></div>
+  <div class="table-scroll"><table class="data-table"><thead><tr><th>Product</th><th>Status</th><th>Opened (UTC)</th><th>Closed (UTC)</th><th>Uninstall command</th><th>Leftovers</th></tr></thead><tbody>$rows</tbody></table></div>
   <p class="muted">These products were opened for attended removal. Confirm each was fully uninstalled before leaving the site; a machine should not be left without working AV unless a replacement is being deployed.</p>
 </section>
 "@

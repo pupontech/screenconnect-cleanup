@@ -1002,3 +1002,34 @@ Decision=ALL_REMOVE RemovalConfirmed=true rc=0. Full CI suite green.
 
 NOT proven on Windows: the full auto-remove run on a live machine (needs the
 owner's live test); sc-cleanup.ps1 Stage 3 gate is unchanged.
+
+## 14. v1.7.5 - AV-uninstall leftover sweep (2026-08-27, main)
+
+Owner report: "eset uninstaller doesnt seem to work maybe it should just remve
+the shortcuts and folder". The ESET vendor uninstaller fails/leaves stuff
+behind on the live machine.
+
+Fix: Invoke-AVUninstaller.ps1 now sweeps leftovers after every uninstall
+attempt (vendor GUI or winget) and MOVES them to
+<LogDir>\av-uninstall-quarantine\<product>-<stamp>\ - never deleted
+(quarantine-never-delete invariant), every move logged:
+- Clear-ProductLeftovers: keyword-matched sweep of Start Menu (ProgramData +
+  current user APPDATA), install folder (registry InstallLocation, else a
+  *kw* folder directly under Program Files / Program Files (x86)), and the
+  matching temp folder (covers "ESET Online Scanner" runtime dir).
+- Auto-runs per product; -NoLeftoverSweep opt-out; results gain
+  LeftoversMoved + Leftovers[]; JSON root gains QuarantineRoot; report gains
+  a Leftovers column + quarantine note.
+- Discovery now also captures InstallLocation (StrictMode-safe getter).
+
+PROVEN on Linux (synthetic): fake Start Menu/PF/TEMP with ESET leftovers +
+a decoy other-vendor folder -> 3 moves (ESET start menu dir, PF\ESET,
+TEMP\ESET Online Scanner), decoy untouched, all parked in the timestamped
+quarantine dir. The harness caught a real parse bug in my first cut
+($env:'ProgramFiles(x86)' is invalid PS; fixed to ${env:ProgramFiles(x86)}).
+Full CI suite green (new scanner-contract asserts: Clear-ProductLeftovers
+exists, quarantine destination, -NoLeftoverSweep, no Remove-Item anywhere).
+
+NOT proven on Windows: live ESET leftover sweep on a real machine (folder
+locks, actual ESET layout, report rendering) - owner live-test per
+docs/09-windows-live-test-matrix.md 6c.

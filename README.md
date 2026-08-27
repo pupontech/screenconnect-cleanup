@@ -74,7 +74,7 @@ Two further consequences worth stating plainly:
 | 3 — Technician review | approval gate — nothing is removed without it | **built** (interactive y/n prompt in `sc-cleanup.ps1`; the guided runner skips it — Step 5 auto-removes + logs per owner directive 2026-08-27) |
 | 4 — Remove / quarantine | stop, uninstall, quarantine, clean persistence | **built, dry-run default** (never run on live Windows; skipped by default via `-sr`) |
 | 5 — Scanners | KVRT, ESET Online Scanner (GUI, attended); Malwarebytes installed via winget (`winget install -e --id Malwarebytes.Malwarebytes`) | **built** (`Get-AVTools.ps1` downloads KVRT + ESET from official vendor URLs; `Invoke-GUIScanner` launches visible attended GUIs and runs the Malwarebytes winget install; AdwCleaner/Defender remain removed; real exec unverified) |
-| 6 — Uninstall installed AV | open each detected third-party AV uninstaller (attended GUI) | **built** (Invoke-AVUninstaller; Windows Defender excluded; results in report) |
+| 6 — Uninstall installed AV | open each detected third-party AV uninstaller (attended GUI) + sweep leftovers into quarantine | **built** (Invoke-AVUninstaller; Windows Defender excluded; leftover sweep v1.7.5 moves remaining shortcuts/folders to av-uninstall-quarantine, never deletes; results in report) |
 | 7 — Procmon (targeted) | "something reinstalled it — what?" | **not started** (opt-in stub only) |
 | 8 — Snapshot (after) + diff | prove it is gone, catch resurrections | **built** (Linux-verified) |
 | 9 — Report | HTML + JSON + tech summary | **built** (XSS + empty-case verified; now includes AV-uninstall section) |

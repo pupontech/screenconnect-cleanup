@@ -83,7 +83,11 @@ else {
     if ($text -match 'Windows Defender' -and $text -notmatch 'osExclude') { Add-Failure 'Invoke-AVUninstaller.ps1 does not exclude Windows Defender from removal.' }
     if ($text -notmatch 'winget uninstall -e --id ') { Add-Failure 'Invoke-AVUninstaller.ps1 does not run winget uninstall -e --id for winget-managed products.' }
     if ($text -notmatch "'Malwarebytes'\s*=\s*'Malwarebytes\.Malwarebytes'") { Add-Failure 'Invoke-AVUninstaller.ps1 missing the Malwarebytes winget package id.' }
-    if ($script:failures.Count -eq 0) { Write-Host '  OK Invoke-AVUninstaller.ps1: attended-only, Defender excluded, Malwarebytes via winget.' }
+    if ($text -notmatch 'function Clear-ProductLeftovers') { Add-Failure 'Invoke-AVUninstaller.ps1 missing the leftover sweep (Clear-ProductLeftovers).' }
+    if ($text -notmatch 'av-uninstall-quarantine') { Add-Failure 'Invoke-AVUninstaller.ps1 missing the av-uninstall-quarantine destination.' }
+    if ($text -notmatch 'NoLeftoverSweep') { Add-Failure 'Invoke-AVUninstaller.ps1 missing the -NoLeftoverSweep opt-out.' }
+    if ($codeOnly -match 'Remove-Item') { Add-Failure 'Invoke-AVUninstaller.ps1 deletes instead of quarantining - the sweep must Move-Item only.' }
+    if ($script:failures.Count -eq 0) { Write-Host '  OK Invoke-AVUninstaller.ps1: attended-only, Defender excluded, Malwarebytes via winget, quarantine sweep.' }
 }
 
 # --- Fail/exit ----------------------------------------------------------

@@ -3,6 +3,13 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.5] - 2026-08-27
+AV-uninstall leftover sweep - some vendor uninstallers "don't seem to work" (observed live with ESET) and leave the product's Start Menu shortcuts + install folder behind. `Invoke-AVUninstaller.ps1` now sweeps leftovers after every uninstall attempt and MOVES them (never deletes - quarantine-never-delete stays the invariant) to `<LogDir>\av-uninstall-quarantine`, logging every move.
+- New `Clear-ProductLeftovers`: keyword-matched sweep of the Start Menu (all-users + current user), the install folder (registry InstallLocation, else a `*<kw>*` folder under Program Files / (x86)), and the matching temp folder (covers ESET Online Scanner's runtime dir). Targets are moved to a timestamped quarantine dir; locked items are recorded as MoveFailed, not silently skipped.
+- Runs automatically after each product's uninstall (winget or vendor GUI); new `-NoLeftoverSweep` disables it. Results gain `LeftoversMoved` + `Leftovers` (source/destination/status per item) and the JSON root carries `QuarantineRoot`.
+- Report: the AV-uninstall section gains a "Leftovers" column and a note pointing at the quarantine root.
+- Verified on Linux with a synthetic ESET layout: Start Menu "ESET", Program Files\ESET and TEMP\"ESET Online Scanner" all moved to quarantine; a decoy other-vendor folder untouched. A PS parse bug (`$env:'ProgramFiles(x86)'`) was caught by the harness and fixed to `${env:ProgramFiles(x86)}`.
+
 ## [1.7.4] - 2026-08-27
 Guided runner removes the ScreenConnect check/removal prompts - it now just runs, removes and logs (owner directive: "remove the prompts asking to check for screenconnect and just run and remove and log").
 - `START-HERE.bat` **Step 4** (detection) runs automatically with no prompt: full scan (`detect-remote-access.ps1 -All -NoPause`).

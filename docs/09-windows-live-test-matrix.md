@@ -132,6 +132,24 @@ CI test updated to assert the new truth.
 6.3 HKCU cleanup: after the test, the created GUID leaf is removed and the
     RIT-SCC-CI parent is removed only when empty.
 
+## 6c. AV-uninstall leftover sweep (v1.7.5, owner directive 2026-08-27)
+
+The ESET vendor uninstaller "doesn't seem to work" on a live machine and leaves
+Start Menu shortcuts + the install folder behind. `Invoke-AVUninstaller.ps1`
+now sweeps leftovers after every uninstall attempt and MOVES them (never
+deletes) to `<LogDir>\av-uninstall-quarantine`.
+
+6c.1 On a machine with ESET (or ESET Online Scanner) installed, run Step 8
+      (uninstall installed AV). After the vendor uninstaller window closes,
+      confirm the script reports the leftover sweep with N item(s) moved.
+6c.2 Confirm the ESET Start Menu folder, Program Files\ESET (or the EOS temp
+      folder) are GONE from their original locations and present under
+      av-uninstall-quarantine\<product>-<stamp>\.
+6c.3 Confirm non-ESET folders (e.g. a decoy other-vendor folder) were NOT
+      touched, and av-uninstall-results.json carries LeftoversMoved + the
+      quarantine path (rendered in the report's AV section).
+6c.4 Re-run with -NoLeftoverSweep: the sweep is skipped (leftovers stay).
+
 ## 7. Full end-to-end (optional, destructive, dedicated lab VM only)
 
 7.1 Install ScreenConnect, confirm detection, run the cleanup pipeline with

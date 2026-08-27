@@ -31,6 +31,12 @@ Move to an ACL-locked quarantine folder, preserve the original path, record the 
 Deletion is a separate, later, explicitly-invoked operation. Costs nothing, covers the
 one time we are wrong.
 
+> The AV-uninstall leftover sweep (v1.7.5) follows the same rule: after a vendor
+> uninstaller finishes (or fails - observed live with ESET), remaining product
+> shortcuts/folders are MOVED to `<LogDir>\av-uninstall-quarantine`, never deleted,
+> and every move is logged in `av-uninstall-results.json`. `-NoLeftoverSweep`
+> disables it.
+
 ### 4. Restore point + registry export before the first change
 Default on, `-np` to skip. **Check System Restore is actually enabled** — it frequently
 is not, and a silently-failed restore point is worse than none.
