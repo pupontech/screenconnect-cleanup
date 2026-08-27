@@ -117,15 +117,21 @@ try {
     $outTask = $proc.StandardOutput.ReadToEndAsync()
     $errTask = $proc.StandardError.ReadToEndAsync()
     Start-Sleep -Seconds 10
-    $entryOutText = ''
-    $entryErrText = ''
-    try { $entryOutText = $outTask.Result } catch { }
-    try { $entryErrText = $errTask.Result } catch { }
+    # IMPORTANT: check liveness BEFORE touching the output tasks. A healthy
+    # child (GUI open) keeps stdout open, so $outTask.Result would block
+    # forever; the streams are only drained after the process has exited
+    # (or been killed), with a bounded wait.
     $stillAlive = -not $proc.HasExited
     if ($stillAlive) {
         Write-Host '  OK: process alive after 10s (window open) - terminating.'
         Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+        try { $null = $outTask.Wait(3000) } catch { }
+        try { $null = $errTask.Wait(3000) } catch { }
     } else {
+        $entryOutText = ''
+        $entryErrText = ''
+        try { $entryOutText = [string]$outTask.Result } catch { }
+        try { $entryErrText = [string]$errTask.Result } catch { }
         $exitCode = 0
         try { $exitCode = $proc.ExitCode } catch { }
         # The launcher persists GUI failures to %TEMP%\SccCleaner-gui-error.log so
