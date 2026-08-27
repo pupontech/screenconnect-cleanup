@@ -85,6 +85,25 @@ Common rules for ALL modules:
 - Errors: throw on programmer errors; catch+record on environment errors
   (one failed section must not abort the run).
 
+### 3.0 Manifest / PowerShell-version note (module-scope cmdlet fix)
+
+The 9 module manifests deliberately do **NOT** set `PowerShellVersion = '5.1'`.
+Setting that value forced the modules to load in 5.1-compatibility mode on the
+CI runner (whose default shell is PowerShell 7 / `pwsh`). In that mode,
+`Microsoft.PowerShell.Management` cmdlets (and module-scope functions) lost
+visibility inside the modules, causing runtime failures on Windows CI.
+
+Root-cause fix (verified on `windows-2022` + `windows-2025`, PS 5.1 and pwsh):
+- Remove `PowerShellVersion = '5.1'` from every `.psd1` (keep `RequiredModules`).
+- Qualify every `Microsoft.PowerShell.Management` cmdlet with its module prefix
+  (e.g. `Microsoft.PowerShell.Management\Test-Path`) so resolution is
+  unambiguous regardless of the loading edition.
+- Keep modules PS 5.1 compatible (no `??`/`?:`/`&&`/`||`/`-AsHashtable`); rely on
+  edition detection at runtime instead of a manifest-imposed version floor.
+
+This is why the app runs on both Windows PowerShell 5.1 and PowerShell 7 while
+still loading and exposing its functions correctly.
+
 ### 3.1 Scc.Core  (foundation - all others import it)
 
 Exports:

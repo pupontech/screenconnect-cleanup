@@ -2,6 +2,29 @@
 
 Technician-facing documentation for launching, using, and troubleshooting the GUI application.
 
+> **Read this first — safety model.**
+> ScreenConnect Cleaner is **DETECT-ONLY / read-only by default**. No system
+> state changes unless you explicitly opt in to remediation. In the GUI, every
+> finding defaults to **KEEP** and you must approve a plan (`plan.json`) at the
+> Review step before anything is touched. In headless mode the pipeline *stops
+> and waits* at the Review gate unless you supply a pre-approved plan via
+> `-PlanPath`. There is **no detect-and-remove flag** and removal is **never
+> automatic**.
+>
+> The remediation engine (`Invoke-SccRemediation`) is **dry-run by default** and
+> only performs real actions when called with `-Execute` (GUI: explicit Approve
+> + double-confirm; headless: a plan injected via `-PlanPath`).
+>
+> This tool is **completely vibe coded** (AI-assisted, with test guardrails) and
+> has **NOT** been validated against a live ScreenConnect install or run on real
+> client machines. Run it only on a lab/tested machine you are authorized to
+> service. **Destructive removal only on a disposable lab VM.**
+
+> **Platform note.** The GUI is a **WPF (XAML)** application and requires a
+> Windows desktop session (PowerShell 5.1 on Windows). On non-Windows hosts
+> only **headless mode** (`-Headless`) is available — the same stage state
+> machine runs without the WPF shell.
+
 ---
 
 ## Launching the Application
@@ -93,7 +116,15 @@ Writes `findings.json` to run directory. **Never modifies system state.**
 ### Stage 4: Remediate
 Consumes `plan.json`. **Dry-run by default.**
 
-**With `-Execute` (or double-confirm in GUI):**
+The remediation engine (`Invoke-SccRemediation`) only performs real actions
+when invoked with `-Execute`. In the GUI this happens when you approve the plan
+and pass the double-confirmation prompt (the run is created with the execute
+context set by your approval). In headless mode, real removal only occurs when
+you supply a plan via `-PlanPath` that was produced through an explicit review
+(`New-SccPlan`) — the pipeline never auto-approves.
+
+**With real execution enabled (GUI double-confirm, or headless with an
+approved plan):**
 Per approved REMOVE item (ScreenConnect only):
 1. Stop service (if any)
 2. Kill associated processes
