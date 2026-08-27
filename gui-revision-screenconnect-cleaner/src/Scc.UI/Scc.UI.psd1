@@ -5,7 +5,6 @@
     Author                 = 'ScreenConnect Cleaner'
     CompanyName            = 'ScreenConnect Cleaner'
     Description            = 'WPF shell and shared stage state machine for ScreenConnect Cleaner.'
-    PowerShellVersion      = '5.1'
     CLRVersion             = '4.0'
     RequiredModules = @('Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Management')
     FunctionsToExport      = @(

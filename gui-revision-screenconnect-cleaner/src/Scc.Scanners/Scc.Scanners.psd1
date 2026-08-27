@@ -7,7 +7,6 @@
     CompanyName       = 'ScreenConnect Cleaner'
     Copyright         = '(c) 2026 ScreenConnect Cleaner Contributors. MIT License.'
     Description       = 'Centralized scanner management and adapters for CLI and GUI scanners.'
-    PowerShellVersion = '5.1'
     RequiredModules = @('Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Management')
     FunctionsToExport = @('Get-SccScannerList', 'Invoke-SccScanner', 'Invoke-SccGuiScanner')
     CmdletsToExport   = @()

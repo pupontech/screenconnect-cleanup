@@ -6,7 +6,6 @@
     CompanyName       = 'ScreenConnect Cleaner'
     Copyright         = '(c) 2026 ScreenConnect Cleaner Contributors. MIT License.'
     Description       = 'ToolManager: NAS-first tool acquisition, validation, cache, and provenance for ScreenConnect Cleaner investigation runs.'
-    PowerShellVersion = '5.1'
     RequiredModules = @('Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Management')
     FunctionsToExport = @(
         'Get-SccToolCatalog',

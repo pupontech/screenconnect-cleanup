@@ -6,7 +6,6 @@
     CompanyName       = 'ScreenConnect Cleaner'
     Copyright         = '(c) 2026 ScreenConnect Cleaner Contributors. MIT License.'
     Description       = 'Remediation engine for ScreenConnect Cleaner: plan-gated, ScreenConnect-only removal with quarantine. Highest safety bar.'
-    PowerShellVersion = '5.1'
     RequiredModules = @('Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Management')
     FunctionsToExport = @(
         'New-SccPlan'
