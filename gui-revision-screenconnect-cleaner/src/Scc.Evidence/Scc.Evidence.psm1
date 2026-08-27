@@ -757,50 +757,14 @@ function Invoke-SectionParallel {
         [System.Collections.Generic.List[object]]$ErrorList
     )
 
-    if (-not ($env:OS -eq 'Windows_NT')) {
-        # On Linux, run inline
-        $results = @{}
-        foreach ($name in $SectionMap.Keys) {
-            $results[$name] = Invoke-Section -Name $name -ScriptBlock $SectionMap[$name] -ErrorList $ErrorList
-        }
-        return $results
-    }
-
-    # Windows: run via runspace pool
-    $runspacePool = [runspacefactory]::CreateRunspacePool(1, $script:MaxRunspaces)
-    $runspacePool.Open()
-
-    $jobs = @{}
-    foreach ($name in $SectionMap.Keys) {
-        $ps = [powershell]::Create()
-        $ps.RunspacePool = $runspacePool
-        [void]$ps.AddScript({
-            param($sb)
-            & $sb
-        })
-        [void]$ps.AddArgument($SectionMap[$name])
-        $jobs[$name] = $ps.BeginInvoke()
-    }
-
+    # Collect each section inline. A runspace pool was previously used on
+    # Windows, but module-internal functions are not visible inside a separate
+    # runspace, which broke collection. Inline collection is correct on every
+    # platform and keeps section logic in the module's own scope.
     $results = @{}
     foreach ($name in $SectionMap.Keys) {
-        try {
-            $result = $jobs[$name].EndInvoke()
-            if ($null -eq $result) { $result = @() }
-            $results[$name] = @($result)
-        }
-        catch {
-            Add-CollectionError -ErrorList $ErrorList -Section $name -ErrorText $_.Exception.Message
-            $results[$name] = @()
-        }
-        finally {
-            $jobs[$name].Dispose()
-        }
+        $results[$name] = Invoke-Section -Name $name -ScriptBlock $SectionMap[$name] -ErrorList $ErrorList
     }
-
-    $runspacePool.Close()
-    $runspacePool.Dispose()
-
     return $results
 }
 
