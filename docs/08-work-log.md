@@ -1072,3 +1072,33 @@ the Windows-only collectors). Full CI suite green.
 NOT proven on Windows: real parallel wall-clock gain and per-section
 correctness on a live machine (job spawn overhead, CIM behavior) - owner
 live-test per docs/09-windows-live-test-matrix.md.
+
+## 16. v1.7.7 - crash after Malwarebytes step (2026-08-27, main)
+
+Owner live report: "it crashes right after the malwarebytes running step".
+Owner asked to test in a VM - NOT possible per standing policy (agents never
+set up VMs; owner does live testing). Static analysis + harnesses instead.
+
+Root-cause candidates found in the Malwarebytes neighborhood (v1.7.3 code):
+1. Invoke-GUIScanner.ps1 launched winget via Start-Process -FilePath on
+   $wingetCmd.Source. On Win10/11 winget is an App Execution Alias - a 0-byte
+   WindowsApps reparse stub. PS 5.1 Start-Process on the stub is unreliable:
+   silent $null process handle or 'not a valid Win32 application'. The next
+   statement called $proc.WaitForExit(...) with NO null guard - an unhandled
+   MethodInvocationException killed the launcher right after the Malwarebytes
+   launch (in the pipeline path; the bat path ran winget directly).
+   FIX: winget launches via cmd.exe /c (OS resolves the alias; console
+   visible); null-process guard exits 2 LaunchFailed cleanly.
+2. START-HERE.bat Step 6c nested if/else paren block with parens in an echo
+   line - fragile cmd class (the same class that killed the WPD v0.3.0 bat).
+   FIX: goto-style rewrite, no nested blocks, winget errorlevel echoed;
+   Step 9 echoes after-snapshot errorlevel (!errorlevel! - delayed expansion).
+
+PROVEN on Linux: fake cmd.exe harness captures the exact argv
+(/c winget install -e --id Malwarebytes.Malwarebytes) and completes rc=0;
+KVRT launch path regression-checked rc=0; bat paren/CRLF scan clean; full CI
+suite green; new scanner-contract asserts (wingetViaCmd + null guard).
+
+NOT proven on Windows: the actual winget alias behavior on the owner's
+machine - needs their live re-test. If it still crashes, the new [WARN]
+errorlevel echoes in Step 6c/9 pinpoint the failing command.

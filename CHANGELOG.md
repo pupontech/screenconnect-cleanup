@@ -3,6 +3,12 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.7] - 2026-08-27
+Crash right after the Malwarebytes step (owner live report) - fixed the two crash classes in that neighborhood:
+- **`Invoke-GUIScanner.ps1` Malwarebytes launch**: winget on Windows 10/11 is an App Execution Alias (0-byte WindowsApps reparse stub). `Start-Process -FilePath` on the stub is unreliable in PS 5.1 (silent `$null` process handle, or "not a valid Win32 application") and the next line called `$proc.WaitForExit(...)` on a possibly-null process - an unhandled exception that killed the launcher right after the Malwarebytes launch. winget is now launched through `cmd.exe /c winget install -e --id Malwarebytes.Malwarebytes` (the OS resolves the alias; console stays visible), and a null-process guard reports LaunchFailed cleanly instead of crashing.
+- **`START-HERE.bat` Step 6c**: rewritten from a nested `if/else` paren block to goto-style flow (the proven WPD pattern) - no parens-in-echo, no nested blocks; winget exit code is now echoed so failures are visible. Step 9 echoes the after-snapshot errorlevel too.
+- Verified on Linux: fake-cmd harness captures the exact `/c winget install -e --id Malwarebytes.Malwarebytes` argv and completes rc=0; KVRT path regression-checked; bat paren/CRLF scan clean; full CI suite green (new scanner-contract asserts for the alias-via-cmd launch and the null guard).
+
 ## [1.7.6] - 2026-08-27
 Technician tags/dates removed + snapshot collection sped up (owner directives: "remove the technician tags and dates and what not I dont need that step"; "can you speed them up").
 - **No more tech/client prompts or tags.** `preflight.ps1` no longer prompts for technician name / client (prompt function, params, master-log lines and the handoff's Technician/Client/IncidentDate fields removed). `sc-cleanup.ps1` no longer prompts for tech/client (Prompt-IfMissing removed; `-TechName`/`-ClientName` params gone; plan + summary no longer carry the tags). Plan files (`Invoke-ReviewAndRemove.ps1` and Stage 3) now carry only GeneratedUtc/ComputerName/Decision/SourceFindings/RemovalConfirmed/Instances. `-IncidentDate` remains a never-prompted internal anchor for the snapshot's recent-files window (defaults to today).

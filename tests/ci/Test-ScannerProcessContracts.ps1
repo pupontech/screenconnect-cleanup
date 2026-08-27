@@ -64,6 +64,8 @@ else {
     if ($text -match "'Malwarebytes'\s*=\s*'MBSetup\.exe'") { Add-Failure 'Invoke-GUIScanner.ps1 still maps Malwarebytes to MBSetup.exe - winget-only since v1.7.3.' }
     if ($text -notmatch "'Malwarebytes'\s*=\s*'Malwarebytes\.Malwarebytes'") { Add-Failure 'Invoke-GUIScanner.ps1 missing Malwarebytes winget package id.' }
     if ($text -notmatch "'install', '-e', '--id'") { Add-Failure 'Invoke-GUIScanner.ps1 does not run winget install -e --id for Malwarebytes.' }
+    if ($text -notmatch 'wingetViaCmd') { Add-Failure 'Invoke-GUIScanner.ps1 missing the winget alias-via-cmd launch (WindowsApps stub crashes Start-Process).' }
+    if ($text -notmatch 'Start-Process returned no process handle') { Add-Failure 'Invoke-GUIScanner.ps1 missing the null-process guard after Start-Process.' }
     if ($text -notmatch "Join-Path \`$scriptRoot \('tools\\AV\\' \+ \`$name\)") {
         Add-Failure 'Invoke-GUIScanner.ps1 does not search tools\AV\ (Get-AVTools.ps1 default staging sibling).'
     }

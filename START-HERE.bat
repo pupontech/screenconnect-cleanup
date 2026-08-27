@@ -152,17 +152,18 @@ set GO=
 echo.
 echo    -- 6c: Malwarebytes (install via winget) --
 set /p GO="    Install Malwarebytes via winget now? [y/N] "
-if /i "%GO%"=="y" (
-    where winget >nul 2>&1
-    if errorlevel 1 (
-        echo        [WARN] winget not found on this machine - install the App
-        echo        Installer first, or stage MBSetup.exe manually under tools\AV\.
-    ) else (
-        echo        Installing Malwarebytes via winget (id Malwarebytes.Malwarebytes)...
-        winget install -e --id Malwarebytes.Malwarebytes
-        echo        When it finishes, run a scan in the Malwarebytes UI.
-    )
+if /i not "%GO%"=="y" goto :skip_6c
+where winget >nul 2>&1
+if errorlevel 1 (
+    echo        [WARN] winget not found on this machine - install the App
+    echo        Installer first, or stage MBSetup.exe manually under tools\AV\.
+    goto :skip_6c
 )
+echo        Installing Malwarebytes via winget - id Malwarebytes.Malwarebytes
+winget install -e --id Malwarebytes.Malwarebytes
+if errorlevel 1 echo        [WARN] winget install exited with errorlevel %errorlevel%
+echo        When it finishes, run a scan in the Malwarebytes UI.
+:skip_6c
 set GO=
 
 rem ---- Step 7: Tikun (OPT-IN - destructive, deletes without quarantine) --------
@@ -208,6 +209,7 @@ echo  STEP 9 of 10: After-snapshot and diff vs the before-snapshot
 set /p GO="    Run now? [Y/n] "
 if /i not "%GO%"=="n" (
     powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect-snapshot.ps1" -Label after -OutFile "%~dp0snapshot_after.json" -Quiet
+    if errorlevel 1 echo     [WARN] After-snapshot exited with errorlevel !errorlevel!
     rem Only diff when the baseline from step 3 actually exists - otherwise
     rem diff-snapshots.ps1 dumps a raw PowerShell error at the technician.
     if not exist "%~dp0snapshot_before.json" (

@@ -85,6 +85,7 @@ $wingetScanners = @{
 $target = $null
 $toolArgs = @()
 $toolLabel = $null
+$wingetViaCmd = $false
 
 if ($ToolPath) {
     if (-not (Test-Path -LiteralPath $ToolPath)) {
@@ -132,6 +133,13 @@ if ($ToolPath) {
         $target   = $wingetCmd.Source
         $toolArgs = @('install', '-e', '--id', $wingetScanners[$Scanner])
         $toolLabel = $wingetScanners[$Scanner] + ' (winget install)'
+        # winget on Windows 10/11 is an App Execution Alias: a 0-byte reparse
+        # stub under WindowsApps. Start-Process -FilePath on the stub is
+        # unreliable in PS 5.1 (silent $null process handle, or 'not a valid
+        # Win32 application'), which used to crash the launcher right after
+        # "launching Malwarebytes". Launch it through cmd.exe instead - the OS
+        # resolves the alias and the console stays visible for the technician.
+        $wingetViaCmd = $true
     }
 } else {
     Write-Error "Specify -Scanner KVRT|ESET|Malwarebytes or -ToolPath <exe>."
@@ -157,7 +165,17 @@ Write-Host ("Hard cap: " + $TimeoutMinutes + " min (on timeout the process is LE
 # ---------------------------------------------------------------------------
 try {
     if ($toolArgs.Count -gt 0) {
-        $proc = Start-Process -FilePath $target -ArgumentList $toolArgs -PassThru -ErrorAction Stop
+        if ($wingetViaCmd) {
+            # cmd.exe resolves the WindowsApps alias stub; a fresh console
+            # window opens for winget (visible, attended).
+            $comSpec = $env:ComSpec
+            if (-not $comSpec) { $comSpec = 'cmd.exe' }
+            $cmdArgs = @('/c', 'winget')
+            $cmdArgs += $toolArgs
+            $proc = Start-Process -FilePath $comSpec -ArgumentList $cmdArgs -PassThru -ErrorAction Stop
+        } else {
+            $proc = Start-Process -FilePath $target -ArgumentList $toolArgs -PassThru -ErrorAction Stop
+        }
     } else {
         $proc = Start-Process -FilePath $target -PassThru -ErrorAction Stop
     }
@@ -168,6 +186,20 @@ try {
         Status     = 'LaunchFailed'
         StartedUtc = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
         Error      = $_.Exception.Message
+    }
+    $result | ConvertTo-Json -Compress | Write-Output
+    exit 2
+}
+
+# Guard: Start-Process can return $null on some alias/handle paths - a null
+# method call below would crash the launcher instead of failing cleanly.
+if ($null -eq $proc) {
+    Write-Host "Failed to launch: Start-Process returned no process handle." -ForegroundColor Red
+    $result = @{
+        Tool       = $toolLabel
+        Status     = 'LaunchFailed'
+        StartedUtc = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        Error      = 'Start-Process returned no process handle'
     }
     $result | ConvertTo-Json -Compress | Write-Output
     exit 2
