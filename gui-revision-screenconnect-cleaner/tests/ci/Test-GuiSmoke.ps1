@@ -46,44 +46,70 @@ try {
 }
 '@
 
-$tmp = Join-Path $env:TEMP ('scc-gui-smoke-' + [guid]::NewGuid().ToString('N'))
+$tmpRoot = $env:TEMP
+if (-not $tmpRoot) { $tmpRoot = $env:TMP }
+if (-not $tmpRoot) { $tmpRoot = 'C:\Windows\Temp' }
+$tmp = Join-Path $tmpRoot ('scc-gui-smoke-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $tmp -Force | Out-Null
 $directPs1 = Join-Path $tmp 'direct.ps1'
 [System.IO.File]::WriteAllText($directPs1, $directScript, [System.Text.Encoding]::ASCII)
 
-foreach ($exe in @(@{ Name = 'powershell.exe'; Args = @('-NoProfile', '-ExecutionPolicy', 'Bypass') },
-                   @{ Name = 'pwsh.exe';        Args = @('-NoProfile', '-Sta') })) {
-    Write-Host "GUI smoke: direct check via $($exe.Name) ..."
-    $stdout = Join-Path $tmp ($exe.Name + '.out')
-    $stderr = Join-Path $tmp ($exe.Name + '.err')
-    $args = @($exe.Args) + @('-File', ('"' + $directPs1 + '"'), ('-SrcRoot "' + $srcRoot + '"'))
-    # NOTE: no -NoNewWindow here. pwsh->powershell.exe handle inheritance
-    # breaks -RedirectStandardOutput under -NoNewWindow (empty capture);
-    # a separate (hidden) console captures reliably.
-    $p = Start-Process -FilePath $exe.Name -ArgumentList $args -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-    $out = ''
-    if (Test-Path -LiteralPath $stdout) { $out = [string](Get-Content -LiteralPath $stdout -Raw) }
-    $err = ''
-    if (Test-Path -LiteralPath $stderr) { $err = [string](Get-Content -LiteralPath $stderr -Raw) }
-    Write-Host "  exit=$($p.ExitCode) out=$($out.Trim()) err=$($err.Trim())"
-    if ($p.ExitCode -ne 0 -or $out -notmatch 'GUI_SMOKE_OK') {
-        $failures += ("Direct GUI check failed under {0}: exit={1} out={2} err={3}" -f $exe.Name, $p.ExitCode, $out.Trim(), $err.Trim())
+function Invoke-SccGuiSmokeDirect {
+    param([string]$ExeName, [string[]]$PreludeArgs)
+    Write-Host "GUI smoke: direct check via $ExeName ..."
+    $stdout = Join-Path $tmp ($ExeName + '.out')
+    $stderr = Join-Path $tmp ($ExeName + '.err')
+    $argTokens = @($PreludeArgs) + @('-File', ('"' + $directPs1 + '"'), ('-SrcRoot "' + $srcRoot + '"'))
+    $argLine = ($argTokens -join ' ')
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = $ExeName
+    $psi.Arguments = $argLine
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $proc = [System.Diagnostics.Process]::new()
+    $proc.StartInfo = $psi
+    $null = $proc.Start()
+    $out = [string]$proc.StandardOutput.ReadToEnd()
+    $err = [string]$proc.StandardError.ReadToEnd()
+    $proc.WaitForExit()
+    $exitCode = $proc.ExitCode
+    Write-Host "  exit=$exitCode out=$($out.Trim()) err=$($err.Trim())"
+    if ($exitCode -ne 0 -or $out -notmatch 'GUI_SMOKE_OK') {
+        $script:failures += ("Direct GUI check failed under {0}: exit={1} out={2} err={3}" -f $ExeName, $exitCode, $out.Trim(), $err.Trim())
     }
 }
 
-# ---------------------------------------------------------------------
-# Check 2 - entry point stays alive (window open) for 10 seconds
-# ---------------------------------------------------------------------
-Write-Host 'GUI smoke: entry-point check (Scc.Cleaner.ps1 GUI path stays alive) ...'
-$entry = Join-Path $appRoot 'Scc.Cleaner.ps1'
-$p = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $entry + '"')) -PassThru -NoNewWindow
-Start-Sleep -Seconds 10
-if ($p.HasExited) {
-    $failures += ("Entry point exited early (GUI did not stay open): exit={0}" -f $p.ExitCode)
-    Write-Host "  FAILED: exited with $($p.ExitCode)"
-} else {
-    Write-Host '  OK: process alive after 10s (window open) - terminating.'
-    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+try {
+    Invoke-SccGuiSmokeDirect -ExeName 'powershell.exe' -PreludeArgs @('-NoProfile', '-ExecutionPolicy', 'Bypass')
+    Invoke-SccGuiSmokeDirect -ExeName 'pwsh.exe' -PreludeArgs @('-NoProfile', '-Sta')
+
+    # -----------------------------------------------------------------
+    # Check 2 - entry point stays alive (window open) for 10 seconds
+    # -----------------------------------------------------------------
+    Write-Host 'GUI smoke: entry-point check (Scc.Cleaner.ps1 GUI path stays alive) ...'
+    $entry = Join-Path $appRoot 'Scc.Cleaner.ps1'
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = 'powershell.exe'
+    $psi.Arguments = ('-NoProfile -ExecutionPolicy Bypass -File "' + $entry + '"')
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $proc = [System.Diagnostics.Process]::new()
+    $proc.StartInfo = $psi
+    $null = $proc.Start()
+    Start-Sleep -Seconds 10
+    if ($proc.HasExited) {
+        $failures += ("Entry point exited early (GUI did not stay open): exit={0}" -f $proc.ExitCode)
+        Write-Host "  FAILED: exited with $($proc.ExitCode)"
+    } else {
+        Write-Host '  OK: process alive after 10s (window open) - terminating.'
+        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    }
+} catch {
+    $failures += ('Smoke harness error: ' + $_.Exception.Message)
+    Write-Host ('SMOKE HARNESS ERROR at: ' + $_.InvocationInfo.PositionMessage)
+    Write-Host $_.ScriptStackTrace
 }
 
 # Cleanup
