@@ -5,20 +5,22 @@
   WHY THIS EXISTS
     The cleanup tool removes ScreenConnect (the intrusion vector). But a machine
     that was owned often also has a leftover / unwanted third-party antivirus.
-    The owner wants an explicit, attended option to uninstall it. Just like the
-    Malwarebytes scanner, this is GUI-ATTENDED: the script finds the installed
-    product's uninstall entry and launches its uninstaller as a normal visible
-    window, then blocks until the technician closes it. The pipeline NEVER
-    invents silent /quiet uninstall flags - that would be unsafe and can leave
-    the machine without working AV mid-engagement.
+    The owner wants an explicit, attended option to uninstall it. Every product
+    opens its uninstaller as a normal visible window for the technician to
+    drive - EXCEPT Malwarebytes, which since v1.7.3 is uninstalled via winget
+    (`winget uninstall -e --id Malwarebytes.Malwarebytes`, owner directive
+    2026-08-27); if winget is not installed the Malwarebytes vendor uninstaller
+    GUI is opened instead. The pipeline NEVER invents silent /quiet uninstall
+    flags for vendor uninstallers - that would be unsafe and can leave the
+    machine without working AV mid-engagement.
 
     What it does:
       1. enumerate 64-bit + 32-bit HKLM (and HKCU) Uninstall keys,
       2. keep entries that look like a security/AV product (DisplayName match
          against a known-vendor heuristic, but exclude Windows Defender / MSRT
          / Windows components - those are OS, not "installed AV"),
-      3. for each, launch the uninstaller GUI and WAIT until the process exits
-         (or a 240-minute safety cap; on cap the process is left running),
+      3. for each, uninstall it and WAIT until the process exits (or a
+         240-minute safety cap; on cap the process is left running),
       4. emit a JSON result per product recording what was opened + when,
          so it lands in the investigation report.
 
@@ -53,6 +55,13 @@ $avKeywords = @(
 )
 # Strings that mean "do not touch - this is the OS, not installed AV".
 $osExclude = @('Windows Defender', 'Microsoft Security Client', 'Microsoft Defender', 'MSRT', 'Windows Malicious Software Removal')
+
+# Products uninstalled via winget instead of their vendor uninstaller GUI
+# (owner directive 2026-08-27: Malwarebytes install/uninstall via winget).
+# Keys match against DisplayName (substring); values are winget package ids.
+$wingetUninstallIds = @{
+    'Malwarebytes' = 'Malwarebytes.Malwarebytes'
+}
 
 function Test-IsInstalledAv {
     param([string]$Name)
@@ -104,6 +113,68 @@ function Get-InstalledAv {
 function Open-Uninstaller {
     param($Product)
     $start = Get-Date
+
+    # Malwarebytes is uninstalled via winget (owner directive 2026-08-27).
+    # Everything else opens its vendor uninstaller GUI for the technician.
+    $wingetId = $null
+    foreach ($k in $wingetUninstallIds.Keys) {
+        if ($Product.DisplayName -like ("*" + $k + "*")) { $wingetId = $wingetUninstallIds[$k]; break }
+    }
+
+    if ($wingetId) {
+        $winget = Get-Command winget -ErrorAction SilentlyContinue
+        if (-not $winget) {
+            Say ("  winget not found - falling back to the vendor uninstaller GUI for " + $Product.DisplayName) 'Yellow'
+        } else {
+            $us = 'winget uninstall -e --id ' + $wingetId
+            Say ("  Uninstalling via winget: " + $us) 'Cyan'
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.UseShellExecute = $true
+            $psi.FileName = $winget.Source
+            $psi.Arguments = 'uninstall -e --id ' + $wingetId
+            $proc = $null
+            try {
+                $proc = [System.Diagnostics.Process]::Start($psi)
+            } catch {
+                return [pscustomobject]@{
+                    DisplayName = $Product.DisplayName
+                    UninstallString = $us
+                    OpenedAt = $start.ToString('o')
+                    ClosedAt = $null
+                    Status = 'LaunchFailed'
+                    Error = $_.Exception.Message
+                    Method = 'winget'
+                }
+            }
+            $closed = $null
+            $exitCode = $null
+            if ($proc) {
+                # Block until winget finishes (or the safety cap is hit).
+                $exited = $proc.WaitForExit([int]($TimeoutMinutes * 60 * 1000))
+                if ($exited) {
+                    $closed = (Get-Date).ToString('o')
+                    $status = 'ClosedByUser'
+                    try { $exitCode = $proc.ExitCode } catch { }
+                } else {
+                    # Timed out: leave the process running (do not kill mid-uninstall).
+                    $status = 'TimeoutLeftRunning'
+                }
+            } else {
+                $status = 'LaunchFailed'
+            }
+            return [pscustomobject]@{
+                DisplayName = $Product.DisplayName
+                UninstallString = $us
+                OpenedAt = $start.ToString('o')
+                ClosedAt = $closed
+                Status = $status
+                Error = $null
+                Method = 'winget'
+                ExitCode = $exitCode
+            }
+        }
+    }
+
     $us = $Product.UninstallString
     Say ("  Opening uninstaller for: " + $Product.DisplayName) 'Cyan'
     Say ("    command: " + $us) 'DarkGray'

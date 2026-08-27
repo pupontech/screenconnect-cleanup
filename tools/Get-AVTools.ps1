@@ -17,8 +17,10 @@
                            Downloaded fresh from ESET's official download host
                            for attended technician use.
 
-    MBSetup.exe            Malwarebytes 5 consumer installer (GUI). No CLI;
-                           staged for attended technician use.
+    (Malwarebytes is no longer staged here: since v1.7.3 it is installed and
+    uninstalled via winget - `winget install -e --id Malwarebytes.Malwarebytes`
+    / `winget uninstall -e --id Malwarebytes.Malwarebytes` (owner directive
+    2026-08-27). No MBSetup.exe download happens anymore.)
 
     (AdwCleaner remains removed from staging by owner decision.)
 
@@ -52,11 +54,10 @@ function Say {
 
 $kvrtPath = Join-Path $ToolDir 'KVRT.exe'
 $eosPath  = Join-Path $ToolDir 'esetonlinescanner.exe'
-$mbPath   = Join-Path $ToolDir 'MBSetup.exe'
 
 if ($Verify) {
     $ok = $true
-    foreach ($p in @($kvrtPath, $eosPath, $mbPath)) {
+    foreach ($p in @($kvrtPath, $eosPath)) {
         if (Test-Path -LiteralPath $p) {
             Say ("  present: " + $p) 'Green'
         } else {
@@ -95,18 +96,18 @@ $null = Get-DownloadFile -Url 'https://devbuilds.s.kaspersky-labs.com/kvrt/lates
 # GUI-only tool staged for attended technician use.
 $null = Get-DownloadFile -Url 'https://download.eset.com/com/eset/tools/online_scanner/latest/esetonlinescanner.exe' -Dest $eosPath -Label 'esetonlinescanner.exe (ESET Online Scanner, GUI-only)'
 
-# --- Malwarebytes: fetch fresh from Malwarebytes' official URL ------------
-# downloads.malwarebytes.com/file/mb-windows/ redirects to the current MB5
-# consumer installer. GUI installer staged for attended use.
-$null = Get-DownloadFile -Url 'https://downloads.malwarebytes.com/file/mb-windows/' -Dest $mbPath -Label 'MBSetup.exe (Malwarebytes 5 consumer installer)'
+# --- Malwarebytes: NOT staged here (v1.7.3+). Installed/uninstalled via winget:
+#   winget install -e --id Malwarebytes.Malwarebytes
+#   winget uninstall -e --id Malwarebytes.Malwarebytes
+# Owner directive 2026-08-27: replace the MBSetup.exe download + GUI launch
+# with winget for both install and uninstall.
 
 # --- Optional offline fallback: copy from an internal share if reachable --
 # Never overwrites a file that was just downloaded from the official URL.
 if ($InternalShare -and (Test-Path -LiteralPath $InternalShare)) {
     foreach ($pair in @(
         @('AV\KVRT.exe', $kvrtPath, 'KVRT'),
-        @('AV\esetonlinescanner.exe', $eosPath, 'ESET Online Scanner'),
-        @('MBSetup.exe', $mbPath, 'Malwarebytes')
+        @('AV\esetonlinescanner.exe', $eosPath, 'ESET Online Scanner')
     )) {
         $src = Join-Path $InternalShare $pair[0]
         if (-not (Test-Path -LiteralPath $src)) { continue }
@@ -125,10 +126,11 @@ if ($InternalShare -and (Test-Path -LiteralPath $InternalShare)) {
 
 Say ''
 Say ('Done. GUI scanners staged in ' + $ToolDir + ':') 'Cyan'
-Say '  KVRT.exe, esetonlinescanner.exe, MBSetup.exe' 'Cyan'
-Say 'Run each one attended:' 'Cyan'
+Say '  KVRT.exe, esetonlinescanner.exe' 'Cyan'
+Say 'Malwarebytes is NOT staged here - install via winget:' 'Cyan'
+Say '  winget install -e --id Malwarebytes.Malwarebytes' 'Cyan'
+Say 'Run the staged scanners attended:' 'Cyan'
 Say '  .\Invoke-GUIScanner.ps1 -Scanner KVRT' 'Cyan'
 Say '  .\Invoke-GUIScanner.ps1 -Scanner ESET' 'Cyan'
-Say '  .\Invoke-GUIScanner.ps1 -Scanner Malwarebytes' 'Cyan'
 Say 'The pipeline never invents silent-scan flags (owner decision 2026-08-26).' 'Cyan'
 exit 0

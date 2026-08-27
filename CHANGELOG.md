@@ -3,6 +3,14 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.3] - 2026-08-27
+Malwarebytes is now installed and uninstalled via winget (owner directive: "change malwarebytes to installing and uninstalling via winget via winget install -e --id Malwarebytes.Malwarebytes"). No more MBSetup.exe staging or GUI-installer launch.
+- `tools/Get-AVTools.ps1` stages **KVRT.exe + esetonlinescanner.exe only**; the Malwarebytes download (downloads.malwarebytes.com) and the InternalShare MBSetup fallback are removed.
+- `Invoke-GUIScanner.ps1 -Scanner Malwarebytes` now runs `winget install -e --id Malwarebytes.Malwarebytes` (visible console, bounded wait, JSON result; exits 3 with a clear message when winget is missing; `-ToolPath` still overrides). KVRT/ESET keep the staged-EXE launch.
+- `Invoke-AVUninstaller.ps1` uninstalls Malwarebytes via `winget uninstall -e --id Malwarebytes.Malwarebytes` (result carries `Method=winget` + `ExitCode`); if winget is absent it falls back to the vendor uninstaller GUI. All other detected AV products still open their vendor uninstaller attended.
+- `START-HERE.bat` Step 6c installs Malwarebytes via winget (warns when winget is missing); Step 1/6/8 wording updated.
+- CI contracts updated: stager must NOT stage/download MBSetup, scanner must map Malwarebytes to the winget package id, AV-uninstaller must run `winget uninstall -e --id`.
+
 ## [1.7.2] - 2026-08-27
 Bundle the General Fix tool ("Tikun HaKlali", `tools/GeneralFix/תיקון הכללי v10.bat`) in the deploy zip so it never needs to be staged from a network share at runtime.
 - The script is fully self-contained - verified: no UNC paths, no `net use`, no URLs; it only uses built-in Windows commands and its embedded VBS/WSF jobs. It was never bundled because `tools/.gitignore` whitelists only the downloader scripts; it now ships under `tools/GeneralFix/` with the original filename and byte layout (CRLF + cp1255) preserved.

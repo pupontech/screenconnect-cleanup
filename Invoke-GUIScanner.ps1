@@ -3,29 +3,36 @@
   technician to finish with it.
 
   WHY THIS EXISTS
-    KVRT, ESET Online Scanner and Malwarebytes are being used here as attended
-    technician tools. This script does only three things:
+    KVRT and ESET Online Scanner are used here as attended GUI technician
+    tools; Malwarebytes is INSTALLED here via winget (owner directive
+    2026-08-27 - no more MBSetup.exe staging). This script does only three
+    things:
 
-      1. find or take an explicit path to the scanner EXE,
-      2. launch it as a NORMAL VISIBLE GUI process,
+      1. resolve what to run - the scanner EXE (KVRT/ESET, found or explicit)
+         or the winget install command (Malwarebytes),
+      2. launch it as a NORMAL VISIBLE process (GUI for the scanners; a
+         console window for winget so the technician sees the install),
       3. block until that process exits, then report elapsed time + exit code.
 
   It never passes scan/clean switches, never parses the scanner's output, and
-  never fabricates a result: the technician drives the GUI; this script just
+  never fabricates a result: the technician drives the UI; this script just
   keeps the pipeline paused while they do, so later snapshots and the report are
   taken AFTER any GUI-driven cleaning has actually finished.
 
   USAGE
     .\Invoke-GUIScanner.ps1 -Scanner KVRT            # KVRT.exe
     .\Invoke-GUIScanner.ps1 -Scanner ESET            # esetonlinescanner.exe
-    .\Invoke-GUIScanner.ps1 -Scanner Malwarebytes    # MBSetup.exe
+    .\Invoke-GUIScanner.ps1 -Scanner Malwarebytes    # winget install -e --id Malwarebytes.Malwarebytes
     .\Invoke-GUIScanner.ps1 -ToolPath C:\path\tool.exe   # any explicit EXE
 
-  Search order when -ToolPath is not given:
-    tools\AV\<name>.exe next to this script, then the user's Downloads
-    folder, then TEMP.
+  Search order when -ToolPath is not given (KVRT/ESET):
+    tools\AV\<name>.exe next to this script, then legacy AV\ and the bare
+    script root, then ..\tools\AV, then the user's Downloads folder, then TEMP.
     If not found: exits 3 with a clear message; nothing is downloaded here -
     staging is tools\Get-AVTools.ps1's job.
+    Malwarebytes does not use the file search: it requires winget and runs
+    `winget install -e --id Malwarebytes.Malwarebytes` (exits 3 if winget is
+    missing).
 
   NOTES
     - Use inside sc-cleanup.ps1 runs: the runner launches each scanner and waits.
@@ -63,15 +70,21 @@ function Get-HomeDir {
 }
 
 $knownTools = @{
-    'KVRT'         = 'KVRT.exe'
-    'ESET'         = 'esetonlinescanner.exe'
-    'Malwarebytes' = 'MBSetup.exe'
+    'KVRT' = 'KVRT.exe'
+    'ESET' = 'esetonlinescanner.exe'
+}
+# Scanners that are INSTALLED via winget instead of being staged as EXEs
+# (owner directive 2026-08-27: Malwarebytes install/uninstall via winget).
+$wingetScanners = @{
+    'Malwarebytes' = 'Malwarebytes.Malwarebytes'
 }
 
 # ---------------------------------------------------------------------------
-# Resolve which EXE to launch
+# Resolve what to run
 # ---------------------------------------------------------------------------
 $target = $null
+$toolArgs = @()
+$toolLabel = $null
 
 if ($ToolPath) {
     if (-not (Test-Path -LiteralPath $ToolPath)) {
@@ -79,50 +92,79 @@ if ($ToolPath) {
         exit 3
     }
     $target = $ToolPath
+    $toolLabel = Split-Path -Leaf $ToolPath
 } elseif ($Scanner) {
-    $name = $knownTools[$Scanner]
-    $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-    # Search order: Get-AVTools.ps1's canonical staging sibling (tools\AV\) first
-    # (its default $ToolDir is <Get-AVTools script dir>\AV), then legacy AV\ and
-    # the bare script root, then ..\tools\AV (covers invoking this script from
-    # inside tools\), then the user's Downloads and %TEMP% as fallbacks.
-    $candidates = @(
-        (Join-Path $scriptRoot ('tools\AV\' + $name)),
-        (Join-Path $scriptRoot ('AV\' + $name)),
-        (Join-Path $scriptRoot $name),
-        (Join-Path $scriptRoot ('..\tools\AV\' + $name))
-    )
-    $homeDir = Get-HomeDir
-    if ($homeDir) { $candidates += (Join-Path $homeDir ('Downloads\' + $name)) }
-    $candidates += @(
-        (Join-Path (Get-TempRoot) $name)
-    )
-    foreach ($c in $candidates) {
-        if ($c -and (Test-Path -LiteralPath $c)) { $target = $c; break }
-    }
-    if (-not $target) {
-        Write-Host ("Scanner not found: " + $name) -ForegroundColor Red
-        Write-Host "Stage it first with tools\Get-AVTools.ps1, or pass -ToolPath explicitly." -ForegroundColor Yellow
-        exit 3
+    if ($knownTools.ContainsKey($Scanner)) {
+        $name = $knownTools[$Scanner]
+        $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+        # Search order: Get-AVTools.ps1's canonical staging sibling (tools\AV\) first
+        # (its default $ToolDir is <Get-AVTools script dir>\AV), then legacy AV\ and
+        # the bare script root, then ..\tools\AV (covers invoking this script from
+        # inside tools\), then the user's Downloads and %TEMP% as fallbacks.
+        $candidates = @(
+            (Join-Path $scriptRoot ('tools\AV\' + $name)),
+            (Join-Path $scriptRoot ('AV\' + $name)),
+            (Join-Path $scriptRoot $name),
+            (Join-Path $scriptRoot ('..\tools\AV\' + $name))
+        )
+        $homeDir = Get-HomeDir
+        if ($homeDir) { $candidates += (Join-Path $homeDir ('Downloads\' + $name)) }
+        $candidates += @(
+            (Join-Path (Get-TempRoot) $name)
+        )
+        foreach ($c in $candidates) {
+            if ($c -and (Test-Path -LiteralPath $c)) { $target = $c; break }
+        }
+        if (-not $target) {
+            Write-Host ("Scanner not found: " + $name) -ForegroundColor Red
+            Write-Host "Stage it first with tools\Get-AVTools.ps1, or pass -ToolPath explicitly." -ForegroundColor Yellow
+            exit 3
+        }
+        $toolLabel = Split-Path -Leaf $target
+    } elseif ($wingetScanners.ContainsKey($Scanner)) {
+        # Malwarebytes: winget install (attended - visible console).
+        $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
+        if (-not $wingetCmd) {
+            Write-Host ("winget not found - cannot install " + $Scanner + " (" + $wingetScanners[$Scanner] + ").") -ForegroundColor Red
+            Write-Host "Install winget (App Installer) first, or pass -ToolPath <MBSetup.exe> explicitly." -ForegroundColor Yellow
+            exit 3
+        }
+        $target   = $wingetCmd.Source
+        $toolArgs = @('install', '-e', '--id', $wingetScanners[$Scanner])
+        $toolLabel = $wingetScanners[$Scanner] + ' (winget install)'
     }
 } else {
     Write-Error "Specify -Scanner KVRT|ESET|Malwarebytes or -ToolPath <exe>."
     exit 3
 }
 
-Write-Host ("Launching GUI scanner: " + $target) -ForegroundColor Cyan
-Write-Host "Drive the scanner UI now. This script waits until you close it." -ForegroundColor Cyan
+if (-not $target) {
+    Write-Host ("Scanner not found: " + $Scanner) -ForegroundColor Red
+    exit 3
+}
+
+if ($toolArgs.Count -gt 0) {
+    Write-Host ("Installing via winget: winget " + ($toolArgs -join ' ')) -ForegroundColor Cyan
+    Write-Host "A console window opens for winget - wait until the install finishes." -ForegroundColor Cyan
+} else {
+    Write-Host ("Launching GUI scanner: " + $target) -ForegroundColor Cyan
+    Write-Host "Drive the scanner UI now. This script waits until you close it." -ForegroundColor Cyan
+}
 Write-Host ("Hard cap: " + $TimeoutMinutes + " min (on timeout the process is LEFT running).") -ForegroundColor DarkGray
 
 # ---------------------------------------------------------------------------
-# Launch VISIBLE (no CreateNoWindow, no redirects - it is a GUI app) and wait
+# Launch VISIBLE (no CreateNoWindow, no redirects) and wait
 # ---------------------------------------------------------------------------
 try {
-    $proc = Start-Process -FilePath $target -PassThru -ErrorAction Stop
+    if ($toolArgs.Count -gt 0) {
+        $proc = Start-Process -FilePath $target -ArgumentList $toolArgs -PassThru -ErrorAction Stop
+    } else {
+        $proc = Start-Process -FilePath $target -PassThru -ErrorAction Stop
+    }
 } catch {
     Write-Host ("Failed to launch: " + $_.Exception.Message) -ForegroundColor Red
     $result = @{
-        Tool       = (Split-Path -Leaf $target)
+        Tool       = $toolLabel
         Status     = 'LaunchFailed'
         StartedUtc = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
         Error      = $_.Exception.Message
@@ -147,7 +189,7 @@ $status = 'Completed'
 if ($timedOut) { $status = 'Timeout' }
 
 $result = @{
-    Tool            = (Split-Path -Leaf $target)
+    Tool            = $toolLabel
     Status          = $status
     StartTimeUtc    = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
     EndTimeUtc      = $end.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')

@@ -52,11 +52,11 @@ before it.
 | **ESET Online Scanner** | On-demand scan | Staged from ESET's official Online Scanner URL and launched attended via `Invoke-GUIScanner.ps1` (`-Scanner ESET`). GUI-only in this workflow; no invented unattended flags. | **APPROVED (D3)** — the MSP's ESET license covers technician scans. |
 | **AdwCleaner** | PUP / adware / junk | **REMOVED from staging 2026-08-26 (owner decision):** not needed for this tool's workflow. Documented CLI existed (`/eula /scan /clean /noreboot /path`) but the policy is GUI-attended operation; AdwCleaner was dropped entirely rather than kept as a GUI tool. | Free. |
 | **MSERT** (Microsoft Safety Scanner) | Free Microsoft second opinion, self-expiring | Verify switches; log believed to be `%SystemRoot%\debug\msert.log`. | Likely none. Verify. |
-| **Malwarebytes** | On-demand scan | Staged from Malwarebytes' official MB5 URL and launched attended via `Invoke-GUIScanner.ps1` (`-Scanner Malwarebytes`). Consumer MBAM has no CLI; the CLI-capable product is a paid business SKU — not used here. | Paid, per-endpoint. Not approved for automation. |
+| **Malwarebytes** | Install via winget (`winget install -e --id Malwarebytes.Malwarebytes`); uninstall via winget (`winget uninstall -e --id Malwarebytes.Malwarebytes`), fallback to the vendor uninstaller GUI when winget is absent (owner directive 2026-08-27). | Paid, per-endpoint. Not approved for automation. |
 | **RKill** | Kill malware processes before scanning (Tron's stage-0 trick) | Minimal CLI documentation. | Verify commercial-use terms. |
 | **TDSSKiller** | **RECOMMEND EXCLUDING** | — | Deprecated by Kaspersky, and reportedly abused by threat actors in 2024 to disable EDR — meaning dropping it on a client machine may trip the client's own security stack. Bad trade. **[VERIFY the reporting, but the recommendation stands.]** |
 
-Realistic Stage 5 line-up (2026-08-27, owner update): **KVRT + ESET Online Scanner + Malwarebytes**, all attended GUI launches.
+Realistic Stage 5 line-up (2026-08-27, owner update): **KVRT + ESET Online Scanner** attended GUI launches + **Malwarebytes via winget** (install/uninstall).
 
 ---
 

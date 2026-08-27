@@ -44,7 +44,7 @@ echo  ============================================================
 echo.
 
 rem ---- Step 1: tool pack -----------------------------------------------------
-echo  STEP 1 of 10: Build/verify tool pack (Sysinternals + KVRT/ESET/Malwarebytes)
+echo  STEP 1 of 10: Build/verify tool pack (Sysinternals + KVRT/ESET; Malwarebytes via winget)
 set /p GO="    Run now? [Y/n] "
 if /i not "%GO%"=="n" (
     if exist "%~dp0tools\Get-ToolPack.ps1" (
@@ -130,7 +130,7 @@ set GO=
 
 rem ---- Step 6: antivirus scans - each one is its own step ---------------------
 echo.
-echo  STEP 6 of 10: Antivirus scans (KVRT, ESET Online Scanner, Malwarebytes)
+echo  STEP 6 of 10: Antivirus scans (KVRT, ESET Online Scanner; Malwarebytes install via winget)
 echo    Each scanner is a visible attended GUI. Drive the UI, then return here.
 
 echo.
@@ -158,17 +158,17 @@ if /i "%GO%"=="y" (
 set GO=
 
 echo.
-echo    -- 6c: Malwarebytes (interactive GUI) --
-set /p GO="    Launch Malwarebytes installer/scanner? [y/N] "
+echo    -- 6c: Malwarebytes (install via winget) --
+set /p GO="    Install Malwarebytes via winget now? [y/N] "
 if /i "%GO%"=="y" (
-    if exist "%~dp0tools\AV\MBSetup.exe" (
-        echo        Malwarebytes may install and then hand off to its own UI.
-        echo        If the installer closes before the scan finishes, wait here
-        echo        until the Malwarebytes scan has finished.
-        start "" "%~dp0tools\AV\MBSetup.exe"
-        pause
+    where winget >nul 2>&1
+    if errorlevel 1 (
+        echo        [WARN] winget not found on this machine - install the App
+        echo        Installer first, or stage MBSetup.exe manually under tools\AV\.
     ) else (
-        echo        [WARN] tools\AV\MBSetup.exe not staged - run step 1 first.
+        echo        Installing Malwarebytes via winget (id Malwarebytes.Malwarebytes)...
+        winget install -e --id Malwarebytes.Malwarebytes
+        echo        When it finishes, run a scan in the Malwarebytes UI.
     )
 )
 set GO=
@@ -197,8 +197,10 @@ set GO=
 rem ---- Step 8: Uninstall installed AV (attended) -------------------------------
 echo.
 echo  STEP 8 of 10: Uninstall installed third-party antivirus (attended)
-echo    Opens each detected AV product's uninstaller for YOU to drive. Never
-echo    silent-uninstalls. Windows Defender is excluded (it is the OS, not
+echo    Malwarebytes is uninstalled via winget (uninstall -e --id
+echo    Malwarebytes.Malwarebytes). Every other detected AV product opens its
+echo    uninstaller for YOU to drive. Never silent-uninstalls vendor
+echo    uninstallers. Windows Defender is excluded (it is the OS, not
 echo    installed AV). Skips if none is detected. Type y to run it.
 set /p GO="    Run installed-AV uninstall now? [y/N] "
 if /i "%GO%"=="y" (

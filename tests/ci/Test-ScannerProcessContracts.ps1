@@ -1,14 +1,17 @@
 <#
-  Test-ScannerProcessContracts.ps1 - CI contract for the attended GUI scanner
-  line-up (owner update 2026-08-27: restore KVRT and ESET as official downloads;
-  keep Malwarebytes; AdwCleaner and Defender remain removed).
+  Test-ScannerProcessContracts.ps1 - CI contract for the attended scanner
+  line-up (owner update 2026-08-27: restore KVRT and ESET as official
+  downloads; Malwarebytes install/uninstall via winget - no MBSetup.exe
+  staging anymore; AdwCleaner and Defender remain removed).
 
   Contracts checked:
-    1. Get-AVTools.ps1 stages KVRT.exe, esetonlinescanner.exe and MBSetup.exe.
+    1. Get-AVTools.ps1 stages KVRT.exe + esetonlinescanner.exe and does NOT
+       stage MBSetup.exe; Malwarebytes is documented as winget-installed.
     2. Get-AVTools.ps1 uses official vendor download URLs, not stale shares as
        the primary source.
-    3. Invoke-GUIScanner.ps1 accepts KVRT, ESET and Malwarebytes, and still
-       excludes AdwCleaner/Defender.
+    3. Invoke-GUIScanner.ps1 accepts KVRT, ESET and Malwarebytes; KVRT/ESET
+       are staged EXEs, Malwarebytes runs winget install (no MBSetup mapping).
+    4. Invoke-AVUninstaller.ps1 uninstalls Malwarebytes via winget.
 
   PS 5.1 compatible. Pure ASCII, no BOM.
 #>
@@ -25,14 +28,16 @@ $guiScanner = Join-Path $repoRoot 'Invoke-GUIScanner.ps1'
 $script:failures = @()
 function Add-Failure { param([string]$Message) $script:failures += $Message }
 
-# --- Contract 1: stager stages KVRT / ESET / Malwarebytes -----------------
-Write-Host 'Section 1: Get-AVTools.ps1 stages KVRT / ESET / Malwarebytes'
+# --- Contract 1: stager stages KVRT / ESET (not MBSetup) ------------------
+Write-Host 'Section 1: Get-AVTools.ps1 stages KVRT / ESET (Malwarebytes via winget)'
 if (-not (Test-Path -LiteralPath $avTools)) { Add-Failure 'Get-AVTools.ps1 missing.' }
 else {
     $text = [System.IO.File]::ReadAllText($avTools)
     if ($text -notmatch 'KVRT\.exe') { Add-Failure 'Get-AVTools.ps1 does not stage KVRT.exe.' }
     if ($text -notmatch 'esetonlinescanner\.exe') { Add-Failure 'Get-AVTools.ps1 does not stage esetonlinescanner.exe.' }
-    if ($text -notmatch 'MBSetup\.exe') { Add-Failure 'Get-AVTools.ps1 does not stage MBSetup.exe.' }
+    if ($text -match '\$mbPath') { Add-Failure 'Get-AVTools.ps1 still defines the MBSetup staging target - Malwarebytes must be winget-only since v1.7.3.' }
+    if ($text -match 'downloads\.malwarebytes\.com') { Add-Failure 'Get-AVTools.ps1 still downloads Malwarebytes - winget-only since v1.7.3.' }
+    if ($text -notmatch 'winget install -e --id Malwarebytes\.Malwarebytes') { Add-Failure 'Get-AVTools.ps1 does not document the winget install for Malwarebytes.' }
     if ($text -match 'adwcleaner\.exe') { Add-Failure 'Get-AVTools.ps1 still references adwcleaner.exe.' }
     if ($text -notmatch 'devbuilds\.s\.kaspersky-labs\.com/kvrt/latest/full/KVRT\.exe') {
         Add-Failure 'Get-AVTools.ps1 missing the official KVRT download URL.'
@@ -40,10 +45,7 @@ else {
     if ($text -notmatch 'download\.eset\.com/com/eset/tools/online_scanner/latest/esetonlinescanner\.exe') {
         Add-Failure 'Get-AVTools.ps1 missing the official ESET Online Scanner download URL.'
     }
-    if ($text -notmatch 'downloads\.malwarebytes\.com/file/mb-windows') {
-        Add-Failure 'Get-AVTools.ps1 missing the Malwarebytes download URL.'
-    }
-    if ($script:failures.Count -eq 0) { Write-Host '  OK Get-AVTools.ps1: KVRT/ESET/Malwarebytes official downloads.' }
+    if ($script:failures.Count -eq 0) { Write-Host '  OK Get-AVTools.ps1: KVRT/ESET official downloads, Malwarebytes winget-only.' }
 }
 
 # --- Contract 2: GUI scanner accepts exactly the attended scanner set -------
@@ -59,11 +61,13 @@ else {
     }
     if ($text -notmatch "'KVRT'\s*=\s*'KVRT\.exe'") { Add-Failure 'Invoke-GUIScanner.ps1 missing KVRT tool mapping.' }
     if ($text -notmatch "'ESET'\s*=\s*'esetonlinescanner\.exe'") { Add-Failure 'Invoke-GUIScanner.ps1 missing ESET tool mapping.' }
-    if ($text -notmatch "'Malwarebytes'\s*=\s*'MBSetup\.exe'") { Add-Failure 'Invoke-GUIScanner.ps1 missing Malwarebytes tool mapping.' }
+    if ($text -match "'Malwarebytes'\s*=\s*'MBSetup\.exe'") { Add-Failure 'Invoke-GUIScanner.ps1 still maps Malwarebytes to MBSetup.exe - winget-only since v1.7.3.' }
+    if ($text -notmatch "'Malwarebytes'\s*=\s*'Malwarebytes\.Malwarebytes'") { Add-Failure 'Invoke-GUIScanner.ps1 missing Malwarebytes winget package id.' }
+    if ($text -notmatch "'install', '-e', '--id'") { Add-Failure 'Invoke-GUIScanner.ps1 does not run winget install -e --id for Malwarebytes.' }
     if ($text -notmatch "Join-Path \`$scriptRoot \('tools\\AV\\' \+ \`$name\)") {
         Add-Failure 'Invoke-GUIScanner.ps1 does not search tools\AV\ (Get-AVTools.ps1 default staging sibling).'
     }
-    if ($script:failures.Count -eq 0) { Write-Host '  OK Invoke-GUIScanner.ps1: ValidateSet = KVRT/ESET/Malwarebytes.' }
+    if ($script:failures.Count -eq 0) { Write-Host '  OK Invoke-GUIScanner.ps1: ValidateSet = KVRT/ESET/Malwarebytes; Malwarebytes via winget.' }
 }
 
 # --- Contract 3: AV-uninstaller is attended-only (never silent) ----------
@@ -77,7 +81,9 @@ else {
     $codeOnly = $text -replace '(?s)<#.*?#>', '' -replace '(?m)^\s*#.*$', ''
     if ($codeOnly -match '/quiet|/silent|/passive|/S\s|/S"') { Add-Failure 'Invoke-AVUninstaller.ps1 appears to pass silent uninstall flags - must be attended only.' }
     if ($text -match 'Windows Defender' -and $text -notmatch 'osExclude') { Add-Failure 'Invoke-AVUninstaller.ps1 does not exclude Windows Defender from removal.' }
-    if ($script:failures.Count -eq 0) { Write-Host '  OK Invoke-AVUninstaller.ps1: attended-only, Defender excluded.' }
+    if ($text -notmatch 'winget uninstall -e --id ') { Add-Failure 'Invoke-AVUninstaller.ps1 does not run winget uninstall -e --id for winget-managed products.' }
+    if ($text -notmatch "'Malwarebytes'\s*=\s*'Malwarebytes\.Malwarebytes'") { Add-Failure 'Invoke-AVUninstaller.ps1 missing the Malwarebytes winget package id.' }
+    if ($script:failures.Count -eq 0) { Write-Host '  OK Invoke-AVUninstaller.ps1: attended-only, Defender excluded, Malwarebytes via winget.' }
 }
 
 # --- Fail/exit ----------------------------------------------------------

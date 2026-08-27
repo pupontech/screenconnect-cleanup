@@ -22,7 +22,7 @@ box" tool has value on day one.
 | **M1** | Stages 0, 1, 8 — snapshot + report, read-only | Usable immediately, cannot hurt anything | **Built & Linux-verified** (Windows content paths still unverified — see below) |
 | **M2** | Stage 2 — ScreenConnect + RAT detection | `-sr` detect-only mode | **PoC DONE** (verified on a real machine) |
 | **M3** | Stage 7 — after-snapshot + diff | Catches resurrections | **Built & Linux-verified** |
-| **M4** | Stage 5 — scanners (KVRT/ESET/Malwarebytes) | Optional, skippable | **Built** — `Get-AVTools.ps1` stages KVRT/ESET/Malwarebytes from official URLs and `Invoke-GUIScanner.ps1` launches them attended (GUI launch-and-wait). AdwCleaner + Defender remain removed from scope. |
+| **M4** | Stage 5 — scanners (KVRT/ESET/Malwarebytes) | Optional, skippable | **Built** — `Get-AVTools.ps1` stages KVRT/ESET from official URLs, `Invoke-GUIScanner.ps1` launches them attended (GUI launch-and-wait); Malwarebytes install/uninstall via winget (v1.7.3+). AdwCleaner + Defender remain removed from scope. |
 | **M5** | Stages 3, 4 — approval gate + removal + quarantine + reboot resume | **Only after heavy VM-snapshot testing** | **LIVE-VALIDATED (field, 2026-08-26):** full removal executed with ExecuteMode=true on INPIRON4SANITY2 via the manual-surgery path (quarantine + service delete + uninstall-key cleanup), manifest truthful after the UninstallFallback fix. 3010 reboot-resume path still needs a lab run |
 | **M6** | Stage 6 — targeted Procmon | Respawn investigation | **Not started** (opt-in stub only) |
 | **M7** | Top-level `sc-cleanup.ps1` stage runner tying it together | The actual product | **Built & Linux end-to-end verified** (detect-remote-access stubbed on Linux) |
@@ -51,7 +51,7 @@ Windows** — see the "Needs a Windows VM" column below.
 | `preflight.ps1` | 17 KB | OK | clean | **Yes** — `-SelfTest` rc=0, full run fail+succeed paths | Checkpoint-Computer, reg.exe hive save, elevation, Win32_OperatingSystem, C:\ free space |
 | `diff-snapshots.ps1` | 9.8 KB | OK | clean | **Yes** — real pair CLEAN rc=0; synthetic resurrection test rc=1; pytest suite | Windows-only section content (same caveat as Stage 1) |
 | `sc-cleanup.ps1` | 33 KB | OK | clean | **Yes** — full pipeline end-to-end rc=0; flags `-sa/-sr/-np/-offline/-WhatIf` functional | real Stage 2/4/5/6 Windows execution |
-| `Invoke-GUIScanner.ps1` | - | OK | clean | **Yes** - launches KVRT/ESET/Malwarebytes GUIs and blocks until closed (4h cap) | real attended scanner runs |
+| `Invoke-GUIScanner.ps1` | - | OK | clean | **Yes** - launches KVRT/ESET GUIs (and Malwarebytes via winget) and blocks until closed (4h cap) | real attended scanner runs |
 
 **Action for whoever continues:** the read-only half of the pipeline (Stages 0,1,2,7,8
 + the orchestrator) is built and proven on Linux to the extent a non-Windows host allows.
@@ -79,16 +79,19 @@ what does it deliberately leave behind? Determines how much of Stage 4 is vendor
 uninstaller versus manual surgery.
 
 ### Q4 - Which scanner CLI switches are real?
-Current Stage 5 does **not** rely on scanner CLI switches. KVRT, ESET Online
-Scanner and Malwarebytes are staged from official download URLs and launched as
-visible attended GUIs through `Invoke-GUIScanner.ps1`; the technician drives the
+Current Stage 5 does **not** rely on scanner CLI switches. KVRT and ESET Online
+Scanner are staged from official download URLs and launched as visible attended
+GUIs through `Invoke-GUIScanner.ps1`; Malwarebytes is installed via winget
+(`winget install -e --id Malwarebytes.Malwarebytes`, v1.7.3+) and uninstalled
+via winget in the AV-uninstall step. The technician drives the
 scanner UI. **Do not restore CLI adapters or invent scan/clean flags without
 fresh vendor documentation and a separate owner decision.**
 
-> **Status (2026-08-27):** KVRT/ESET/Malwarebytes downloads + attended GUI
-> launches are built. MSERT is still not built, and AdwCleaner + Microsoft
-> Defender remain removed from the scanner line-up by owner decisions. A real-box
-> run is still required to confirm each vendor GUI behaves correctly in the field.
+> **Status (2026-08-27):** KVRT/ESET downloads + attended GUI launches and the
+> Malwarebytes winget install/uninstall path are built. MSERT is still not
+> built, and AdwCleaner + Microsoft Defender remain removed from the scanner
+> line-up by owner decisions. A real-box run is still required to confirm each
+> vendor GUI behaves correctly in the field.
 
 ### Q5 — Sysinternals download URL pattern
 Believed to be `https://download.sysinternals.com/files/<Name>.zip`. Unconfirmed. Never

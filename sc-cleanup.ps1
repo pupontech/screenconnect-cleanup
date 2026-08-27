@@ -490,12 +490,14 @@ $stage0Result = Invoke-Stage -StageId 0 -StageName 'Preflight' -SkipFlag '' -Sta
         Add-Content -Path $MasterLogPath -Value "Tool pack: Get-ToolPack.ps1 NOT FOUND" -Encoding UTF8
     }
 
-    # AV scanner staging (KVRT / ESET Online Scanner / Malwarebytes) - separate
-    # from the Sysinternals pack above. Never fatal: Stage 5 already treats a
-    # missing scanner binary as NotInstalled, not a pipeline failure.
+    # AV scanner staging (KVRT / ESET Online Scanner) - separate from the
+    # Sysinternals pack above. Malwarebytes is NOT staged here: since v1.7.3 it
+    # is installed via winget (owner directive 2026-08-27) in Stage 5.
+    # Never fatal: Stage 5 already treats a missing scanner as NotInstalled,
+    # not a pipeline failure.
     $getAvTools = Join-Path $ScriptRoot 'tools/Get-AVTools.ps1'
     if ((Test-Path $getAvTools) -and -not $offline) {
-        Write-StageLog "Staging AV scanners (KVRT / ESET Online Scanner / Malwarebytes)..."
+        Write-StageLog "Staging AV scanners (KVRT / ESET Online Scanner; Malwarebytes via winget)..."
         $global:LASTEXITCODE = 0
         & $getAvTools -ToolDir (Join-Path $ToolDir 'AV') -Quiet
         if ($LASTEXITCODE -ne 0) {
@@ -724,8 +726,9 @@ $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 'sa' -St
         return @{ Skipped = $true }
     }
 
-    # Stage 5 = KVRT + ESET Online Scanner + Malwarebytes, all attended.
-    # The technician drives each visible GUI. The pipeline never invents silent
+    # Stage 5 = KVRT + ESET Online Scanner (attended GUIs) + Malwarebytes
+    # (installed via winget since v1.7.3 - owner directive 2026-08-27).
+    # The technician drives each visible UI. The pipeline never invents silent
     # scan/clean flags; it only waits so the after-snapshot + report happen
     # after any GUI-driven cleaning has finished. AdwCleaner and Defender remain
     # removed from scope by owner decision.
@@ -738,7 +741,7 @@ $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 'sa' -St
         $scannerLaunches = @(
             @{ Scanner = 'KVRT'; Tool = 'KVRT.exe' },
             @{ Scanner = 'ESET'; Tool = 'esetonlinescanner.exe' },
-            @{ Scanner = 'Malwarebytes'; Tool = 'MBSetup.exe' }
+            @{ Scanner = 'Malwarebytes'; Tool = 'Malwarebytes.Malwarebytes (winget install)' }
         )
         foreach ($launch in $scannerLaunches) {
             Write-StageLog ("Launching " + $launch.Scanner + " for attended scan (technician drives the GUI)...")

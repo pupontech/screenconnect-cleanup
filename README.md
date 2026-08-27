@@ -71,7 +71,7 @@ Two further consequences worth stating plainly:
 | **2 — Detection** | **ScreenConnect instance identity + other RAT presence** | **PoC works** (verified on a real machine) |
 | 3 — Technician review | approval gate — nothing is removed without it | **built** (interactive y/n prompt; no GUI) |
 | 4 — Remove / quarantine | stop, uninstall, quarantine, clean persistence | **built, dry-run default** (never run on live Windows; skipped by default via `-sr`) |
-| 5 — Scanners | KVRT, ESET Online Scanner, Malwarebytes (GUI, attended) | **built** (`Get-AVTools.ps1` downloads all three from official vendor URLs; `Invoke-GUIScanner` launches visible attended GUIs; AdwCleaner/Defender remain removed; real exec unverified) |
+| 5 — Scanners | KVRT, ESET Online Scanner (GUI, attended); Malwarebytes installed via winget (`winget install -e --id Malwarebytes.Malwarebytes`) | **built** (`Get-AVTools.ps1` downloads KVRT + ESET from official vendor URLs; `Invoke-GUIScanner` launches visible attended GUIs and runs the Malwarebytes winget install; AdwCleaner/Defender remain removed; real exec unverified) |
 | 6 — Uninstall installed AV | open each detected third-party AV uninstaller (attended GUI) | **built** (Invoke-AVUninstaller; Windows Defender excluded; results in report) |
 | 7 — Procmon (targeted) | "something reinstalled it — what?" | **not started** (opt-in stub only) |
 | 8 — Snapshot (after) + diff | prove it is gone, catch resurrections | **built** (Linux-verified) |

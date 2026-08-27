@@ -936,3 +936,41 @@ NOT proven on Windows: the bat's behavior on a live machine (batch/VBS hybrid
 semantics cannot be validated from Linux; owner live-tests). If it still fails
 after shipping in the zip, suspect copy mangling (line endings/name) or the
 embedded WSF self-elevation being blocked.
+
+## 12. v1.7.3 - Malwarebytes via winget (2026-08-27, main)
+
+Owner directive: "change malwarebytes to installing and uninstalling via winget
+via winget install -e --id Malwarebytes.Malwarebytes". No more MBSetup.exe
+staging or GUI-installer launch.
+
+Changes:
+- `tools/Get-AVTools.ps1` stages KVRT.exe + esetonlinescanner.exe ONLY; the
+  Malwarebytes download (downloads.malwarebytes.com) and the InternalShare
+  MBSetup fallback are gone. -Verify checks only the two remaining tools.
+- `Invoke-GUIScanner.ps1 -Scanner Malwarebytes` resolves winget and runs
+  `winget install -e --id Malwarebytes.Malwarebytes` (visible console, bounded
+  wait, JSON result Tool="Malwarebytes.Malwarebytes (winget install)"; exit 3
+  with a clear message when winget is missing; -ToolPath still overrides).
+  KVRT/ESET keep the staged-EXE launch + tools\AV search.
+- `Invoke-AVUninstaller.ps1` uninstalls Malwarebytes via `winget uninstall -e
+  --id Malwarebytes.Malwarebytes` (result gains Method=winget + ExitCode); when
+  winget is absent it falls back to the vendor uninstaller GUI. All other AV
+  products still open their vendor uninstaller attended.
+- `START-HERE.bat` Step 6c = winget install (warns when winget missing);
+  Steps 1/6/8 wording updated. Docs + CI contracts updated.
+
+PROVEN on Linux (synthetic):
+- fake `winget` on PATH -> `-Scanner Malwarebytes` runs EXACTLY
+  `install -e --id Malwarebytes.Malwarebytes` (args captured to file), JSON
+  Status=Completed rc=0.
+- extracted Open-Uninstaller harness with a Malwarebytes product -> winget
+  branch selected, result Method=winget ExitCode=0; with winget removed from
+  PATH -> fallback message + vendor-uninstaller path attempted.
+- Get-AVTools -Verify passes with only KVRT + EOS staged (rc=0).
+- Full local CI suite green (house rules, parse, scanner contracts incl. new
+  winget assertions, removal runtime Test 10, pipeline launcher).
+
+NOT proven on Windows: real winget install/uninstall of Malwarebytes (needs
+the owner's live test - winget presence, package id validity, agreement
+prompts, and the Malwarebytes uninstall behavior via winget are all
+vendor/environment dependent).

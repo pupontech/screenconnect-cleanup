@@ -19,10 +19,10 @@ detect-remote-access.ps1
 Run-DetectRemoteAccess.bat
 targets.json
 New-InvestigationReport.ps1
-Invoke-GUIScanner.ps1          <- launches KVRT/ESET/Malwarebytes GUI scanners and waits (Stage 5)
+Invoke-GUIScanner.ps1          <- launches KVRT/ESET GUI scanners (and Malwarebytes via winget) and waits (Stage 5)
 Invoke-AVUninstaller.ps1        <- opens installed-AV uninstallers, attended (Stage 6)
 tools\Get-ToolPack.ps1          <- downloader ONLY; do NOT copy tools\* exes
-tools\Get-AVTools.ps1           <- KVRT/ESET/Malwarebytes stager
+tools\Get-AVTools.ps1           <- KVRT/ESET stager (Malwarebytes via winget since v1.7.3)
 docs\                           <- optional but recommended (work log + roadmap)
 DEPLOY.md                       <- this file
 ```
@@ -51,7 +51,7 @@ A prebuilt zip with exactly the layout above is produced by
 ```
 powershell -ExecutionPolicy Bypass -File .\Invoke-GUIScanner.ps1 -Scanner KVRT
 powershell -ExecutionPolicy Bypass -File .\Invoke-GUIScanner.ps1 -Scanner ESET
-powershell -ExecutionPolicy Bypass -File .\Invoke-GUIScanner.ps1 -Scanner Malwarebytes
+powershell -ExecutionPolicy Bypass -File .\Invoke-GUIScanner.ps1 -Scanner Malwarebytes   # winget install -e --id Malwarebytes.Malwarebytes
 ```
 
 Each launch is visible and waits until you close it (4-hour safety cap; on

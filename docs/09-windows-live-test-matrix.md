@@ -81,15 +81,16 @@ hold", "Scanner-process contracts OK", removal runtime contracts OK, integration
     it reaches detect-remote-access.ps1 after elevation (SCC_ARGS env forwarding).
 4.4 Confirm fltmc privilege probe and default KEEP prompt semantics are unchanged.
 
-## 5. Scanner downloads and attended GUI launches (Stage 5, KVRT/ESET/Malwarebytes)
+## 5. Scanner downloads and attended GUI launches (Stage 5, KVRT/ESET; Malwarebytes via winget)
 
-5.1 `tools\Get-AVTools.ps1` on a lab network: downloads/stages KVRT.exe,
-    esetonlinescanner.exe, and MBSetup.exe from the official vendor URLs.
+5.1 `tools\Get-AVTools.ps1` on a lab network: downloads/stages KVRT.exe and
+    esetonlinescanner.exe from the official vendor URLs; confirms MBSetup.exe is
+    no longer staged (Malwarebytes install/uninstall via winget since v1.7.3).
 5.2 `Invoke-GUIScanner.ps1 -Scanner KVRT`: launches a visible GUI and waits
     until the technician closes it; no scan/clean flags are passed.
 5.3 `Invoke-GUIScanner.ps1 -Scanner ESET`: launches a visible GUI and waits
     until the technician closes it; no scan/clean flags are passed.
-5.4 `Invoke-GUIScanner.ps1 -Scanner Malwarebytes`: launches the installer/GUI;
+5.4 `Invoke-GUIScanner.ps1 -Scanner Malwarebytes`: runs `winget install -e --id Malwarebytes.Malwarebytes` (visible console) and waits;
     if the bootstrapper exits before the scan finishes, the guided `START-HERE`
     runner still tells the technician to wait manually before continuing.
 5.5 Missing-tool paths: each scanner exits 3 with the clear "stage it first"
