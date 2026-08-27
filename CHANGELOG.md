@@ -3,6 +3,29 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.9] - 2026-08-27
+Malwarebytes now LAUNCHES after the winget install (owner directive) - it was
+installed but never opened, so the technician had to find it in the Start Menu
+to run the scan. Both launch paths fixed:
+- **`START-HERE.bat` Step 6c**: after a successful `winget install`, the bat
+  locates `mbam.exe` under `%ProgramFiles%\Malwarebytes\Anti-Malware` (with a
+  `%ProgramFiles(x86)%` fallback) and `start`s the Malwarebytes UI. If the
+  install fails (errorlevel != 0) it skips the launch; if mbam.exe is not found
+  at either standard path it says so instead of failing silently.
+- **`Invoke-GUIScanner.ps1` Malwarebytes branch** (used by `sc-cleanup.ps1`
+  Stage 5): after winget exits 0, the launcher finds mbam.exe (Program Files /
+  Program Files (x86), braced `${env:ProgramFiles(x86)}` form for PS 5.1) and
+  starts it, then WAITS for the Malwarebytes UI to close - the same attended
+  model as KVRT/ESET, so the pipeline stays paused while the technician runs
+  the scan. mbam missing or launch failure degrades to a visible WARN, never a
+  crash; the timeout cap still applies and never kills the GUI.
+- CI: new scanner-contract assertions for both paths (mbam.exe launch markers,
+  the x86 braced lookup, the bat's `:mbam_found` label + `start "" "%MBAMEXE%"`,
+  and the `%ProgramFiles(x86)%` fallback line).
+- Verified on Linux: fake-cmd/fake-mbam harness - install-ok+mbam-present
+  launches and waits (duration includes the scan), mbam-missing degrades with
+  WARN, winget-failure does NOT launch; full CI suite green.
+
 ## [1.7.8] - 2026-08-27
 KVRT "no longer launches" on the latest zip (owner live report) - the KVRT launch code itself is byte-identical to the version where it worked, so the failure was environmental and silent. Fixed by making staging and launch failures LOUD:
 - **`START-HERE.bat` Steps 6a/6b** now echo `[WARN] ... errorlevel N` when KVRT/ESET launch fails (previously the failure was swallowed and the step looked like a no-op). The `if exist` gate passed for a 0-byte/partial exe, and Start-Process then failed silently.

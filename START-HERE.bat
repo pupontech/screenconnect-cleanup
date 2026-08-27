@@ -122,7 +122,7 @@ set GO=
 
 rem ---- Step 6: antivirus scans - each one is its own step ---------------------
 echo.
-echo  STEP 6 of 10: Antivirus scans (KVRT, ESET Online Scanner; Malwarebytes install via winget)
+echo  STEP 6 of 10: Antivirus scans (KVRT, ESET Online Scanner; Malwarebytes install + launch via winget)
 echo    Each scanner is a visible attended GUI. Drive the UI, then return here.
 
 echo.
@@ -164,7 +164,18 @@ if errorlevel 1 (
 echo        Installing Malwarebytes via winget - id Malwarebytes.Malwarebytes
 winget install -e --id Malwarebytes.Malwarebytes
 if errorlevel 1 echo        [WARN] winget install exited with errorlevel %errorlevel%
-echo        When it finishes, run a scan in the Malwarebytes UI.
+if errorlevel 1 goto :skip_6c
+echo        Launching Malwarebytes UI...
+set "MBAMEXE="
+if exist "%ProgramFiles%\Malwarebytes\Anti-Malware\mbam.exe" set "MBAMEXE=%ProgramFiles%\Malwarebytes\Anti-Malware\mbam.exe"
+if defined MBAMEXE goto :mbam_found
+if exist "%ProgramFiles(x86)%\Malwarebytes\Anti-Malware\mbam.exe" set "MBAMEXE=%ProgramFiles(x86)%\Malwarebytes\Anti-Malware\mbam.exe"
+if defined MBAMEXE goto :mbam_found
+echo        [WARN] mbam.exe not found at standard paths - launch Malwarebytes from the Start Menu.
+goto :skip_6c
+:mbam_found
+start "" "%MBAMEXE%"
+echo        Malwarebytes launched - drive a scan in the UI, then close it.
 :skip_6c
 set GO=
 

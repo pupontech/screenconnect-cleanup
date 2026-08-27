@@ -1,3 +1,17 @@
+----
+11. v1.7.9 - Malwarebytes launches after install (owner directive:
+    "it should launch malwarebytes after install")
+- Step 6c (bat): winget ok -> locate mbam.exe (PF, then PF(x86)) ->
+  start "" "%MBAMEXE%"; winget error -> skip with WARN; not found -> WARN.
+  goto-style only, zero nested paren blocks, all-CRLF kept.
+- Invoke-GUIScanner.ps1 Malwarebytes branch: after winget exit 0, start
+  mbam.exe and wait for the UI to close (same cap/timeout model as KVRT/ESET);
+  missing/launch-failure = visible WARN. ${env:ProgramFiles(x86)} braced form.
+- CI: Test-ScannerProcessContracts Section 2 + new Section 4 (bat launch).
+Verified: 3-scenario fake harness (launch+wait / missing->WARN / winget-fail
+->no launch), house rules, parse, 32 removal-runtime tests, pipeline launcher.
+NOT proven on Windows: live 6c run - winget install, then the Malwarebytes UI
+should open automatically; drive a scan, close it, continue.
 # Work log — what was actually done
 
 Chronological record of the session that produced this project, with test evidence.

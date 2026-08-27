@@ -13,6 +13,9 @@
       2. launch it as a NORMAL VISIBLE process (GUI for the scanners; a
          console window for winget so the technician sees the install),
       3. block until that process exits, then report elapsed time + exit code.
+         For Malwarebytes the script then also launches the freshly installed
+         Malwarebytes GUI (mbam.exe) and waits on it like any scanner, so the
+         pipeline stays paused while the technician runs the scan.
 
   It never passes scan/clean switches, never parses the scanner's output, and
   never fabricates a result: the technician drives the UI; this script just
@@ -22,7 +25,7 @@
   USAGE
     .\Invoke-GUIScanner.ps1 -Scanner KVRT            # KVRT.exe
     .\Invoke-GUIScanner.ps1 -Scanner ESET            # esetonlinescanner.exe
-    .\Invoke-GUIScanner.ps1 -Scanner Malwarebytes    # winget install -e --id Malwarebytes.Malwarebytes
+    .\Invoke-GUIScanner.ps1 -Scanner Malwarebytes    # winget install -e --id Malwarebytes.Malwarebytes; then launches the GUI
     .\Invoke-GUIScanner.ps1 -ToolPath C:\path\tool.exe   # any explicit EXE
 
   Search order when -ToolPath is not given (KVRT/ESET):
@@ -32,7 +35,9 @@
     staging is tools\Get-AVTools.ps1's job.
     Malwarebytes does not use the file search: it requires winget and runs
     `winget install -e --id Malwarebytes.Malwarebytes` (exits 3 if winget is
-    missing).
+    missing). After a successful install it locates mbam.exe under Program
+    Files / Program Files (x86) and launches the Malwarebytes GUI, waiting
+    for the technician to close it (same timeout cap as the scanners).
 
   NOTES
     - Use inside sc-cleanup.ps1 runs: the runner launches each scanner and waits.
@@ -215,6 +220,39 @@ $duration = [int]($end - $start).TotalSeconds
 $exitCode = $null
 if (-not $timedOut) {
     try { $exitCode = $proc.ExitCode } catch { }
+}
+
+# Malwarebytes: winget just installed it - launch the GUI so the technician
+# can scan with it, the same attended model as KVRT/ESET (waits for the UI
+# to close; the scan happens inside it).
+if ($wingetViaCmd -and -not $timedOut -and $exitCode -eq 0) {
+    $mbam = $null
+    $candidates = @((Join-Path $env:ProgramFiles 'Malwarebytes\Anti-Malware\mbam.exe'))
+    if (${env:ProgramFiles(x86)}) {
+        $candidates += (Join-Path ${env:ProgramFiles(x86)} 'Malwarebytes\Anti-Malware\mbam.exe')
+    }
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate) { $mbam = $candidate; break }
+    }
+    if ($mbam) {
+        Write-Host ("Launching Malwarebytes GUI: " + $mbam) -ForegroundColor Cyan
+        Write-Host "Drive a scan in the Malwarebytes UI - this script waits until you close it." -ForegroundColor Cyan
+        $mbamProc = $null
+        try {
+            $mbamProc = Start-Process -FilePath $mbam -PassThru -ErrorAction Stop
+        } catch {
+            Write-Host ("  [WARN] Could not launch Malwarebytes GUI: " + $_.Exception.Message) -ForegroundColor Yellow
+        }
+        if ($null -ne $mbamProc) {
+            if (-not $mbamProc.WaitForExit($TimeoutMinutes * 60 * 1000)) {
+                $timedOut = $true   # deliberately NOT killed, same rule as the scanners
+            }
+        }
+        $end = Get-Date
+        $duration = [int]($end - $start).TotalSeconds
+    } else {
+        Write-Host "  [WARN] Malwarebytes installed but mbam.exe not found at standard paths - launch it from the Start Menu." -ForegroundColor Yellow
+    }
 }
 
 $status = 'Completed'

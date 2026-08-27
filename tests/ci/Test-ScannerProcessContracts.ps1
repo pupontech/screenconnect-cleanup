@@ -10,8 +10,11 @@
     2. Get-AVTools.ps1 uses official vendor download URLs, not stale shares as
        the primary source.
     3. Invoke-GUIScanner.ps1 accepts KVRT, ESET and Malwarebytes; KVRT/ESET
-       are staged EXEs, Malwarebytes runs winget install (no MBSetup mapping).
+       are staged EXEs, Malwarebytes runs winget install (no MBSetup mapping)
+       and then launches the installed Malwarebytes GUI (mbam.exe).
     4. Invoke-AVUninstaller.ps1 uninstalls Malwarebytes via winget.
+    5. START-HERE.bat Step 6c installs Malwarebytes via winget and launches
+       the Malwarebytes GUI (mbam.exe) after a successful install.
 
   PS 5.1 compatible. Pure ASCII, no BOM.
 #>
@@ -66,10 +69,13 @@ else {
     if ($text -notmatch "'install', '-e', '--id'") { Add-Failure 'Invoke-GUIScanner.ps1 does not run winget install -e --id for Malwarebytes.' }
     if ($text -notmatch 'wingetViaCmd') { Add-Failure 'Invoke-GUIScanner.ps1 missing the winget alias-via-cmd launch (WindowsApps stub crashes Start-Process).' }
     if ($text -notmatch 'Start-Process returned no process handle') { Add-Failure 'Invoke-GUIScanner.ps1 missing the null-process guard after Start-Process.' }
+    if ($text -notmatch "'Malwarebytes\\Anti-Malware\\mbam\.exe'") { Add-Failure 'Invoke-GUIScanner.ps1 does not launch the Malwarebytes GUI (mbam.exe) after a successful winget install.' }
+    if ($text -notmatch '\$\{env:ProgramFiles\(x86\)\}') { Add-Failure 'Invoke-GUIScanner.ps1 missing the braced ${env:ProgramFiles(x86)} mbam.exe lookup (PS 5.1-safe).' }
+    if ($text -notmatch 'Drive a scan in the Malwarebytes UI') { Add-Failure 'Invoke-GUIScanner.ps1 missing the Malwarebytes GUI attended-scan prompt.' }
     if ($text -notmatch "Join-Path \`$scriptRoot \('tools\\AV\\' \+ \`$name\)") {
-        Add-Failure 'Invoke-GUIScanner.ps1 does not search tools\AV\ (Get-AVTools.ps1 default staging sibling).'
+        Add-Failure 'Invoke-GUIScanner.ps1 does not search tools\\AV\\ (Get-AVTools.ps1 default staging sibling).'
     }
-    if ($script:failures.Count -eq 0) { Write-Host '  OK Invoke-GUIScanner.ps1: ValidateSet = KVRT/ESET/Malwarebytes; Malwarebytes via winget.' }
+    if ($script:failures.Count -eq 0) { Write-Host '  OK Invoke-GUIScanner.ps1: ValidateSet = KVRT/ESET/Malwarebytes; Malwarebytes via winget + GUI launch.' }
 }
 
 # --- Contract 3: AV-uninstaller is attended-only (never silent) ----------
@@ -90,6 +96,19 @@ else {
     if ($text -notmatch 'NoLeftoverSweep') { Add-Failure 'Invoke-AVUninstaller.ps1 missing the -NoLeftoverSweep opt-out.' }
     if ($codeOnly -match 'Remove-Item') { Add-Failure 'Invoke-AVUninstaller.ps1 deletes instead of quarantining - the sweep must Move-Item only.' }
     if ($script:failures.Count -eq 0) { Write-Host '  OK Invoke-AVUninstaller.ps1: attended-only, Defender excluded, Malwarebytes via winget, quarantine sweep.' }
+}
+
+# --- Contract 4: START-HERE.bat Step 6c launches Malwarebytes after install --
+Write-Host 'Section 4: START-HERE.bat Step 6c installs then launches Malwarebytes'
+$startHere = Join-Path $repoRoot 'START-HERE.bat'
+if (-not (Test-Path -LiteralPath $startHere)) { Add-Failure 'START-HERE.bat missing.' }
+else {
+    $text = [System.IO.File]::ReadAllText($startHere)
+    if ($text -notmatch 'winget install -e --id Malwarebytes\.Malwarebytes') { Add-Failure 'START-HERE.bat Step 6c does not run winget install for Malwarebytes.' }
+    if ($text -notmatch 'start "" "%MBAMEXE%"') { Add-Failure 'START-HERE.bat Step 6c does not launch Malwarebytes (start "" "%MBAMEXE%") after install.' }
+    if ($text -notmatch ':mbam_found') { Add-Failure 'START-HERE.bat Step 6c missing the :mbam_found launch label.' }
+    if ($text -notmatch '%ProgramFiles\(x86\)%\\Malwarebytes') { Add-Failure 'START-HERE.bat Step 6c missing the Program Files (x86) mbam.exe fallback path.' }
+    if ($script:failures.Count -eq 0) { Write-Host '  OK START-HERE.bat: Step 6c installs Malwarebytes via winget, then launches the GUI.' }
 }
 
 # --- Fail/exit ----------------------------------------------------------
