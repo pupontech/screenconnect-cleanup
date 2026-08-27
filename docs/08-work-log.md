@@ -880,3 +880,36 @@ superseded, a final sweep confirmed nothing was dropped:
 
 Agent-side work is COMPLETE. Remaining is human-only: M0 live lab validation per
 docs/09-windows-live-test-matrix.md.
+
+## 10. Live-run fixes v1.7.1 (2026-08-27, main)
+
+Two bugs observed live on DESTROYERLTC202 (2026-08-27) and fixed on main:
+
+1. **removal-report.txt StrictMode crash.** The human-readable report referenced
+   `$successCount/$failedCount/$dryRunCount/$deferredCount/$verifFailCount`
+   before they were assigned (they were computed AFTER the report block).
+   Under `Set-StrictMode -Version 2.0` this threw "The variable
+   '$successCount' cannot be retrieved because it has not been set." - the
+   manifest was written but the run exited 1 with 4/4 actions successful.
+   Fix: compute the counts before the report block (single assignment site,
+   shared with the final summary). PROVEN on Linux: a StrictMode tail-harness
+   (manifest + report + summary section of the real script) against `HEAD`
+   reproduces the exact error + exit 1; against the fix it writes the report,
+   prints 4 successful / 0 failed / 1 verification-failure, exits 0.
+   Regression contract: Test-RemovalRuntimeContracts.ps1 Test 10.
+
+2. **"Scanner not found" after successful staging.** `Get-AVTools.ps1` stages
+   into its default `tools\AV\`, but `Invoke-GUIScanner.ps1` (repo root) only
+   searched `AV\`, the script root, `..\tools\AV`, Downloads and %TEMP% - the
+   staging sibling was never checked, so freshly downloaded KVRT/ESET were
+   "not found" (exit 3). Fix: `tools\AV\` is now the FIRST candidate. PROVEN
+   on Linux: synthetic layout (repo root + `tools/AV/KVRT.exe` = /bin/true)
+   - fixed resolves + launches (exit 0, Status Completed); `HEAD` version
+   exits 3 with the user's exact message. Regression contract:
+   Test-ScannerProcessContracts.ps1 (tools\AV candidate check).
+
+NOT yet proven on Windows: the fixed scanner launch path against real
+KVRT/ESET GUIs (needs the owner's live test), and the full CI matrix on
+windows-2022/2025 (push will run it). The GUI-revision branch
+(gui-revision-screenconnect-cleaner) still carries the pre-fix report ordering
+and must pick up the same fix before it merges.

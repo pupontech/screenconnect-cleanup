@@ -1691,6 +1691,19 @@ try {
 }
 
 # -----------------------------------------------------------------------------
+# Aggregate manifest counts BEFORE the human-readable report below: the report
+# references these variables and runs under Set-StrictMode -Version 2.0, so
+# computing them after the write threw "The variable '$successCount' cannot be
+# retrieved because it has not been set." (observed live 2026-08-27 on
+# DESTROYERLTC202 - manifest + exit 1 despite every action succeeding).
+# -----------------------------------------------------------------------------
+$successCount   = @($script:Manifest | Where-Object { $_.Result -eq 'Success' }).Count
+$failedCount    = @($script:Manifest | Where-Object { $_.Result -eq 'Failed' }).Count
+$dryRunCount    = @($script:Manifest | Where-Object { $_.Result -eq 'DryRun' }).Count
+$deferredCount  = @($script:Manifest | Where-Object { $_.Result -eq 'Deferred' }).Count
+$verifFailCount = @($script:Manifest | Where-Object { ($_.Action -eq 'ProductVerification') -and ($_.Result -eq 'PRODUCT_VERIFICATION_FAILED') }).Count
+
+# -----------------------------------------------------------------------------
 # Write a HUMAN-READABLE removal report (plain English .txt)
 #
 # The JSON manifest above is machine-readable (consumed by the report stage and
@@ -1769,12 +1782,6 @@ try {
 # Final summary
 # -----------------------------------------------------------------------------
 Write-Section "Removal complete"
-
-$successCount = @($script:Manifest | Where-Object { $_.Result -eq 'Success' }).Count
-$failedCount  = @($script:Manifest | Where-Object { $_.Result -eq 'Failed' }).Count
-$dryRunCount  = @($script:Manifest | Where-Object { $_.Result -eq 'DryRun' }).Count
-$deferredCount = @($script:Manifest | Where-Object { $_.Result -eq 'Deferred' }).Count
-$verifFailCount = @($script:Manifest | Where-Object { ($_.Action -eq 'ProductVerification') -and ($_.Result -eq 'PRODUCT_VERIFICATION_FAILED') }).Count
 
 Write-Log "Actions successful:   $successCount"
 Write-Log "Actions failed:       $failedCount"

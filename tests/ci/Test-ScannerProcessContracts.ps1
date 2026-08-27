@@ -60,6 +60,9 @@ else {
     if ($text -notmatch "'KVRT'\s*=\s*'KVRT\.exe'") { Add-Failure 'Invoke-GUIScanner.ps1 missing KVRT tool mapping.' }
     if ($text -notmatch "'ESET'\s*=\s*'esetonlinescanner\.exe'") { Add-Failure 'Invoke-GUIScanner.ps1 missing ESET tool mapping.' }
     if ($text -notmatch "'Malwarebytes'\s*=\s*'MBSetup\.exe'") { Add-Failure 'Invoke-GUIScanner.ps1 missing Malwarebytes tool mapping.' }
+    if ($text -notmatch "Join-Path \`$scriptRoot \('tools\\AV\\' \+ \`$name\)") {
+        Add-Failure 'Invoke-GUIScanner.ps1 does not search tools\AV\ (Get-AVTools.ps1 default staging sibling).'
+    }
     if ($script:failures.Count -eq 0) { Write-Host '  OK Invoke-GUIScanner.ps1: ValidateSet = KVRT/ESET/Malwarebytes.' }
 }
 

@@ -3,6 +3,26 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.1] - 2026-08-27
+Two live-run fixes, both observed on DESTROYERLTC202 (2026-08-27).
+- `remove-screenconnect.ps1` computes the manifest summary counts **before**
+  writing `removal-report.txt`. The report referenced `$successCount` /
+  `$failedCount` / etc. under `Set-StrictMode -Version 2.0` before they were
+  assigned, throwing "The variable '$successCount' cannot be retrieved because
+  it has not been set." — the manifest was written but the run exited 1 despite
+  every action succeeding. Reproduced on Linux from `HEAD` with a StrictMode
+  tail-harness; fixed harness now writes the report and exits 0.
+- `Invoke-GUIScanner.ps1` now searches the `tools\AV\` staging sibling **first** —
+  the default directory `tools/Get-AVTools.ps1` downloads KVRT.exe /
+  esetonlinescanner.exe / MBSetup.exe into. The old lookup only checked `AV\`,
+  the script root, `..\tools\AV`, `%USERPROFILE%\Downloads` and `%TEMP%`, so a
+  freshly staged scanner reported "Scanner not found" (exit 3) even though the
+  download had succeeded. Verified on Linux with a synthetic `tools\AV` layout:
+  fixed resolves and launches (exit 0), `HEAD` version still exits 3.
+- CI regression contracts for both fixes: `Test-RemovalRuntimeContracts.ps1`
+  Test 10 (counts assigned before the report block) and
+  `Test-ScannerProcessContracts.ps1` (Invoke-GUIScanner must search `tools\AV\`).
+
 ## [1.7.0] - 2026-08-27
 Restore KVRT and ESET as staged scanner downloads.
 - `tools/Get-AVTools.ps1` again downloads **KVRT.exe** from Kaspersky's official

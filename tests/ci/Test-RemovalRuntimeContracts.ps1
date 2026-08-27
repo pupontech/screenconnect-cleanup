@@ -178,6 +178,23 @@ if ($null -ne $parseErrors -and @($parseErrors).Count -gt 0) {
 }
 
 # ---------------------------------------------------------------------------
+# TEST 10: manifest counts are computed BEFORE the human-readable report is
+# written. The report block references $successCount/$failedCount/etc. under
+# Set-StrictMode -Version 2.0; computing them after the write threw
+# "The variable '$successCount' cannot be retrieved because it has not been
+# set." and forced exit 1 on an otherwise fully successful removal run
+# (observed live 2026-08-27 on DESTROYERLTC202).
+# ---------------------------------------------------------------------------
+Write-Host "--- Test 10: report counts computed before removal-report.txt is written ---"
+$countAssignMatch = [regex]::Match($scriptContent, '\$successCount\s*=\s*@')
+$reportPathMatch  = [regex]::Match($scriptContent, '\$reportTxtPath\s*=')
+if (-not $countAssignMatch.Success -or -not $reportPathMatch.Success) {
+    Assert-True $false "Could not locate the count assignment / report block markers in source"
+} else {
+    Assert-True ($countAssignMatch.Index -lt $reportPathMatch.Index) "Manifest counts are assigned before the removal-report.txt block (StrictMode-safe)"
+}
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 Write-Host ""

@@ -82,7 +82,12 @@ if ($ToolPath) {
 } elseif ($Scanner) {
     $name = $knownTools[$Scanner]
     $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+    # Search order: Get-AVTools.ps1's canonical staging sibling (tools\AV\) first
+    # (its default $ToolDir is <Get-AVTools script dir>\AV), then legacy AV\ and
+    # the bare script root, then ..\tools\AV (covers invoking this script from
+    # inside tools\), then the user's Downloads and %TEMP% as fallbacks.
     $candidates = @(
+        (Join-Path $scriptRoot ('tools\AV\' + $name)),
         (Join-Path $scriptRoot ('AV\' + $name)),
         (Join-Path $scriptRoot $name),
         (Join-Path $scriptRoot ('..\tools\AV\' + $name))
