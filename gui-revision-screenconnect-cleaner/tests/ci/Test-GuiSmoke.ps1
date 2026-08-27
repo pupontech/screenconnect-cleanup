@@ -88,11 +88,15 @@ try {
     # -----------------------------------------------------------------
     # Check 2 - entry point stays alive (window open) for 10 seconds
     # -----------------------------------------------------------------
-    # NOTE: launched via -Command "& '<path>'" instead of -File "<path>".
-    # The -File form is reliable on Linux pwsh but on Windows powershell.exe
-    # a quoted -File path has mis-parsed into a bogus positional argument
-    # on the GitHub runner (observed: 'Scc.Core.psd1'); the -Command form
-    # with an inner single-quoted path is unambiguous.
+    # NOTE: launched via -Command "& '<path>'". The launcher must keep the
+    # GUI process alive; ANY early exit is a real failure and fails the
+    # smoke test. (History: the 'A positional parameter cannot be found
+    # that accepts argument Scc.Core.psd1' error observed on Windows
+    # PowerShell 5.1 was NOT a harness quirk - that string never appears on
+    # the command line. It was a 3-arg Join-Path inside
+    # Import-SccRequiredModule binding -AdditionalChildPath, which only
+    # exists in PowerShell 6+. Fixed in Scc.Cleaner.ps1; house-rule 5
+    # guards against regression.)
     Write-Host 'GUI smoke: entry-point check (Scc.Cleaner.ps1 GUI path stays alive) ...'
     $entry = Join-Path $appRoot 'Scc.Cleaner.ps1'
     $entryCmd = ("& '" + $entry + "'")
@@ -142,13 +146,10 @@ try {
             Write-Host '  ---- SccCleaner-gui-error.log ----'
             Write-Host $errLogText
         }
-        # The direct checks above are the authoritative 'GUI opens' proof;
-        # an entry-launch harness quirk must not fail the whole smoke test.
-        if ($entryErrText -match 'Scc.Core.psd1' -or $entryErrText -match 'positional parameter') {
-            Write-Host '  WARN: harness launch quirk (stray positional arg) - entry check treated as inconclusive, direct checks are authoritative.'
-        } else {
-            $failures += ("Entry point exited early (GUI did not stay open): exit={0} out={1} err={2} guierrlog={3}" -f $exitCode, $entryOutText.Trim(), $entryErrText.Trim(), $errLogText.Trim())
-        }
+        # ANY early exit is a real failure: the launcher must keep the GUI
+        # open. No quirk-masking here - the 'Scc.Core.psd1' error was a
+        # genuine PS 5.1 bug in the launcher, now fixed.
+        $failures += ("Entry point exited early (GUI did not stay open): exit={0} out={1} err={2} guierrlog={3}" -f $exitCode, $entryOutText.Trim(), $entryErrText.Trim(), $errLogText.Trim())
     }
 } catch {
     $failures += ('Smoke harness error: ' + $_.Exception.Message)
