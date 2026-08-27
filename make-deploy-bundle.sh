@@ -7,7 +7,10 @@
 # KVRT / ESET Online Scanner / Malwarebytes MB5 from official vendor URLs.
 set -euo pipefail
 SRC="$(cd "$(dirname "$0")" && pwd)"
-OUT="$(dirname "$SRC")/screenconnect-cleanup-deploy.zip"
+OUT_BASE="$(dirname "$SRC")/screenconnect-cleanup"
+# Version is read from the VERSION file (repo root). Fall back to 'dev' if absent.
+VER="$(tr -d '[:space:]' < "$SRC/VERSION" 2>/dev/null || echo dev)"
+OUT="${OUT_BASE}-v${VER}.zip"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 D="$STAGE/screenconnect-cleanup"
@@ -39,6 +42,12 @@ if [ -n "$missing_tools" ]; then
   echo "          staging the tool pack / AV scanners on a client machine)" >&2
 fi
 
+# Stamp the version into the bundle so it is self-identifying even if the
+# file is renamed. Do NOT overwrite an existing VERSION (keep the repo one).
+if [ ! -f "$D/VERSION" ]; then
+  cp "$SRC/VERSION" "$D/VERSION"
+fi
+
 python3 - "$OUT" "$STAGE" <<'PY'
 import sys, zipfile, os
 out, stage = sys.argv[1], sys.argv[2]
@@ -52,5 +61,5 @@ with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
 print('wrote', out)
 PY
 
-echo "--- bundle contents ---"
+echo "Bundle: $(basename "$OUT")"
 python3 -c "import zipfile,sys; [print(i.filename, i.file_size) for i in zipfile.ZipFile('$OUT').infolist()]"
