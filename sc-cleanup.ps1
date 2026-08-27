@@ -35,11 +35,9 @@ param(
     [switch]$ExecuteRemoval, # TEST MODE: pre-authorize removal (no typed confirmation)
 
     # Configuration
-    [string]$IncidentDate,   # incident window anchor (yyyy-MM-dd)
+    [string]$IncidentDate,   # incident window anchor (yyyy-MM-dd; never prompted - defaults to today)
     [string]$OutRoot,        # working directory root (default: C:\RIT-SCC)
     [string]$ToolDir,        # tool pack directory (default: <script dir>\tools)
-    [string]$TechName,       # technician name (prompted if not provided)
-    [string]$ClientName,     # client identifier (prompted if not provided)
 
     # Debug / development
     [switch]$WhatIf,         # show what would run, execute nothing
@@ -145,17 +143,6 @@ function Resolve-WorkingDir {
     $ts = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
     $dir = Join-Path $Root ("$HostName-$ts")
     return $dir
-}
-
-function Prompt-IfMissing {
-    param([string]$VariableName, [string]$PromptText, [ref]$VariableRef)
-    if (-not $VariableRef.Value) {
-        $input = Read-Host $PromptText
-        if ([string]::IsNullOrWhiteSpace($input)) {
-            throw "Required input '$PromptText' cannot be empty."
-        }
-        $VariableRef.Value = $input
-    }
 }
 
 function Get-JsonItems {
@@ -362,18 +349,12 @@ if (-not $ToolDir) {
     $ToolDir = Join-Path $ScriptRoot 'tools'
 }
 
-# Prompt for tech/client if not provided
-if (-not $resume) {
-    Prompt-IfMissing -VariableName 'TechName' -PromptText 'Technician name' -VariableRef ([ref]$TechName)
-    Prompt-IfMissing -VariableName 'ClientName' -PromptText 'Client identifier' -VariableRef ([ref]$ClientName)
-}
-
-# Resolve incident date
+# Resolve incident date (never prompted - owner directive 2026-08-27)
 if (-not $IncidentDate) {
     $IncidentDate = (Get-Date).ToString('yyyy-MM-dd')
 }
 
-Write-StageLog "Technician: $TechName  Client: $ClientName  Incident: $IncidentDate"
+Write-StageLog "Incident window anchor: $IncidentDate"
 
 # Preflight checks
 if (-not $isAdmin) {
@@ -515,8 +496,6 @@ $stage0Result = Invoke-Stage -StageId 0 -StageName 'Preflight' -SkipFlag '' -Sta
         WorkDir = $WorkDir
         MasterLog = $MasterLogPath
         ToolDir = $ToolDir
-        TechName = $TechName
-        ClientName = $ClientName
         IncidentDate = $IncidentDate
         IsServer = $isServer
     }
@@ -659,9 +638,7 @@ $stage3Result = Invoke-Stage -StageId 3 -StageName 'Review Gate' -SkipFlag '' -S
     # OWNER POLICY: only ScreenConnectInstances is serialized as a removal surface.
     $plan = [ordered]@{
         GeneratedUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
-        TechName = $TechName
-        ClientName = $ClientName
-        IncidentDate = $IncidentDate
+        ComputerName = $env:COMPUTERNAME
         Decision = $decision
         SourceFindings = $findingsJson
         RemovalConfirmed = $removalConfirmed
@@ -965,8 +942,6 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
         GeneratedUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
         ComputerName = $findings.ComputerName
         OSCaption = $findings.OSCaption
-        TechName = $TechName
-        ClientName = $ClientName
         IncidentDate = $IncidentDate
         WorkDir = $WorkDir
         ReportHtml = $reportHtml

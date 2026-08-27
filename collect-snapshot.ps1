@@ -73,6 +73,8 @@ param(
     [string]$OutFile,
     [string]$Label = 'before',
     [int]$IncidentWindowDays = 0,
+    [string]$Section = '',      # internal: collect ONE section and exit (parallel jobs)
+    [switch]$NoParallel,        # collect everything sequentially (no background jobs)
     [switch]$Quiet
 )
 
@@ -513,9 +515,9 @@ function Get-LocalAccountsSection {
 # Firewall - enabled inbound ALLOW rules
 # ---------------------------------------------------------------------------
 function Get-FirewallRulesSection {
-    $rules = Get-NetFirewallRule -ErrorAction Stop | Where-Object {
-        $_.Direction -eq 'Inbound' -and $_.Action -eq 'Allow' -and $_.Enabled -eq $true
-    }
+    # Server-side filtering keeps the initial CIM payload small (the old form
+    # enumerated every rule and filtered client-side).
+    $rules = Get-NetFirewallRule -Direction Inbound -Action Allow -Enabled True -ErrorAction Stop
 
     # Piping each rule into Get-NetFirewallApplicationFilter / -PortFilter costs
     # a separate CIM round-trip per rule: ~3+ minutes and hundreds of MB for a
@@ -1225,6 +1227,67 @@ if (-not $OutFile) {
 
 Write-Info "Collecting snapshot (Label=$Label, IncidentWindowDays=$IncidentWindowDays)..."
 
+# ---------------------------------------------------------------------------
+# Single-section mode (used by the parallel jobs below): collect ONE section,
+# emit {Section, Data, Errors} as one JSON line, exit. Also lets a caller
+# collect just one section manually (collect-snapshot.ps1 -Section ScheduledTasks).
+# ---------------------------------------------------------------------------
+if ($Section) {
+    $data = $null
+    switch ($Section) {
+        'ScheduledTasks' { $data = Sort-ByKey (Invoke-Section -Name 'ScheduledTasks' -ScriptBlock { Get-ScheduledTasksSection }) }
+        'FirewallRules'  { $data = Sort-ByKey (Invoke-Section -Name 'FirewallRules' -ScriptBlock { Get-FirewallRulesSection }) }
+        'Connections'    { $data = Sort-ByKey (Invoke-Section -Name 'Connections' -ScriptBlock { Get-ConnectionsSection }) }
+        default {
+            Write-Host ("Unknown section: " + $Section) -ForegroundColor Red
+            exit 2
+        }
+    }
+    $errs = New-Object System.Collections.ArrayList
+    foreach ($e in $script:CollectionErrors) { [void]$errs.Add($e.Error) }
+    if ($null -eq $data) { $data = @() }
+    [pscustomobject]@{ Section = $Section; Data = @($data); Errors = $errs.ToArray() } |
+        ConvertTo-Json -Depth 8 -Compress | Write-Output
+    exit 0
+}
+
+# ---------------------------------------------------------------------------
+# Parallel section collector (v1.7.6): the three CIM-backed sections below
+# (scheduled tasks, firewall rules, network connections) are the slowest and
+# fully independent, so by default they run in background jobs and the results
+# are merged back. Any failure (job spawn, timeout, bad payload) falls back to
+# the sequential in-process path for that section. Disable with -NoParallel.
+# ---------------------------------------------------------------------------
+function Invoke-ParallelSection {
+    param([string]$Name, [scriptblock]$SequentialBlock, [string]$ScriptPath)
+    if (-not $NoParallel) {
+        try {
+            $job = Start-Job -ScriptBlock {
+                param($p, $s)
+                & $p -Section $s -Quiet -NoParallel
+            } -ArgumentList $ScriptPath, $Name
+            $null = Wait-Job -Job $job -Timeout 300
+            $raw = Receive-Job -Job $job -ErrorAction Stop
+            Remove-Job -Job $job -Force
+            $text = ($raw | Out-String).Trim()
+            if ($text) {
+                $parsed = $null
+                try { $parsed = $text | ConvertFrom-Json } catch { }
+                if ($null -ne $parsed -and $parsed.Section -eq $Name -and $null -ne $parsed.Data) {
+                    if ($parsed.Errors) {
+                        foreach ($pe in @($parsed.Errors)) { Add-CollectionError -Section $Name -ErrorText ([string]$pe) }
+                    }
+                    return , @($parsed.Data)
+                }
+            }
+            Write-Info ("  (parallel " + $Name + " returned nothing - using sequential path)")
+        } catch {
+            Write-Info ("  (parallel " + $Name + " failed - using sequential path)")
+        }
+    }
+    return , @(& $SequentialBlock)
+}
+
 $isAdmin = Test-IsAdmin
 
 $osCaption = ''
@@ -1239,7 +1302,7 @@ Write-Info '  - Services'
 $services = Sort-ByKey (Invoke-Section -Name 'Services' -ScriptBlock { Get-ServicesSection })
 
 Write-Info '  - Scheduled tasks'
-$scheduledTasks = Sort-ByKey (Invoke-Section -Name 'ScheduledTasks' -ScriptBlock { Get-ScheduledTasksSection })
+$scheduledTasks = Invoke-ParallelSection -Name 'ScheduledTasks' -SequentialBlock { Sort-ByKey (Invoke-Section -Name 'ScheduledTasks' -ScriptBlock { Get-ScheduledTasksSection }) } -ScriptPath $PSCommandPath
 
 Write-Info '  - Registry autoruns'
 $registryAutoruns = Sort-ByKey (Invoke-Section -Name 'RegistryAutoruns' -ScriptBlock { Get-RegistryAutorunsSection })
@@ -1251,7 +1314,7 @@ Write-Info '  - Processes'
 $processes = Sort-ByKey (Invoke-Section -Name 'Processes' -ScriptBlock { Get-ProcessesSection })
 
 Write-Info '  - Network connections'
-$connections = Sort-ByKey (Invoke-Section -Name 'Connections' -ScriptBlock { Get-ConnectionsSection })
+$connections = Invoke-ParallelSection -Name 'Connections' -SequentialBlock { Sort-ByKey (Invoke-Section -Name 'Connections' -ScriptBlock { Get-ConnectionsSection }) } -ScriptPath $PSCommandPath
 
 Write-Info '  - Installed programs'
 $installedPrograms = Sort-ByKey (Invoke-Section -Name 'InstalledPrograms' -ScriptBlock { Get-InstalledProgramsSection })
@@ -1260,7 +1323,7 @@ Write-Info '  - Local accounts'
 $localAccounts = Sort-ByKey (Invoke-Section -Name 'LocalAccounts' -ScriptBlock { Get-LocalAccountsSection })
 
 Write-Info '  - Firewall rules'
-$firewallRules = Sort-ByKey (Invoke-Section -Name 'FirewallRules' -ScriptBlock { Get-FirewallRulesSection })
+$firewallRules = Invoke-ParallelSection -Name 'FirewallRules' -SequentialBlock { Sort-ByKey (Invoke-Section -Name 'FirewallRules' -ScriptBlock { Get-FirewallRulesSection }) } -ScriptPath $PSCommandPath
 
 Write-Info '  - WMI persistence'
 $wmiPersistence = Sort-ByKey (Invoke-Section -Name 'WmiPersistence' -ScriptBlock { Get-WmiPersistenceSection })

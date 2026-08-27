@@ -38,14 +38,6 @@ param(
     # Path to Get-ToolPack.ps1 (default: tools\ next to this script)
     [string]$ToolPackPath,
 
-    # Pre-staged answers for non-interactive runs (selftest/CI).
-    # TechName/ClientName prompt interactively when empty. IncidentDate is
-    # never prompted: it defaults to the computer's current date
-    # (owner decision 2026-08-26); pass -IncidentDate only to override.
-    [string]$TechName = '',
-    [string]$ClientName = '',
-    [string]$IncidentDate = '',
-
     # Internal: run the built-in selftest (safe on any OS, mutates nothing)
     [switch]$SelfTest
 )
@@ -272,22 +264,6 @@ function Test-ToolPack {
     return $true
 }
 
-function Invoke-PromptTechInfo {
-    # Prompts for tech name / client unless supplied via params. The incident
-    # date is NOT prompted: it defaults to the computer's current date
-    # (owner decision 2026-08-26); pass -IncidentDate to override. It remains
-    # the anchor for the recent-files window (Stage 1).
-    if (-not $TechName)   { $script:TechAnswer   = (Read-Host 'Technician name') }
-    else                  { $script:TechAnswer   = $TechName }
-    if (-not $ClientName) { $script:ClientAnswer = (Read-Host 'Client / ticket name') }
-    else                  { $script:ClientAnswer = $ClientName }
-    if (-not $IncidentDate) {
-        $script:IncidentAnswer = (Get-Date).ToString('yyyy-MM-dd')
-    } else {
-        $script:IncidentAnswer = $IncidentDate
-    }
-}
-
 # ---------------------------------------------------------------------
 # Selftest: exercises pure logic only, mutates nothing, works on Linux CI.
 # ---------------------------------------------------------------------
@@ -412,11 +388,8 @@ $masterLog = Join-Path $workDir 'master.log'
 Write-Stage ("Working directory: {0}" -f $workDir)
 Write-Stage ("Master log:        {0}" -f $masterLog)
 
-# --- 5. Tech / client / incident date ---
-Invoke-PromptTechInfo
-"Technician: $($script:TechAnswer)"       | Out-File $masterLog -Append -Encoding ascii
-"Client:     $($script:ClientAnswer)"     | Out-File $masterLog -Append -Encoding ascii
-"Incident:   $($script:IncidentAnswer)"   | Out-File $masterLog -Append -Encoding ascii
+# --- 5. Master log header (technician/client/incident tags removed per
+# ---    owner directive 2026-08-27: no prompts, no tags, just run + log) ---
 "OS:         $osCaption"                  | Out-File $masterLog -Append -Encoding ascii
 
 # --- 6. Restore point + hive export (optional) ---
@@ -464,10 +437,10 @@ Write-Host ''
 if ($script:PreflightOk) {
     Write-Host 'PREFLIGHT COMPLETE.' -ForegroundColor Green
     "PREFLIGHT COMPLETE $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File $masterLog -Append -Encoding ascii
-    # Machine-readable handoff for the orchestrator (stdout JSON on one line)
+    # Machine-readable handoff for the orchestrator (stdout JSON on one line).
+    # Technician/client/incident tags removed per owner directive 2026-08-27.
     @{ Stage = 0; Status = 'Complete'; WorkingDirectory = $workDir;
-       MasterLog = $masterLog; Technician = $script:TechAnswer;
-       Client = $script:ClientAnswer; IncidentDate = $script:IncidentAnswer;
+       MasterLog = $masterLog;
        RestorePointSkipped = [bool]$skipRestore } | ConvertTo-Json -Compress
     exit 0
 } else {

@@ -1033,3 +1033,42 @@ exists, quarantine destination, -NoLeftoverSweep, no Remove-Item anywhere).
 NOT proven on Windows: live ESET leftover sweep on a real machine (folder
 locks, actual ESET layout, report rendering) - owner live-test per
 docs/09-windows-live-test-matrix.md 6c.
+
+## 15. v1.7.6 - no tech tags/dates + faster snapshots (2026-08-27, main)
+
+Owner: "remove the technician tags and dates and what not I dont need that
+step" + "remind me what the before and after snapshots do/show and can you
+speed them up or are they limited by windows".
+
+Tags removed:
+- preflight.ps1: Invoke-PromptTechInfo (technician/client Read-Host prompts)
+  deleted; -TechName/-ClientName/-IncidentDate params gone; master-log
+  technician/client/incident lines gone; handoff JSON carries only
+  Stage/Status/WorkingDirectory/MasterLog/RestorePointSkipped.
+- sc-cleanup.ps1: Prompt-IfMissing + its calls gone; -TechName/-ClientName
+  params gone; Stage-0 result, Stage-3 plan.json and the final summary no
+  longer carry TechName/ClientName. IncidentDate stays as a never-prompted
+  internal anchor (defaults to today) for the snapshot recent-files window.
+- Invoke-ReviewAndRemove.ps1 plan.json: TechName/ClientName/IncidentDate
+  removed; ComputerName kept. docs/plan-schema-example.json + 02-architecture
+  updated. Grep confirms zero remaining references.
+
+Snapshot speedup (collect-snapshot.ps1):
+- The 3 slowest independent collectors (ScheduledTasks, FirewallRules,
+  Connections - all CIM/API-bound) now run in Start-Job background jobs by
+  default; results merge back; ANY job failure falls back to the sequential
+  in-process path. -NoParallel disables. New -Section mode emits one section
+  as JSON for the jobs.
+- Get-NetFirewallRule filtered server-side (Direction/Action/Enabled) instead
+  of enumerating all rules then filtering.
+- RecentFiles already budgeted (120s / 40k dirs / depth 6; instant when
+  window=0).
+
+PROVEN on Linux: fake-section harness (parallel success -> merged FAKE row;
+broken job -> SEQ fallback; -NoParallel -> sequential), and the real script
+end-to-end with parallel ON (rc=0, 18 sections, 16 graceful section errors on
+the Windows-only collectors). Full CI suite green.
+
+NOT proven on Windows: real parallel wall-clock gain and per-section
+correctness on a live machine (job spawn overhead, CIM behavior) - owner
+live-test per docs/09-windows-live-test-matrix.md.

@@ -2,15 +2,14 @@
   "_comment": [
     "Plan file schema consumed by remove-screenconnect.ps1 (Stage 4).",
     "Produced by Stage 3 (technician review gate) from Stage 2 findings.json.",
+    "Technician/client/incident tags were removed per owner directive 2026-08-27.",
     "remove-screenconnect.ps1 is DRY-RUN by default; pass -Execute to act.",
     "OWNER POLICY: only ScreenConnect instances may appear here. AnyDesk/",
     "TeamViewer/RustDesk/all other products are detect/report-only and must",
     "NOT be listed in ScreenConnectInstances or anywhere removal acts."
   ],
   "GeneratedUtc": "yyyy-MM-dd HH:mm:ss",
-  "TechName": "Jane Tech",
-  "ClientName": "Client Inc",
-  "IncidentDate": "yyyy-MM-dd",
+  "ComputerName": "HOSTNAME",
   "Decision": "ALL_REMOVE",
   "SourceFindings": "C:\\RIT-SCC\\<HOST>-<timestamp>\\detect\\findings.json",
   "ScreenConnectInstances": [

@@ -3,6 +3,12 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.6] - 2026-08-27
+Technician tags/dates removed + snapshot collection sped up (owner directives: "remove the technician tags and dates and what not I dont need that step"; "can you speed them up").
+- **No more tech/client prompts or tags.** `preflight.ps1` no longer prompts for technician name / client (prompt function, params, master-log lines and the handoff's Technician/Client/IncidentDate fields removed). `sc-cleanup.ps1` no longer prompts for tech/client (Prompt-IfMissing removed; `-TechName`/`-ClientName` params gone; plan + summary no longer carry the tags). Plan files (`Invoke-ReviewAndRemove.ps1` and Stage 3) now carry only GeneratedUtc/ComputerName/Decision/SourceFindings/RemovalConfirmed/Instances. `-IncidentDate` remains a never-prompted internal anchor for the snapshot's recent-files window (defaults to today).
+- **Snapshot speedup.** The three slowest, independent collectors (ScheduledTasks, FirewallRules, Connections) now run in background jobs in parallel by default and are merged back; any job failure falls back to the sequential in-process path (`-NoParallel` disables). Firewall rules are filtered server-side (`-Direction Inbound -Action Allow -Enabled True`) instead of enumerating every rule. RecentFiles already had its own walk budget (120s / 40k dirs / depth 6) and returns instantly when the window is 0.
+- Verified on Linux: parallel-success (fake section script -> merged rows), parallel-failure -> sequential fallback, -NoParallel, and the real script end-to-end (rc=0, all 18 sections, graceful section errors). Full CI suite green.
+
 ## [1.7.5] - 2026-08-27
 AV-uninstall leftover sweep - some vendor uninstallers "don't seem to work" (observed live with ESET) and leave the product's Start Menu shortcuts + install folder behind. `Invoke-AVUninstaller.ps1` now sweeps leftovers after every uninstall attempt and MOVES them (never deletes - quarantine-never-delete stays the invariant) to `<LogDir>\av-uninstall-quarantine`, logging every move.
 - New `Clear-ProductLeftovers`: keyword-matched sweep of the Start Menu (all-users + current user), the install folder (registry InstallLocation, else a `*<kw>*` folder under Program Files / (x86)), and the matching temp folder (covers ESET Online Scanner's runtime dir). Targets are moved to a timestamped quarantine dir; locked items are recorded as MoveFailed, not silently skipped.
