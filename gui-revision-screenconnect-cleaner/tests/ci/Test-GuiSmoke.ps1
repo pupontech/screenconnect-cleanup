@@ -57,11 +57,14 @@ foreach ($exe in @(@{ Name = 'powershell.exe'; Args = @('-NoProfile', '-Executio
     $stdout = Join-Path $tmp ($exe.Name + '.out')
     $stderr = Join-Path $tmp ($exe.Name + '.err')
     $args = @($exe.Args) + @('-File', ('"' + $directPs1 + '"'), ('-SrcRoot "' + $srcRoot + '"'))
-    $p = Start-Process -FilePath $exe.Name -ArgumentList $args -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    # NOTE: no -NoNewWindow here. pwsh->powershell.exe handle inheritance
+    # breaks -RedirectStandardOutput under -NoNewWindow (empty capture);
+    # a separate (hidden) console captures reliably.
+    $p = Start-Process -FilePath $exe.Name -ArgumentList $args -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     $out = ''
-    if (Test-Path -LiteralPath $stdout) { $out = Get-Content -LiteralPath $stdout -Raw }
+    if (Test-Path -LiteralPath $stdout) { $out = [string](Get-Content -LiteralPath $stdout -Raw) }
     $err = ''
-    if (Test-Path -LiteralPath $stderr) { $err = Get-Content -LiteralPath $stderr -Raw }
+    if (Test-Path -LiteralPath $stderr) { $err = [string](Get-Content -LiteralPath $stderr -Raw) }
     Write-Host "  exit=$($p.ExitCode) out=$($out.Trim()) err=$($err.Trim())"
     if ($p.ExitCode -ne 0 -or $out -notmatch 'GUI_SMOKE_OK') {
         $failures += ("Direct GUI check failed under {0}: exit={1} out={2} err={3}" -f $exe.Name, $p.ExitCode, $out.Trim(), $err.Trim())
