@@ -50,7 +50,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Constants & script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.4.0'
+$ScriptVersion = '1.5.0'
 $ScriptName = 'sc-cleanup.ps1'
 $PipelineStages = @(
     @{ Id = 0; Name = 'Preflight';            SkipFlag = '' },
@@ -487,23 +487,23 @@ $stage0Result = Invoke-Stage -StageId 0 -StageName 'Preflight' -SkipFlag '' -Sta
         Add-Content -Path $MasterLogPath -Value "Tool pack: Get-ToolPack.ps1 NOT FOUND" -Encoding UTF8
     }
 
-    # AV scanner staging (KVRT / ESET Online Scanner / Malwarebytes) - separate
-    # from the Sysinternals pack above. Never fatal: Stage 5 already treats a
-    # missing scanner binary as NotInstalled, not a pipeline failure.
+    # AV scanner staging (Malwarebytes only) - separate from the Sysinternals
+    # pack above. Never fatal: Stage 5 already treats a missing scanner binary
+    # as NotInstalled, not a pipeline failure.
     $getAvTools = Join-Path $ScriptRoot 'tools/Get-AVTools.ps1'
     if ((Test-Path $getAvTools) -and -not $offline) {
-        Write-StageLog "Staging AV scanners (KVRT / ESET Online Scanner / Malwarebytes)..."
+        Write-StageLog "Staging Malwarebytes scanner..."
         $global:LASTEXITCODE = 0
         & $getAvTools -ToolDir (Join-Path $ToolDir 'AV') -Quiet
         if ($LASTEXITCODE -ne 0) {
-            Write-StageLog "AV scanner staging: some tools unavailable (see above)." 'Warn'
+            Write-StageLog "Malwarebytes staging: tool unavailable (see above)." 'Warn'
         } else {
-            Write-StageLog "AV scanner staging: done."
+            Write-StageLog "Malwarebytes staging: done."
         }
     } elseif ($offline) {
-        Write-StageLog "Offline mode: skipping AV scanner staging (KVRT needs internet; ESET/Malwarebytes need the internal share)."
+        Write-StageLog "Offline mode: skipping Malwarebytes staging (needs internet)."
     } else {
-        Write-StageLog "tools/Get-AVTools.ps1 not found - skipping AV scanner staging." 'Warn'
+        Write-StageLog "tools/Get-AVTools.ps1 not found - skipping Malwarebytes staging." 'Warn'
     }
 
     return @{
@@ -720,41 +720,32 @@ $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 'sa' -St
         return @{ Skipped = $true }
     }
 
+    # Stage 5 = Malwarebytes only (owner decision 2026-08-26: drop KVRT, ESET,
+    # AdwCleaner, Defender). Per the owner's policy the scanner is launched as
+    # a normal GUI for the TECHNICIAN to drive - the pipeline never invents
+    # silent-scan flags. Invoke-GUIScanner starts MBSetup/MBAM and blocks until
+    # the technician closes it, so the after-snapshot + report are taken AFTER
+    # any GUI-driven cleaning has finished.
     $scannerResults = @()
-    $scannersDir = Join-Path $ScriptRoot 'scanners'
     $logsDir = Join-Path $WorkDir 'logs'
     $null = New-Item -ItemType Directory -Path $logsDir -Force
 
-    # All adapters share one contract: they never throw, and report
-    # Status='NotInstalled' when the scanner is absent, so an unconditional
-    # loop is safe. Microsoft Defender was removed from the line-up on
-    # 2026-08-26 (owner decision). GUI-only scanners (ESET Online Scanner,
-    # Malwarebytes) are launched for attended use by Invoke-GUIScanner.ps1
-    # after this stage; MSERT has no adapter yet.
-    $scannerAdapters = @(
-        @{ Script = 'Invoke-KVRTScan.ps1';     Name = 'KVRT';     LogSubDir = 'KVRT' },
-        @{ Script = 'Invoke-ESETScan.ps1';     Name = 'ESET';     LogSubDir = 'ESET' }
-    )
-
-    foreach ($adapter in $scannerAdapters) {
-        $adapterScript = Join-Path $scannersDir $adapter.Script
-        if (-not (Test-Path $adapterScript)) {
-            Write-StageLog ($adapter.Script + " not found at " + $adapterScript) 'Warn'
-            continue
+    $guiScanner = Join-Path $ScriptRoot 'Invoke-GUIScanner.ps1'
+    if (Test-Path $guiScanner) {
+        Write-StageLog "Launching Malwarebytes for attended scan (technician drives the GUI)..."
+        try {
+            $mbResult = & $guiScanner -Scanner Malwarebytes -TimeoutMinutes 240 -ErrorAction Stop
+            if ($mbResult) {
+                try { $scannerResults += ($mbResult | ConvertFrom-Json -ErrorAction Stop) } catch { }
+            }
+            Write-StageLog "Malwarebytes session recorded." 'Cyan'
+        } catch {
+            Write-StageLog ("Malwarebytes launch failed: " + $_.Exception.Message) 'Warn'
+            $scannerResults += @{ Tool = 'MBSetup.exe'; Status = 'LaunchFailed'; Error = $_.Exception.Message }
         }
-
-        Write-StageLog ("Running " + $adapter.Name + " scan...")
-        $adapterLogDir = Join-Path $logsDir $adapter.LogSubDir
-        $null = New-Item -ItemType Directory -Path $adapterLogDir -Force
-
-        $adapterResult = & $adapterScript -LogDir $adapterLogDir -TimeoutMinutes 120 -Verbose:$VerboseLog
-        $scannerResults += $adapterResult
-        $line = $adapter.Name + ": Status=" + $adapterResult.Status + "  Detections=" + $adapterResult.DetectionCount + "  Duration=" + $adapterResult.DurationSeconds + "s"
-        Write-StageLog $line
-        Add-Content -Path $MasterLogPath -Value $line -Encoding UTF8
+    } else {
+        Write-StageLog "Invoke-GUIScanner.ps1 not found - Malwarebytes cannot be launched." 'Warn'
     }
-
-    Write-StageLog "Additional scanners (MSERT) not yet implemented. GUI-only tools (ESET Online Scanner, Malwarebytes) can be run attended via Invoke-GUIScanner.ps1."
 
     $scannerSummary = Join-Path $WorkDir 'scanner_results.json'
     $scannerResults | ConvertTo-Json -Depth 5 | Set-Content -Path $scannerSummary -Encoding UTF8 -NoNewline

@@ -10,7 +10,7 @@ Everything in this repo was built and verified off-box (Linux + PowerShell 7);
 
 Copy these, and only these:
 
-```
+``` 
 sc-cleanup.ps1                  <- top-level runner; you only ever launch this
 preflight.ps1
 collect-snapshot.ps1
@@ -19,11 +19,9 @@ detect-remote-access.ps1
 Run-DetectRemoteAccess.bat
 targets.json
 New-InvestigationReport.ps1
-scanners\
-  Invoke-KVRTScan.ps1
-  Invoke-ESETScan.ps1
+Invoke-GUIScanner.ps1          <- launches Malwarebytes GUI and waits (Stage 5)
 tools\Get-ToolPack.ps1          <- downloader ONLY; do NOT copy tools\* exes
-tools\Get-AVTools.ps1           <- KVRT / ESET Online Scanner / Malwarebytes stager
+tools\Get-AVTools.ps1           <- Malwarebytes (MBSetup.exe) stager
 docs\                           <- optional but recommended (work log + roadmap)
 DEPLOY.md                       <- this file
 ```
@@ -42,27 +40,22 @@ A prebuilt zip with exactly the layout above is produced by
 > pack: download + hash-verify from the official Microsoft
 > `download.sysinternals.com` endpoint, against `tools/manifest.json`) and
 > `tools/Get-AVTools.ps1` (AV scanner staging) are both present.
-> `Get-AVTools.ps1` downloads KVRT fresh from Kaspersky's official URL and
-> Malwarebytes MB5 (MBSetup.exe) from Malwarebytes' official URL, and ESET
-> Online Scanner from ESET's official download host (all three endpoints
-> verified live 2026-08-26); an internal share (`-InternalShare`, default
-> `\\10.0.0.5\Public\Tools`) remains an optional offline fallback that
-> never overwrites a fresh official download. AdwCleaner was removed from
-> staging by owner decision (2026-08-26). Never hand-copy the Sysinternals
-> binaries into
+> `Get-AVTools.ps1` downloads **Malwarebytes MB5 (MBSetup.exe)** from Malwarebytes'
+> official URL (verified live 2026-08-26); KVRT, ESET, AdwCleaner and Defender
+> were all removed from scope by owner decision (2026-08-26), leaving Malwarebytes
+> as the sole staged scanner. Never hand-copy the Sysinternals binaries into
 > `tools\` - `Get-ToolPack.ps1` is the only thing that fetches and hash-verifies
 > them.
 
-**Running the GUI-only scanners (ESET Online Scanner, Malwarebytes):**
+**Running the scanner (Malwarebytes only):**
 
 ```
-powershell -ExecutionPolicy Bypass -File .\Invoke-GUIScanner.ps1 -Scanner ESET
 powershell -ExecutionPolicy Bypass -File .\Invoke-GUIScanner.ps1 -Scanner Malwarebytes
 ```
 
-Each launches the scanner's normal GUI and WAITS until you close it (4-hour
-safety cap; on timeout the process is left running). Run them after Stage 5
-so Stage 7's after-snapshot captures whatever the GUI scans cleaned.
+It launches the Malwarebytes installer/GUI and WAITS until you close it (4-hour
+safety cap; on timeout the process is left running). Run it during Stage 5 so
+Stage 7's after-snapshot captures whatever the GUI scan cleaned.
 
 ## 2. First run on a Windows machine
 

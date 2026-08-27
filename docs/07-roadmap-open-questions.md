@@ -22,7 +22,7 @@ box" tool has value on day one.
 | **M1** | Stages 0, 1, 8 — snapshot + report, read-only | Usable immediately, cannot hurt anything | **Built & Linux-verified** (Windows content paths still unverified — see below) |
 | **M2** | Stage 2 — ScreenConnect + RAT detection | `-sr` detect-only mode | **PoC DONE** (verified on a real machine) |
 | **M3** | Stage 7 — after-snapshot + diff | Catches resurrections | **Built & Linux-verified** |
-| **M4** | Stage 5 — scanner adapters (Defender first) | Optional, skippable | **Built** — KVRT, ESET adapters (Linux WhatIf-verified; real exec unverified). MSERT not built; Defender + AdwCleaner removed from scope 2026-08-26 (owner). |
+| **M4** | Stage 5 — scanner (Malwarebytes) | Optional, skippable | **Built** — Malwarebytes launched attended via Invoke-GUIScanner.ps1 (GUI launch-and-wait). KVRT/ESET adapters + AdwCleaner + Defender removed from scope 2026-08-26 (owner); Stage 5 now stages/launches Malwarebytes only. |
 | **M5** | Stages 3, 4 — approval gate + removal + quarantine + reboot resume | **Only after heavy VM-snapshot testing** | **LIVE-VALIDATED (field, 2026-08-26):** full removal executed with ExecuteMode=true on INPIRON4SANITY2 via the manual-surgery path (quarantine + service delete + uninstall-key cleanup), manifest truthful after the UninstallFallback fix. 3010 reboot-resume path still needs a lab run |
 | **M6** | Stage 6 — targeted Procmon | Respawn investigation | **Not started** (opt-in stub only) |
 | **M7** | Top-level `sc-cleanup.ps1` stage runner tying it together | The actual product | **Built & Linux end-to-end verified** (detect-remote-access stubbed on Linux) |
@@ -51,8 +51,7 @@ Windows** — see the "Needs a Windows VM" column below.
 | `preflight.ps1` | 17 KB | OK | clean | **Yes** — `-SelfTest` rc=0, full run fail+succeed paths | Checkpoint-Computer, reg.exe hive save, elevation, Win32_OperatingSystem, C:\ free space |
 | `diff-snapshots.ps1` | 9.8 KB | OK | clean | **Yes** — real pair CLEAN rc=0; synthetic resurrection test rc=1; pytest suite | Windows-only section content (same caveat as Stage 1) |
 | `sc-cleanup.ps1` | 33 KB | OK | clean | **Yes** — full pipeline end-to-end rc=0; flags `-sa/-sr/-np/-offline/-WhatIf` functional | real Stage 2/4/5/6 Windows execution |
-| `scanners/Invoke-KVRTScan.ps1` | — | OK | clean | **Yes** — WhatIf, NotInstalled shape | real `kvrt.exe` exec, exit codes, report parsing |
-| `scanners/Invoke-ESETScan.ps1` | — | OK | clean | **Yes** — WhatIf, NotInstalled shape | real `ecls.exe` exec, exit codes, log parsing |
+| `Invoke-GUIScanner.ps1` | — | OK | clean | **Yes** — launches Malwarebytes GUI, blocks until closed (4h cap) | real `MBSetup.exe` attended run |
 
 **Action for whoever continues:** the read-only half of the pipeline (Stages 0,1,2,7,8
 + the orchestrator) is built and proven on Linux to the extent a non-Windows host allows.

@@ -44,7 +44,7 @@ echo  ============================================================
 echo.
 
 rem ---- Step 1: tool pack -----------------------------------------------------
-echo  STEP 1 of 9: Build/verify tool pack (Sysinternals + KVRT/ESET/Malwarebytes)
+echo  STEP 1 of 9: Build/verify tool pack (Sysinternals + Malwarebytes)
 set /p GO="    Run now? [Y/n] "
 if /i not "%GO%"=="n" (
     if exist "%~dp0tools\Get-ToolPack.ps1" (
@@ -130,46 +130,11 @@ set GO=
 
 rem ---- Step 6: antivirus scans - each one is its own step ---------------------
 echo.
-echo  STEP 6 of 9: Antivirus scans. Each scanner is asked for separately and
-echo    runs to completion before the next one starts.
+echo  STEP 6 of 9: Antivirus scans. (Malwarebytes only, per owner decision.)
+echo    Runs to completion before the next step starts.
 
 echo.
-echo    -- 6a: Kaspersky Virus Removal Tool (KVRT), interactive GUI --
-set /p GO="    Launch KVRT? [Y/n] "
-if /i not "%GO%"=="n" (
-    if exist "%~dp0tools\AV\KVRT.exe" (
-        echo        Launching KVRT. Accept the EULA, run the scan, and review
-        echo        anything it finds in the KVRT window.
-        start "" "%~dp0tools\AV\KVRT.exe"
-        echo.
-        echo        This script is WAITING for you. Do not press anything here
-        echo        until the KVRT scan has finished.
-        pause
-    ) else (
-        echo        [WARN] tools\AV\KVRT.exe not staged - run step 1 first.
-    )
-)
-set GO=
-
-echo.
-echo    -- 6b: ESET Online Scanner (interactive GUI) --
-set /p GO="    Launch ESET Online Scanner? [y/N] "
-if /i "%GO%"=="y" (
-    if exist "%~dp0tools\AV\esetonlinescanner.exe" (
-        echo        Launching ESET Online Scanner. Run the scan in its window.
-        start "" "%~dp0tools\AV\esetonlinescanner.exe"
-        echo.
-        echo        This script is WAITING for you. Do not press anything here
-        echo        until the ESET scan has finished.
-        pause
-    ) else (
-        echo        [WARN] tools\AV\esetonlinescanner.exe not staged - run step 1 first.
-    )
-)
-set GO=
-
-echo.
-echo    -- 6c: Malwarebytes (interactive GUI) --
+echo    -- 6a: Malwarebytes (interactive GUI) --
 set /p GO="    Launch Malwarebytes installer/scanner? [y/N] "
 if /i "%GO%"=="y" (
     if exist "%~dp0tools\AV\MBSetup.exe" (

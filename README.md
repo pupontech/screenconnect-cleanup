@@ -52,9 +52,9 @@ Instance: a1b2c3d4e5f6a7b8
 Two further consequences worth stating plainly:
 
 - **No malware scanner will flag ScreenConnect.** It is legitimate signed software, so
-  KVRT / ESET walk straight past it. The scanners are here for the *commodity
-  malware that came along with it*, which is a separate job. Neither half substitutes
-  for the other.
+  the commodity scanners walk straight past it. Malwarebytes (the sole staged
+  scanner) is here for the *commodity malware that came along with it*, which is a
+  separate job. Neither half substitutes for the other.
 - **Removing the agent is not the same as remediating the incident.** If someone had an
   interactive session, the exposure is credentials, browser session cookies, saved
   passwords, mail rules, and new accounts. The report ends with a credential-reset
@@ -71,7 +71,7 @@ Two further consequences worth stating plainly:
 | **2 — Detection** | **ScreenConnect instance identity + other RAT presence** | **PoC works** (verified on a real machine) |
 | 3 — Technician review | approval gate — nothing is removed without it | **built** (interactive y/n prompt; no GUI) |
 | 4 — Remove / quarantine | stop, uninstall, quarantine, clean persistence | **built, dry-run default** (never run on live Windows; skipped by default via `-sr`) |
-| 5 — Scanners | KVRT, ESET (MSERT not built; Defender + AdwCleaner removed 2026-08-26) | **built** (2 adapters, Linux-verified WhatIf; real exec unverified) |
+| 5 — Scanners | Malwarebytes (GUI, attended) | **built** (Invoke-GUIScanner launches MBSetup; KVRT/ESET/AdwCleaner/Defender removed 2026-08-26 by owner; real exec unverified) |
 | 6 — Procmon (targeted) | "something reinstalled it — what?" | **not started** (opt-in stub only) |
 | 7 — Snapshot (after) + diff | prove it is gone, catch resurrections | **built** (Linux-verified) |
 | 8 — Report | HTML + JSON + tech summary | **built** (XSS + empty-case verified) |
@@ -259,5 +259,5 @@ The second must print `0`.
   same technician workflow; use those for crash/boot/connectivity questions.
 - `.claude/skills/windows-system-diagnostics` — reference for which command, event ID or
   threshold to reach for on a given Windows symptom.
-- `.claude/skills/eset-activation-troubleshooting` — relevant when the ESET scanner leg
-  will not activate.
+- `.claude/skills/malwarebytes-troubleshooting` — relevant when the Malwarebytes
+  scanner leg will not activate.

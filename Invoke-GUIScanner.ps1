@@ -3,10 +3,10 @@
   technician to finish with it.
 
   WHY THIS EXISTS
-    ESET Online Scanner and Malwarebytes (consumer MBAM) have no documented
-    unattended/silent scan switches (verified 2026-08-26 against vendor docs;
-    see docs/05-tools-scanners-tron.md). The pipeline therefore cannot drive
-    them - but the technician can. This script does only three things:
+    Malwarebytes (consumer MBAM) has no documented unattended/silent scan
+    switches (verified 2026-08-26 against vendor docs; see docs/05-tools-scanners-tron.md).
+    The pipeline therefore cannot drive it - but the technician can. This script
+    does only three things:
 
       1. find or take an explicit path to the scanner EXE,
       2. launch it as a NORMAL VISIBLE GUI process,
@@ -18,7 +18,6 @@
   report are taken AFTER any GUI-driven cleaning has actually finished.
 
   USAGE
-    .\Invoke-GUIScanner.ps1 -Scanner ESET            # esetonlinescanner.exe
     .\Invoke-GUIScanner.ps1 -Scanner Malwarebytes    # MBSetup.exe
     .\Invoke-GUIScanner.ps1 -ToolPath C:\path\tool.exe   # any explicit EXE
 
@@ -43,7 +42,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('ESET', 'Malwarebytes')]
+    [ValidateSet('Malwarebytes')]
     [string]$Scanner,
     [string]$ToolPath,              # explicit path wins over -Scanner lookup
     [int]$TimeoutMinutes = 240      # cap for an abandoned GUI window
@@ -66,7 +65,6 @@ function Get-HomeDir {
 }
 
 $knownTools = @{
-    'ESET'         = 'esetonlinescanner.exe'
     'Malwarebytes' = 'MBSetup.exe'
 }
 
@@ -103,7 +101,7 @@ if ($ToolPath) {
         exit 3
     }
 } else {
-    Write-Error "Specify -Scanner ESET|Malwarebytes or -ToolPath <exe>."
+    Write-Error "Specify -Scanner Malwarebytes or -ToolPath <exe>."
     exit 3
 }
 

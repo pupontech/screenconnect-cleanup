@@ -3,9 +3,17 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.5.0] - 2026-08-26
+Malwarebytes-only scanner line-up (owner decision: "i just want malwarebytes").
+- `Get-AVTools.ps1` stages **only MBSetup.exe** (Malwarebytes MB5); KVRT, ESET,
+  AdwCleaner, and Defender removed from staging.
+- Stage 5 launches Malwarebytes attended via `Invoke-GUIScanner.ps1` (GUI
+  launch-and-wait); the KVRT/ESET adapter scripts were deleted.
+- `START-HERE.bat` Step 6 now offers Malwarebytes only.
+
 ## [1.4.0] - 2026-08-26
 Final cleanup of the scanner line-up (owner decisions, 2026-08-26).
-- Remove Microsoft Defender from Stage 5 (line-up is now KVRT + ESET only).
+- Remove Microsoft Defender from Stage 5 (line-up was KVRT + ESET).
 - Incident date auto-defaults to the computer's clock; no technician prompt.
 - (Includes 1.3.0 AdwCleaner removal + 1.2.0 manifest-truth fix + 1.1.0 GUI
   scanners + 1.0.0 crash fixes.)

@@ -2,9 +2,9 @@
 # Build a clean deploy bundle: scripts + docs only, no Sysinternals binaries.
 # Output: <parent>/screenconnect-cleanup-deploy.zip
 #
-# tools/Get-ToolPack.ps1 (Sysinternals) and tools/Get-AVTools.ps1 (AV scanners)
-# are bundled when present; both are committed to the repo. Get-AVTools stages
-# KVRT / ESET Online Scanner / Malwarebytes MB5 from official vendor URLs.
+# tools/Get-ToolPack.ps1 (Sysinternals) and tools/Get-AVTools.ps1 (Malwarebytes
+# stager) are bundled when present; both are committed to the repo. Get-AVTools
+# stages only MBSetup.exe (Malwarebytes MB5) from Malwarebytes' official URL.
 set -euo pipefail
 SRC="$(cd "$(dirname "$0")" && pwd)"
 OUT_BASE="$(dirname "$SRC")/screenconnect-cleanup"
@@ -14,7 +14,7 @@ OUT="${OUT_BASE}-v${VER}.zip"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 D="$STAGE/screenconnect-cleanup"
-mkdir -p "$D/scanners" "$D/tools"
+mkdir -p "$D/tools"
 
 # Core scripts + docs (all required). Fail loudly if any are missing.
 for f in sc-cleanup.ps1 preflight.ps1 collect-snapshot.ps1 diff-snapshots.ps1 \
@@ -24,7 +24,6 @@ for f in sc-cleanup.ps1 preflight.ps1 collect-snapshot.ps1 diff-snapshots.ps1 \
   cp "$SRC/$f" "$D/"
 done
 [ -f "$SRC/README.md" ] && cp "$SRC/README.md" "$D/"
-cp "$SRC"/scanners/*.ps1 "$D/scanners/"
 [ -d "$SRC/docs" ] && cp -r "$SRC/docs" "$D/docs"
 
 # Optional tool-pack downloader/stager scripts. Copy when present, warn when not.
