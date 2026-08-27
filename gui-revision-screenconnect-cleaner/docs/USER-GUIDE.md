@@ -2,7 +2,7 @@
 
 Technician-facing documentation for launching, using, and troubleshooting the GUI application.
 
-> **Read this first — safety model.**
+> **Read this first -- safety model.**
 > ScreenConnect Cleaner is **DETECT-ONLY / read-only by default**. No system
 > state changes unless you explicitly opt in to remediation. In the GUI, every
 > finding defaults to **KEEP** and you must approve a plan (`plan.json`) at the
@@ -22,7 +22,7 @@ Technician-facing documentation for launching, using, and troubleshooting the GU
 
 > **Platform note.** The GUI is a **WPF (XAML)** application and requires a
 > Windows desktop session (PowerShell 5.1 on Windows). On non-Windows hosts
-> only **headless mode** (`-Headless`) is available — the same stage state
+> only **headless mode** (`-Headless`) is available -- the same stage state
 > machine runs without the WPF shell.
 
 ---
@@ -121,7 +121,7 @@ when invoked with `-Execute`. In the GUI this happens when you approve the plan
 and pass the double-confirmation prompt (the run is created with the execute
 context set by your approval). In headless mode, real removal only occurs when
 you supply a plan via `-PlanPath` that was produced through an explicit review
-(`New-SccPlan`) — the pipeline never auto-approves.
+(`New-SccPlan`) -- the pipeline never auto-approves.
 
 **With real execution enabled (GUI double-confirm, or headless with an
 approved plan):**
