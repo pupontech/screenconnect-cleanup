@@ -3,6 +3,11 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.2] - 2026-08-27
+Bundle the General Fix tool ("Tikun HaKlali", `tools/GeneralFix/תיקון הכללי v10.bat`) in the deploy zip so it never needs to be staged from a network share at runtime.
+- The script is fully self-contained - verified: no UNC paths, no `net use`, no URLs; it only uses built-in Windows commands and its embedded VBS/WSF jobs. It was never bundled because `tools/.gitignore` whitelists only the downloader scripts; it now ships under `tools/GeneralFix/` with the original filename and byte layout (CRLF + cp1255) preserved.
+- `make-deploy-bundle.sh` copies `tools/GeneralFix/` when present; `tools/.gitignore` un-ignores it. `Test-HouseRules.ps1` already excludes `tools/GeneralFix\` from the pure-ASCII code scan (intentional cp1255 third-party batch that self-sets `chcp 1255`).
+
 ## [1.7.1] - 2026-08-27
 Two live-run fixes, both observed on DESTROYERLTC202 (2026-08-27).
 - `remove-screenconnect.ps1` computes the manifest summary counts **before**

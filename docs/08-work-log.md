@@ -913,3 +913,26 @@ KVRT/ESET GUIs (needs the owner's live test), and the full CI matrix on
 windows-2022/2025 (push will run it). The GUI-revision branch
 (gui-revision-screenconnect-cleaner) still carries the pre-fix report ordering
 and must pick up the same fix before it merges.
+
+## 11. v1.7.2 - bundle the General Fix tool (2026-08-27, main)
+
+Owner report: "tikun" (the General Fix / Tikun HaKlali tool) was not working on
+a live machine; suspected NAS dependency. Verified: `tools/GeneralFix/תיקון
+הכללי v10.bat` is fully self-contained - no UNC paths, no `net use`, no URLs;
+it only uses built-in Windows commands plus embedded VBS/WSF jobs. The real
+cause: `tools/.gitignore` (a `*` whitelist) excluded the folder, so it never
+shipped in any deploy zip and had to be staged manually (e.g. from the dead
+\\10.0.0.5 share).
+
+Fix: un-ignored `tools/GeneralFix/` in git, `make-deploy-bundle.sh` now copies
+the folder into the bundle (warning if absent), bat ships with original name
+and byte layout (CRLF + cp1255, self-sets `chcp 1255`). PROVEN on Linux: zip
+contains the bat byte-identical to the worktree (427 CRLF intact, cp1255
+decodes), VERSION 1.7.2, both v1.7.1 fixes still present in the zip.
+Test-HouseRules.ps1 already excluded `tools/GeneralFix\` from the pure-ASCII
+scan (intentional third-party cp1255 batch).
+
+NOT proven on Windows: the bat's behavior on a live machine (batch/VBS hybrid
+semantics cannot be validated from Linux; owner live-tests). If it still fails
+after shipping in the zip, suspect copy mangling (line endings/name) or the
+embedded WSF self-elevation being blocked.

@@ -3,3 +3,5 @@
 !manifest.json
 !Get-ToolPack.ps1
 !Get-AVTools.ps1
+!GeneralFix/
+!GeneralFix/*

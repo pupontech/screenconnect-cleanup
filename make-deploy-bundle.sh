@@ -41,6 +41,17 @@ if [ -n "$missing_tools" ]; then
   echo "          staging the tool pack / AV scanners on a client machine)" >&2
 fi
 
+# GeneralFix - the owner's "Tikun HaKlali" general-fix batch tool - ships in
+# the bundle. It is fully self-contained (no UNC paths, net use, or URLs; it
+# only uses built-in Windows commands plus its embedded VBS/WSF jobs) and must
+# NOT be staged from a network share at runtime. Copied as-is so the original
+# name and byte layout (CRLF + cp1255) are preserved.
+if [ -d "$SRC/tools/GeneralFix" ]; then
+  cp -r "$SRC/tools/GeneralFix" "$D/tools/"
+else
+  echo "WARNING: tools/GeneralFix missing, not bundled (owner's tikun tool)" >&2
+fi
+
 # Stamp the version into the bundle so it is self-identifying even if the
 # file is renamed. Do NOT overwrite an existing VERSION (keep the repo one).
 if [ ! -f "$D/VERSION" ]; then
