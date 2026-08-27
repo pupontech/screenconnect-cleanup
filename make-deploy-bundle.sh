@@ -2,9 +2,9 @@
 # Build a clean deploy bundle: scripts + docs only, no Sysinternals binaries.
 # Output: <parent>/screenconnect-cleanup-deploy.zip
 #
-# tools/Get-ToolPack.ps1 (Sysinternals) and tools/Get-AVTools.ps1 (Malwarebytes
+# tools/Get-ToolPack.ps1 (Sysinternals) and tools/Get-AVTools.ps1 (AV scanner
 # stager) are bundled when present; both are committed to the repo. Get-AVTools
-# stages only MBSetup.exe (Malwarebytes MB5) from Malwarebytes' official URL.
+# stages KVRT.exe, esetonlinescanner.exe and MBSetup.exe from official vendor URLs.
 set -euo pipefail
 SRC="$(cd "$(dirname "$0")" && pwd)"
 OUT_BASE="$(dirname "$SRC")/screenconnect-cleanup"

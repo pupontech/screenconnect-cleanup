@@ -1,13 +1,14 @@
-<# 
-  Test-ScannerProcessContracts.ps1 - CI contract for the Malwarebytes-only
-  scanner line-up (owner decision 2026-08-26: drop KVRT, ESET, AdwCleaner,
-  Defender). Replaces the old adapter-process test, which verified the
-  now-deleted KVRT/ESET adapters.
+<#
+  Test-ScannerProcessContracts.ps1 - CI contract for the attended GUI scanner
+  line-up (owner update 2026-08-27: restore KVRT and ESET as official downloads;
+  keep Malwarebytes; AdwCleaner and Defender remain removed).
 
   Contracts checked:
-    1. Get-AVTools.ps1 stages exactly MBSetup.exe (no KVRT/ESET/AdwCleaner).
-    2. Invoke-GUIScanner.ps1 accepts only -Scanner Malwarebytes.
-    3. Invoke-GUIScanner.ps1 rejects -Scanner ESET/KVRT/AdwCleaner.
+    1. Get-AVTools.ps1 stages KVRT.exe, esetonlinescanner.exe and MBSetup.exe.
+    2. Get-AVTools.ps1 uses official vendor download URLs, not stale shares as
+       the primary source.
+    3. Invoke-GUIScanner.ps1 accepts KVRT, ESET and Malwarebytes, and still
+       excludes AdwCleaner/Defender.
 
   PS 5.1 compatible. Pure ASCII, no BOM.
 #>
@@ -24,29 +25,42 @@ $guiScanner = Join-Path $repoRoot 'Invoke-GUIScanner.ps1'
 $script:failures = @()
 function Add-Failure { param([string]$Message) $script:failures += $Message }
 
-# --- Contract 1: stager stages only Malwarebytes -------------------------
-Write-Host 'Section 1: Get-AVTools.ps1 stages Malwarebytes only'
+# --- Contract 1: stager stages KVRT / ESET / Malwarebytes -----------------
+Write-Host 'Section 1: Get-AVTools.ps1 stages KVRT / ESET / Malwarebytes'
 if (-not (Test-Path -LiteralPath $avTools)) { Add-Failure 'Get-AVTools.ps1 missing.' }
 else {
     $text = [System.IO.File]::ReadAllText($avTools)
-    if ($text -match 'KVRT\.exe')            { Add-Failure 'Get-AVTools.ps1 still references KVRT.exe.' }
-    if ($text -match 'esetonlinescanner\.exe'){ Add-Failure 'Get-AVTools.ps1 still references esetonlinescanner.exe.' }
-    if ($text -match 'adwcleaner\.exe')      { Add-Failure 'Get-AVTools.ps1 still references adwcleaner.exe.' }
-    if ($text -notmatch 'MBSetup\.exe')       { Add-Failure 'Get-AVTools.ps1 does not stage MBSetup.exe.' }
+    if ($text -notmatch 'KVRT\.exe') { Add-Failure 'Get-AVTools.ps1 does not stage KVRT.exe.' }
+    if ($text -notmatch 'esetonlinescanner\.exe') { Add-Failure 'Get-AVTools.ps1 does not stage esetonlinescanner.exe.' }
+    if ($text -notmatch 'MBSetup\.exe') { Add-Failure 'Get-AVTools.ps1 does not stage MBSetup.exe.' }
+    if ($text -match 'adwcleaner\.exe') { Add-Failure 'Get-AVTools.ps1 still references adwcleaner.exe.' }
+    if ($text -notmatch 'devbuilds\.s\.kaspersky-labs\.com/kvrt/latest/full/KVRT\.exe') {
+        Add-Failure 'Get-AVTools.ps1 missing the official KVRT download URL.'
+    }
+    if ($text -notmatch 'download\.eset\.com/com/eset/tools/online_scanner/latest/esetonlinescanner\.exe') {
+        Add-Failure 'Get-AVTools.ps1 missing the official ESET Online Scanner download URL.'
+    }
     if ($text -notmatch 'downloads\.malwarebytes\.com/file/mb-windows') {
         Add-Failure 'Get-AVTools.ps1 missing the Malwarebytes download URL.'
     }
-    if ($failures.Count -eq 0) { Write-Host '  OK Get-AVTools.ps1: Malwarebytes only.' }
+    if ($script:failures.Count -eq 0) { Write-Host '  OK Get-AVTools.ps1: KVRT/ESET/Malwarebytes official downloads.' }
 }
 
-# --- Contracts 2/3: GUI scanner accepts only Malwarebytes ---------------
+# --- Contract 2: GUI scanner accepts exactly the attended scanner set -------
 Write-Host 'Section 2: Invoke-GUIScanner.ps1 scanner set'
 if (-not (Test-Path -LiteralPath $guiScanner)) { Add-Failure 'Invoke-GUIScanner.ps1 missing.' }
 else {
     $text = [System.IO.File]::ReadAllText($guiScanner)
-    if ($text -notmatch "ValidateSet\('Malwarebytes'\)") {
-        Add-Failure 'Invoke-GUIScanner.ps1 ValidateSet does not restrict to Malwarebytes only.'
-    } else { Write-Host '  OK Invoke-GUIScanner.ps1: ValidateSet = Malwarebytes only.' }
+    if ($text -notmatch "ValidateSet\('KVRT', 'ESET', 'Malwarebytes'\)") {
+        Add-Failure 'Invoke-GUIScanner.ps1 ValidateSet is not KVRT/ESET/Malwarebytes.'
+    }
+    if ($text -match "'AdwCleaner'|adwcleaner\.exe") {
+        Add-Failure 'Invoke-GUIScanner.ps1 still references AdwCleaner.'
+    }
+    if ($text -notmatch "'KVRT'\s*=\s*'KVRT\.exe'") { Add-Failure 'Invoke-GUIScanner.ps1 missing KVRT tool mapping.' }
+    if ($text -notmatch "'ESET'\s*=\s*'esetonlinescanner\.exe'") { Add-Failure 'Invoke-GUIScanner.ps1 missing ESET tool mapping.' }
+    if ($text -notmatch "'Malwarebytes'\s*=\s*'MBSetup\.exe'") { Add-Failure 'Invoke-GUIScanner.ps1 missing Malwarebytes tool mapping.' }
+    if ($script:failures.Count -eq 0) { Write-Host '  OK Invoke-GUIScanner.ps1: ValidateSet = KVRT/ESET/Malwarebytes.' }
 }
 
 # --- Contract 3: AV-uninstaller is attended-only (never silent) ----------
@@ -57,14 +71,10 @@ else {
     $text = [System.IO.File]::ReadAllText($avUninstaller)
     if ($text -notmatch 'function Get-InstalledAv') { Add-Failure 'Invoke-AVUninstaller.ps1 missing Get-InstalledAv discovery.' }
     if ($text -notmatch 'function Open-Uninstaller') { Add-Failure 'Invoke-AVUninstaller.ps1 missing Open-Uninstaller launch+wait.' }
-    # Must NOT drive a silent/unattended uninstall. The only command we build is
-    # "cmd /c <uninstallstring>" (Open-Uninstaller) - verify no silent flag token
-    # appears in actual code (ignore comment prose, which mentions /quiet by way
-    # of telling the technician we do NOT use it).
     $codeOnly = $text -replace '(?s)<#.*?#>', '' -replace '(?m)^\s*#.*$', ''
     if ($codeOnly -match '/quiet|/silent|/passive|/S\s|/S"') { Add-Failure 'Invoke-AVUninstaller.ps1 appears to pass silent uninstall flags - must be attended only.' }
     if ($text -match 'Windows Defender' -and $text -notmatch 'osExclude') { Add-Failure 'Invoke-AVUninstaller.ps1 does not exclude Windows Defender from removal.' }
-    if ($failures.Count -eq 0) { Write-Host '  OK Invoke-AVUninstaller.ps1: attended-only, Defender excluded.' }
+    if ($script:failures.Count -eq 0) { Write-Host '  OK Invoke-AVUninstaller.ps1: attended-only, Defender excluded.' }
 }
 
 # --- Fail/exit ----------------------------------------------------------
@@ -72,5 +82,5 @@ if ($script:failures.Count -gt 0) {
     foreach ($f in $script:failures) { Write-Host ("FAIL: " + $f) -ForegroundColor Red }
     exit 1
 }
-Write-Host 'Scanner contracts OK: Malwarebytes-only line-up verified.' -ForegroundColor Green
+Write-Host 'Scanner contracts OK: KVRT/ESET/Malwarebytes attended line-up verified.' -ForegroundColor Green
 exit 0

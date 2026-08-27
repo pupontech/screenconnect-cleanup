@@ -62,7 +62,7 @@ Two corollaries that shape the whole design:
 | **2 Detection** | **ScreenConnect instance identity + other RAT presence** | **BUILT + TESTED** |
 | 3 Technician review | approval gate — nothing removed without it | built (interactive y/n, was "not started") |
 | 4 Remove / quarantine | stop, uninstall, quarantine, clean persistence | **built, dry-run default** (was "not started") |
-| 5 Scanners | KVRT, ESET, MSERT (Defender + AdwCleaner removed 2026-08-26) | built (2 adapters; MSERT not built) |
+| 5 Scanners | KVRT, ESET Online Scanner, Malwarebytes (all attended GUI; Defender + AdwCleaner removed) | built |
 | 6 Procmon (targeted) | "something reinstalled it — what?" | stub (opt-in only) |
 | 7 Snapshot (after) + diff | prove removal, catch resurrections | built |
 | 8 Report | HTML + JSON + tech summary | built (XSS + empty-case verified) |
@@ -90,9 +90,10 @@ screenconnect-cleanup/
   remove-screenconnect.ps1        Stage 4 removal/containment. BUILT, dry-run default.
   diff-snapshots.ps1              Stage 7 before/after diff. BUILT.
   New-InvestigationReport.ps1     Stage 8 report. BUILT (XSS + empty-case verified).
-  scanners/                       Stage 5 adapters (KVRT/ESET). BUILT.
+  scanners are staged by `tools/Get-AVTools.ps1` and launched through
+  `Invoke-GUIScanner.ps1` (KVRT/ESET/Malwarebytes; all attended GUI).
   targets.json                    What to look for. 15 products, toggleable.
-  START-HERE.bat                  Guided 9-step launcher (Step 7 Tikun = opt-in destructive).
+  START-HERE.bat                  Guided 10-step launcher (Step 7 Tikun = opt-in destructive).
   RUN-REMOVAL-TEST.bat            Lab-only -ExecuteRemoval test launcher.
   Run-DetectRemoteAccess.bat      Double-click detection launcher.
   make-deploy-bundle.sh           Builds the field-deploy zip.

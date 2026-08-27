@@ -3,6 +3,19 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.0] - 2026-08-27
+Restore KVRT and ESET as staged scanner downloads.
+- `tools/Get-AVTools.ps1` again downloads **KVRT.exe** from Kaspersky's official
+  current KVRT URL and **esetonlinescanner.exe** from ESET's official Online
+  Scanner URL, while keeping **MBSetup.exe** from Malwarebytes' official URL.
+- `Invoke-GUIScanner.ps1` now accepts `-Scanner KVRT`, `-Scanner ESET`, and
+  `-Scanner Malwarebytes`; all three are visible attended launches with no
+  invented silent scan/clean flags. AdwCleaner and Defender remain removed.
+- Stage 5 in `sc-cleanup.ps1` records all three attended scanner sessions and
+  treats missing tools as nonfatal scanner results.
+- `START-HERE.bat`, docs and CI scanner contracts updated for the restored
+  KVRT/ESET/Malwarebytes line-up.
+
 ## [1.6.1] - 2026-08-27
 Human-readable removal report.
 - `remove-screenconnect.ps1` now also writes **`removal-report.txt`** (plain

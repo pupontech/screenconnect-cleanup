@@ -3,10 +3,8 @@
   technician to finish with it.
 
   WHY THIS EXISTS
-    Malwarebytes (consumer MBAM) has no documented unattended/silent scan
-    switches (verified 2026-08-26 against vendor docs; see docs/05-tools-scanners-tron.md).
-    The pipeline therefore cannot drive it - but the technician can. This script
-    does only three things:
+    KVRT, ESET Online Scanner and Malwarebytes are being used here as attended
+    technician tools. This script does only three things:
 
       1. find or take an explicit path to the scanner EXE,
       2. launch it as a NORMAL VISIBLE GUI process,
@@ -14,10 +12,12 @@
 
   It never passes scan/clean switches, never parses the scanner's output, and
   never fabricates a result: the technician drives the GUI; this script just
-  keeps the pipeline paused while they do, so Stage 7/8 snapshots and the
-  report are taken AFTER any GUI-driven cleaning has actually finished.
+  keeps the pipeline paused while they do, so later snapshots and the report are
+  taken AFTER any GUI-driven cleaning has actually finished.
 
   USAGE
+    .\Invoke-GUIScanner.ps1 -Scanner KVRT            # KVRT.exe
+    .\Invoke-GUIScanner.ps1 -Scanner ESET            # esetonlinescanner.exe
     .\Invoke-GUIScanner.ps1 -Scanner Malwarebytes    # MBSetup.exe
     .\Invoke-GUIScanner.ps1 -ToolPath C:\path\tool.exe   # any explicit EXE
 
@@ -28,12 +28,10 @@
     staging is tools\Get-AVTools.ps1's job.
 
   NOTES
-    - Use inside sc-cleanup.ps1 runs: run it between stages from another
-      console, or via RUN-REMOVAL-TEST.bat-style wrappers; it writes a small
-      JSON result to stdout for the master log.
+    - Use inside sc-cleanup.ps1 runs: the runner launches each scanner and waits.
     - -TimeoutMinutes caps a forgotten/abandoned GUI (default 240 = 4 h).
-      On timeout the process is LEFT RUNNING (killing it mid-scan could
-      abort a cleanup mid-write); the script reports Timeout and exits 4.
+      On timeout the process is LEFT RUNNING (killing it mid-scan could abort a
+      cleanup mid-write); the script reports Timeout and exits 4.
     - Exit codes: 0 technician closed the tool; 2 tool failed to start;
       3 tool not found; 4 timeout reached (process still running).
 
@@ -42,7 +40,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('Malwarebytes')]
+    [ValidateSet('KVRT', 'ESET', 'Malwarebytes')]
     [string]$Scanner,
     [string]$ToolPath,              # explicit path wins over -Scanner lookup
     [int]$TimeoutMinutes = 240      # cap for an abandoned GUI window
@@ -65,6 +63,8 @@ function Get-HomeDir {
 }
 
 $knownTools = @{
+    'KVRT'         = 'KVRT.exe'
+    'ESET'         = 'esetonlinescanner.exe'
     'Malwarebytes' = 'MBSetup.exe'
 }
 
@@ -101,7 +101,7 @@ if ($ToolPath) {
         exit 3
     }
 } else {
-    Write-Error "Specify -Scanner Malwarebytes or -ToolPath <exe>."
+    Write-Error "Specify -Scanner KVRT|ESET|Malwarebytes or -ToolPath <exe>."
     exit 3
 }
 

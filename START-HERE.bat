@@ -44,7 +44,7 @@ echo  ============================================================
 echo.
 
 rem ---- Step 1: tool pack -----------------------------------------------------
-echo  STEP 1 of 9: Build/verify tool pack (Sysinternals + Malwarebytes)
+echo  STEP 1 of 10: Build/verify tool pack (Sysinternals + KVRT/ESET/Malwarebytes)
 set /p GO="    Run now? [Y/n] "
 if /i not "%GO%"=="n" (
     if exist "%~dp0tools\Get-ToolPack.ps1" (
@@ -63,7 +63,7 @@ set GO=
 
 rem ---- Step 2: preflight -----------------------------------------------------
 echo.
-echo  STEP 2 of 9: Preflight checks (admin, UAC, disk, working dir; restore point)
+echo  STEP 2 of 10: Preflight checks (admin, UAC, disk, working dir; restore point)
 set /p GO="    Run now? [Y/n] "
 if /i not "%GO%"=="n" (
     powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0preflight.ps1"
@@ -72,7 +72,7 @@ set GO=
 
 rem ---- Step 3: BEFORE snapshot -----------------------------------------------
 echo.
-echo  STEP 3 of 9: BEFORE snapshot (baseline; step 8 diffs against this)
+echo  STEP 3 of 10: BEFORE snapshot (baseline; step 8 diffs against this)
 set /p GO="    Run now? [Y/n] "
 if /i not "%GO%"=="n" (
     powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect-snapshot.ps1" -Label before -OutFile "%~dp0snapshot_before.json" -Quiet
@@ -86,7 +86,7 @@ set GO=
 
 rem ---- Step 4: detection -----------------------------------------------------
 echo.
-echo  STEP 4 of 9: Remote-access detection (read-only)
+echo  STEP 4 of 10: Remote-access detection (read-only)
 set /p GO="    Full scan of all known targets? [y/N] "
 if /i "%GO%"=="y" (
     powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0detect-remote-access.ps1" -All -NoPause
@@ -110,7 +110,7 @@ if not defined FINDINGS_JSON (
 
 rem ---- Step 5: REVIEW + REMOVE ------------------------------------------------
 echo.
-echo  STEP 5 of 9: Review detected ScreenConnect and REMOVE the approved ones
+echo  STEP 5 of 10: Review detected ScreenConnect and REMOVE the approved ones
 echo    This is the step that removes ScreenConnect. KEEP is the default - type y
 echo    for each instance you actually want to remove. Files are quarantined,
 echo    never deleted, and every action is recorded in removal-manifest.json.
@@ -130,22 +130,42 @@ set GO=
 
 rem ---- Step 6: antivirus scans - each one is its own step ---------------------
 echo.
-echo  STEP 6 of 9: Antivirus scans. (Malwarebytes only, per owner decision.)
-echo    Runs to completion before the next step starts.
+echo  STEP 6 of 10: Antivirus scans (KVRT, ESET Online Scanner, Malwarebytes)
+echo    Each scanner is a visible attended GUI. Drive the UI, then return here.
 
 echo.
-echo    -- 6a: Malwarebytes (interactive GUI) --
+echo    -- 6a: KVRT (interactive GUI) --
+set /p GO="    Launch KVRT? [y/N] "
+if /i "%GO%"=="y" (
+    if exist "%~dp0tools\AV\KVRT.exe" (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-GUIScanner.ps1" -Scanner KVRT
+    ) else (
+        echo        [WARN] tools\AV\KVRT.exe not staged - run step 1 first.
+    )
+)
+set GO=
+
+echo.
+echo    -- 6b: ESET Online Scanner (interactive GUI) --
+set /p GO="    Launch ESET Online Scanner? [y/N] "
+if /i "%GO%"=="y" (
+    if exist "%~dp0tools\AV\esetonlinescanner.exe" (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-GUIScanner.ps1" -Scanner ESET
+    ) else (
+        echo        [WARN] tools\AV\esetonlinescanner.exe not staged - run step 1 first.
+    )
+)
+set GO=
+
+echo.
+echo    -- 6c: Malwarebytes (interactive GUI) --
 set /p GO="    Launch Malwarebytes installer/scanner? [y/N] "
 if /i "%GO%"=="y" (
     if exist "%~dp0tools\AV\MBSetup.exe" (
-        echo        Launching Malwarebytes. Install if prompted, then run a scan.
-        echo        NOTE: MBSetup.exe is an installer - it exits long before
-        echo        the scan finishes, which is why this waits for you
-        echo        rather than for the process.
-        start "" "%~dp0tools\AV\MBSetup.exe"
-        echo.
-        echo        This script is WAITING for you. Do not press anything here
+        echo        Malwarebytes may install and then hand off to its own UI.
+        echo        If the installer closes before the scan finishes, wait here
         echo        until the Malwarebytes scan has finished.
+        start "" "%~dp0tools\AV\MBSetup.exe"
         pause
     ) else (
         echo        [WARN] tools\AV\MBSetup.exe not staged - run step 1 first.

@@ -81,18 +81,19 @@ hold", "Scanner-process contracts OK", removal runtime contracts OK, integration
     it reaches detect-remote-access.ps1 after elevation (SCC_ARGS env forwarding).
 4.4 Confirm fltmc privilege probe and default KEEP prompt semantics are unchanged.
 
-## 5. Scanner adapters (Stage 5, ESET/KVRT)
+## 5. Scanner downloads and attended GUI launches (Stage 5, KVRT/ESET/Malwarebytes)
 
-5.1 WhatIf: both adapters with -WhatIf must return Skipped without spawning a
-    process.
-5.2 Chatty scanner (synthetic stand-in binary flooding stdout+stderr): no deadlock,
-    output captured, exit-code mapping unchanged (ESET 0/50/10/100,
-    KVRT report-file detection).
-5.3 Hung scanner (synthetic stand-in that never exits): TimeoutMinutes respected,
-    Status=Timeout with the new error string, process terminated, no orphan.
-5.4 Real scanners (optional, lab only): run each adapter with a short
-    TimeoutMinutes against the actual tool once installed, and confirm the
-    StreamDrainTimedOut diagnostic never appears on a healthy scan.
+5.1 `tools\Get-AVTools.ps1` on a lab network: downloads/stages KVRT.exe,
+    esetonlinescanner.exe, and MBSetup.exe from the official vendor URLs.
+5.2 `Invoke-GUIScanner.ps1 -Scanner KVRT`: launches a visible GUI and waits
+    until the technician closes it; no scan/clean flags are passed.
+5.3 `Invoke-GUIScanner.ps1 -Scanner ESET`: launches a visible GUI and waits
+    until the technician closes it; no scan/clean flags are passed.
+5.4 `Invoke-GUIScanner.ps1 -Scanner Malwarebytes`: launches the installer/GUI;
+    if the bootstrapper exits before the scan finishes, the guided `START-HERE`
+    runner still tells the technician to wait manually before continuing.
+5.5 Missing-tool paths: each scanner exits 3 with the clear "stage it first"
+    message; the top-level Stage 5 records NotInstalled and continues.
 
 ## 6. Windows-integration strict-mode checks (Test-WindowsIntegration.ps1)
 

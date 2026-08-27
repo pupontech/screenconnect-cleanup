@@ -19,10 +19,10 @@ detect-remote-access.ps1
 Run-DetectRemoteAccess.bat
 targets.json
 New-InvestigationReport.ps1
-Invoke-GUIScanner.ps1          <- launches Malwarebytes GUI and waits (Stage 5)
+Invoke-GUIScanner.ps1          <- launches KVRT/ESET/Malwarebytes GUI scanners and waits (Stage 5)
 Invoke-AVUninstaller.ps1        <- opens installed-AV uninstallers, attended (Stage 6)
 tools\Get-ToolPack.ps1          <- downloader ONLY; do NOT copy tools\* exes
-tools\Get-AVTools.ps1           <- Malwarebytes (MBSetup.exe) stager
+tools\Get-AVTools.ps1           <- KVRT/ESET/Malwarebytes stager
 docs\                           <- optional but recommended (work log + roadmap)
 DEPLOY.md                       <- this file
 ```
@@ -37,26 +37,26 @@ Do **not** copy:
 A prebuilt zip with exactly the layout above is produced by
 `make-deploy-bundle.sh` (Linux side) as `../screenconnect-cleanup-deploy.zip`.
 
-> **Note (2026-08-25, updated 2026-08-26):** `tools/Get-ToolPack.ps1` (Sysinternals
+> **Note (2026-08-25, updated 2026-08-27):** `tools/Get-ToolPack.ps1` (Sysinternals
 > pack: download + hash-verify from the official Microsoft
 > `download.sysinternals.com` endpoint, against `tools/manifest.json`) and
 > `tools/Get-AVTools.ps1` (AV scanner staging) are both present.
-> `Get-AVTools.ps1` downloads **Malwarebytes MB5 (MBSetup.exe)** from Malwarebytes'
-> official URL (verified live 2026-08-26); KVRT, ESET, AdwCleaner and Defender
-> were all removed from scope by owner decision (2026-08-26), leaving Malwarebytes
-> as the sole staged scanner. Never hand-copy the Sysinternals binaries into
-> `tools\` - `Get-ToolPack.ps1` is the only thing that fetches and hash-verifies
-> them.
+> `Get-AVTools.ps1` downloads **KVRT.exe**, **esetonlinescanner.exe**, and
+> **MBSetup.exe** from official vendor URLs. AdwCleaner and Defender remain
+> removed from scope. Never hand-copy the Sysinternals binaries into `tools\` -
+> `Get-ToolPack.ps1` is the only thing that fetches and hash-verifies them.
 
-**Running the scanner (Malwarebytes only):**
+**Running the scanners (attended GUI):**
 
 ```
+powershell -ExecutionPolicy Bypass -File .\Invoke-GUIScanner.ps1 -Scanner KVRT
+powershell -ExecutionPolicy Bypass -File .\Invoke-GUIScanner.ps1 -Scanner ESET
 powershell -ExecutionPolicy Bypass -File .\Invoke-GUIScanner.ps1 -Scanner Malwarebytes
 ```
 
-It launches the Malwarebytes installer/GUI and WAITS until you close it (4-hour
-safety cap; on timeout the process is left running). Run it during Stage 5 so
-Stage 7's after-snapshot captures whatever the GUI scan cleaned.
+Each launch is visible and waits until you close it (4-hour safety cap; on
+timeout the process is left running). Run them during Stage 5 so the later
+after-snapshot captures whatever the GUI scans cleaned.
 
 ## 2. First run on a Windows machine
 
