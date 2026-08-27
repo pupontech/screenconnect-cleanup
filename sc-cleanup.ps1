@@ -8,9 +8,10 @@
   Stage 3: Technician review gate
   Stage 4: Contain + Remove  [skip: -sr; explicit confirmation required]
   Stage 5: Scanners  [skip: -sa]
-  Stage 6: Procmon  [opt-in: -procmon]
-  Stage 7: Snapshot (AFTER) + Diff
-  Stage 8: Report
+  Stage 6: Uninstall installed AV  [skip: -avu; attended GUI]
+  Stage 7: Procmon  [opt-in: -procmon]
+  Stage 8: Snapshot (AFTER) + Diff
+  Stage 9: Report
 
   Nothing destructive is reachable without explicit flags and the review gate.
   -ExecuteRemoval pre-authorizes Stage 4 for lab/VM testing: every detected
@@ -24,6 +25,7 @@ param(
     # Skip flags
     [switch]$sa,          # skip antivirus scanners (Stage 5)
     [switch]$sr,          # skip removal (detect + report only)
+    [switch]$avu,         # skip uninstalling installed AV (Stage 6)
     [switch]$np,          # no restore point
     [switch]$offline,     # use pre-staged tool pack, do not download
     [switch]$procmon,     # force Procmon stage
@@ -50,7 +52,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Constants & script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.0.0'
+$ScriptVersion = '1.6.1'
 $ScriptName = 'sc-cleanup.ps1'
 $PipelineStages = @(
     @{ Id = 0; Name = 'Preflight';            SkipFlag = '' },
@@ -59,9 +61,10 @@ $PipelineStages = @(
     @{ Id = 3; Name = 'Review Gate';          SkipFlag = '' },
     @{ Id = 4; Name = 'Contain + Remove';     SkipFlag = 'sr' },
     @{ Id = 5; Name = 'Scanners';             SkipFlag = 'sa' },
-    @{ Id = 6; Name = 'Procmon';              SkipFlag = 'procmon' },
-    @{ Id = 7; Name = 'Snapshot (After)+Diff'; SkipFlag = '' },
-    @{ Id = 8; Name = 'Report';               SkipFlag = '' }
+    @{ Id = 6; Name = 'Uninstall installed AV'; SkipFlag = 'avu' },
+    @{ Id = 7; Name = 'Procmon';              SkipFlag = 'procmon' },
+    @{ Id = 8; Name = 'Snapshot (After)+Diff'; SkipFlag = '' },
+    @{ Id = 9; Name = 'Report';               SkipFlag = '' }
 )
 
 # -----------------------------------------------------------------------------
@@ -487,23 +490,23 @@ $stage0Result = Invoke-Stage -StageId 0 -StageName 'Preflight' -SkipFlag '' -Sta
         Add-Content -Path $MasterLogPath -Value "Tool pack: Get-ToolPack.ps1 NOT FOUND" -Encoding UTF8
     }
 
-    # AV scanner staging (KVRT / ESET Online Scanner / Malwarebytes) - separate
-    # from the Sysinternals pack above. Never fatal: Stage 5 already treats a
-    # missing scanner binary as NotInstalled, not a pipeline failure.
+    # AV scanner staging (Malwarebytes only) - separate from the Sysinternals
+    # pack above. Never fatal: Stage 5 already treats a missing scanner binary
+    # as NotInstalled, not a pipeline failure.
     $getAvTools = Join-Path $ScriptRoot 'tools/Get-AVTools.ps1'
     if ((Test-Path $getAvTools) -and -not $offline) {
-        Write-StageLog "Staging AV scanners (KVRT / ESET Online Scanner / Malwarebytes)..."
+        Write-StageLog "Staging Malwarebytes scanner..."
         $global:LASTEXITCODE = 0
         & $getAvTools -ToolDir (Join-Path $ToolDir 'AV') -Quiet
         if ($LASTEXITCODE -ne 0) {
-            Write-StageLog "AV scanner staging: some tools unavailable (see above)." 'Warn'
+            Write-StageLog "Malwarebytes staging: tool unavailable (see above)." 'Warn'
         } else {
-            Write-StageLog "AV scanner staging: done."
+            Write-StageLog "Malwarebytes staging: done."
         }
     } elseif ($offline) {
-        Write-StageLog "Offline mode: skipping AV scanner staging (KVRT needs internet; ESET/Malwarebytes need the internal share)."
+        Write-StageLog "Offline mode: skipping Malwarebytes staging (needs internet)."
     } else {
-        Write-StageLog "tools/Get-AVTools.ps1 not found - skipping AV scanner staging." 'Warn'
+        Write-StageLog "tools/Get-AVTools.ps1 not found - skipping Malwarebytes staging." 'Warn'
     }
 
     return @{
@@ -708,7 +711,8 @@ $stage4Result = Invoke-Stage -StageId 4 -StageName 'Contain + Remove' -SkipFlag 
         Add-Content -Path $MasterLogPath -Value ("Removal: INCOMPLETE (exit " + $rc + ")") -Encoding UTF8
     }
     $manifest = Join-Path $WorkDir 'removal-manifest.json'
-    return @{ Skipped = $false; ManifestPath = $manifest; Executed = ($confirmed -and -not $sr); ExitCode = $rc }
+    $reportTxt = Join-Path $WorkDir 'removal-report.txt'
+    return @{ Skipped = $false; ManifestPath = $manifest; ReportTxtPath = $reportTxt; Executed = ($confirmed -and -not $sr); ExitCode = $rc }
 }
 
 # -----------------------------------------------------------------------------
@@ -720,41 +724,32 @@ $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 'sa' -St
         return @{ Skipped = $true }
     }
 
+    # Stage 5 = Malwarebytes only (owner decision 2026-08-26: drop KVRT, ESET,
+    # AdwCleaner, Defender). Per the owner's policy the scanner is launched as
+    # a normal GUI for the TECHNICIAN to drive - the pipeline never invents
+    # silent-scan flags. Invoke-GUIScanner starts MBSetup/MBAM and blocks until
+    # the technician closes it, so the after-snapshot + report are taken AFTER
+    # any GUI-driven cleaning has finished.
     $scannerResults = @()
-    $scannersDir = Join-Path $ScriptRoot 'scanners'
     $logsDir = Join-Path $WorkDir 'logs'
     $null = New-Item -ItemType Directory -Path $logsDir -Force
 
-    # All three adapters share one contract: they never throw, and report
-    # Status='NotInstalled' when the scanner is absent, so an unconditional
-    # loop is safe. GUI-only scanners (ESET Online Scanner, Malwarebytes,
-    # AdwCleaner) are launched for attended use by Invoke-GUIScanner.ps1
-    # after this stage; MSERT has no adapter yet.
-    $scannerAdapters = @(
-        @{ Script = 'Invoke-DefenderScan.ps1'; Name = 'Defender'; LogSubDir = 'MicrosoftDefender' },
-        @{ Script = 'Invoke-KVRTScan.ps1';     Name = 'KVRT';     LogSubDir = 'KVRT' },
-        @{ Script = 'Invoke-ESETScan.ps1';     Name = 'ESET';     LogSubDir = 'ESET' }
-    )
-
-    foreach ($adapter in $scannerAdapters) {
-        $adapterScript = Join-Path $scannersDir $adapter.Script
-        if (-not (Test-Path $adapterScript)) {
-            Write-StageLog ($adapter.Script + " not found at " + $adapterScript) 'Warn'
-            continue
+    $guiScanner = Join-Path $ScriptRoot 'Invoke-GUIScanner.ps1'
+    if (Test-Path $guiScanner) {
+        Write-StageLog "Launching Malwarebytes for attended scan (technician drives the GUI)..."
+        try {
+            $mbResult = & $guiScanner -Scanner Malwarebytes -TimeoutMinutes 240 -ErrorAction Stop
+            if ($mbResult) {
+                try { $scannerResults += ($mbResult | ConvertFrom-Json -ErrorAction Stop) } catch { }
+            }
+            Write-StageLog "Malwarebytes session recorded." 'Cyan'
+        } catch {
+            Write-StageLog ("Malwarebytes launch failed: " + $_.Exception.Message) 'Warn'
+            $scannerResults += @{ Tool = 'MBSetup.exe'; Status = 'LaunchFailed'; Error = $_.Exception.Message }
         }
-
-        Write-StageLog ("Running " + $adapter.Name + " scan...")
-        $adapterLogDir = Join-Path $logsDir $adapter.LogSubDir
-        $null = New-Item -ItemType Directory -Path $adapterLogDir -Force
-
-        $adapterResult = & $adapterScript -LogDir $adapterLogDir -TimeoutMinutes 120 -Verbose:$VerboseLog
-        $scannerResults += $adapterResult
-        $line = $adapter.Name + ": Status=" + $adapterResult.Status + "  Detections=" + $adapterResult.DetectionCount + "  Duration=" + $adapterResult.DurationSeconds + "s"
-        Write-StageLog $line
-        Add-Content -Path $MasterLogPath -Value $line -Encoding UTF8
+    } else {
+        Write-StageLog "Invoke-GUIScanner.ps1 not found - Malwarebytes cannot be launched." 'Warn'
     }
-
-    Write-StageLog "Additional scanners (MSERT) not yet implemented. GUI-only tools (ESET Online Scanner, Malwarebytes, AdwCleaner) can be run attended via Invoke-GUIScanner.ps1."
 
     $scannerSummary = Join-Path $WorkDir 'scanner_results.json'
     $scannerResults | ConvertTo-Json -Depth 5 | Set-Content -Path $scannerSummary -Encoding UTF8 -NoNewline
@@ -764,11 +759,47 @@ $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 'sa' -St
 }
 
 # -----------------------------------------------------------------------------
-# Stage 6: Procmon (opt-in only via -procmon)
+# Stage 6: Uninstall installed third-party AV (opt-in via -avu; attended GUI)
 # -----------------------------------------------------------------------------
-$stage6Result = Invoke-Stage -StageId 6 -StageName 'Procmon' -SkipFlag 'procmon' -StageBlock {
+$stage6Result = Invoke-Stage -StageId 6 -StageName 'Uninstall installed AV' -SkipFlag 'avu' -StageBlock {
+    if ($avu) {
+        Write-StageLog "Stage 6 SKIPPED via -avu (no AV uninstall)"
+        return @{ Skipped = $true }
+    }
+
+    # Attended only: open each detected AV product's uninstaller GUI and wait
+    # for the technician to finish. Never invents silent uninstall flags.
+    $avUninstaller = Join-Path $ScriptRoot 'Invoke-AVUninstaller.ps1'
+    $logsDir = Join-Path $WorkDir 'logs'
+    $null = New-Item -ItemType Directory -Path $logsDir -Force
+
+    if (-not (Test-Path $avUninstaller)) {
+        Write-StageLog ("Invoke-AVUninstaller.ps1 not found at " + $avUninstaller) 'Warn'
+        return @{ Skipped = $false; Error = 'script-not-found' }
+    }
+
+    Write-StageLog "Launching installed-AV uninstallers (attended - technician drives each GUI)..."
+    try {
+        $avJson = & $avUninstaller -LogDir $logsDir -TimeoutMinutes 240 -ErrorAction Stop
+        $avPath = Join-Path $logsDir 'av-uninstall-results.json'
+        if (Test-Path -LiteralPath $avPath) {
+            Write-StageLog ("AV uninstall session recorded: " + $avPath) 'Cyan'
+        } else {
+            Write-StageLog "AV uninstaller produced no results file." 'Warn'
+        }
+        return @{ Skipped = $false; ResultsPath = $avPath; Raw = $avJson }
+    } catch {
+        Write-StageLog ("AV uninstaller launch failed: " + $_.Exception.Message) 'Warn'
+        return @{ Skipped = $false; Error = $_.Exception.Message }
+    }
+}
+
+# -----------------------------------------------------------------------------
+# Stage 7: Procmon (opt-in only via -procmon)
+# -----------------------------------------------------------------------------
+$stage7Result = Invoke-Stage -StageId 7 -StageName 'Procmon' -SkipFlag 'procmon' -StageBlock {
     if (-not $procmon) {
-        Write-StageLog "Stage 6 SKIPPED (not requested via -procmon)"
+        Write-StageLog "Stage 7 SKIPPED (not requested via -procmon)"
         return @{ Skipped = $true; Note = 'Opt-in only' }
     }
 
@@ -784,9 +815,9 @@ $stage6Result = Invoke-Stage -StageId 6 -StageName 'Procmon' -SkipFlag 'procmon'
 }
 
 # -----------------------------------------------------------------------------
-# Stage 7: Snapshot (AFTER) + Diff
+# Stage 8: Snapshot (AFTER) + Diff
 # -----------------------------------------------------------------------------
-$stage7Result = Invoke-Stage -StageId 7 -StageName 'Snapshot (After)+Diff' -SkipFlag '' -StageBlock {
+$stage8Result = Invoke-Stage -StageId 8 -StageName 'Snapshot (After)+Diff' -SkipFlag '' -StageBlock {
     $collectSnapshot = Join-Path $ScriptRoot 'collect-snapshot.ps1'
     if (-not (Test-Path $collectSnapshot)) {
         throw "collect-snapshot.ps1 not found at $collectSnapshot"
@@ -887,9 +918,9 @@ $stage7Result = Invoke-Stage -StageId 7 -StageName 'Snapshot (After)+Diff' -Skip
 }
 
 # -----------------------------------------------------------------------------
-# Stage 8: Report
+# Stage 9: Report
 # -----------------------------------------------------------------------------
-$stage8Result = Invoke-Stage -StageId 8 -StageName 'Report' -SkipFlag '' -StageBlock {
+$stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageBlock {
     $reportScript = Join-Path $ScriptRoot 'New-InvestigationReport.ps1'
     if (-not (Test-Path $reportScript)) {
         throw "New-InvestigationReport.ps1 not found at $reportScript"
@@ -901,8 +932,8 @@ $stage8Result = Invoke-Stage -StageId 8 -StageName 'Report' -SkipFlag '' -StageB
 
     Write-StageLog ("Generating HTML report from " + $findingsJson)
     $repArgs = @('-FindingsJson', $findingsJson, '-OutputPath', $reportHtml)
-    $removalManifest = Join-Path $WorkDir 'removal-manifest.json'
-    if (Test-Path -LiteralPath $removalManifest) { $repArgs += @('-RemovalManifest', $removalManifest) }
+    $avUninstallResults = if ($stage6Result -and $stage6Result.Result -and $stage6Result.Result.ResultsPath) { $stage6Result.Result.ResultsPath } else { $null }
+    if ($avUninstallResults -and (Test-Path -LiteralPath $avUninstallResults)) { $repArgs += @('-AVUninstall', $avUninstallResults) }
     $rc = Invoke-ChildScript -ScriptPath $reportScript -ArgumentList $repArgs -LogTag 'Report'
     if ($rc -ne 0) { throw ("New-InvestigationReport.ps1 exited with code " + $rc) }
     Write-StageLog ("Report generated: " + $reportHtml)
@@ -975,11 +1006,11 @@ Write-StageLog ("Working directory: " + $WorkDir)
 Write-StageLog ("Master log: " + $MasterLogPath)
 $reportHtml = $null
 $resultsJson = $null
-if ($stage8Result -and $stage8Result.ContainsKey('Result') -and $stage8Result.Result -and $stage8Result.Result.ContainsKey('ReportHtml')) {
-    $reportHtml = $stage8Result.Result.ReportHtml
+if ($stage9Result -and $stage9Result.ContainsKey('Result') -and $stage9Result.Result -and $stage9Result.Result.ContainsKey('ReportHtml')) {
+    $reportHtml = $stage9Result.Result.ReportHtml
 }
-if ($stage8Result -and $stage8Result.ContainsKey('Result') -and $stage8Result.Result -and $stage8Result.Result.ContainsKey('ResultsJson')) {
-    $resultsJson = $stage8Result.Result.ResultsJson
+if ($stage9Result -and $stage9Result.ContainsKey('Result') -and $stage9Result.Result -and $stage9Result.Result.ContainsKey('ResultsJson')) {
+    $resultsJson = $stage9Result.Result.ResultsJson
 }
 if ($reportHtml) {
     Write-StageLog ("HTML report: " + $reportHtml)

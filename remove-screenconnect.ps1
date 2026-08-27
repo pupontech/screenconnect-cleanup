@@ -61,7 +61,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.0.0'
+$ScriptVersion = '1.6.1'
 $ScriptName = 'remove-screenconnect.ps1'
 
 # We need the helper in scope before the elevation gate below runs.
@@ -914,7 +914,9 @@ function Run-VendorUninstaller {
     if (-not $UninstallEntry) {
         Write-Log "  No uninstall registry entry provided"
         Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target 'Registry' -Result 'Skipped' -Details 'No uninstall entry'
-        return $false
+        # $null = nothing was attempted (entry already recorded above); the
+        # caller must NOT record a second 'Failed' entry for this.
+        return $null
     }
 
     # StrictMode-safe reads: a real Uninstall key very often has NO
@@ -945,9 +947,11 @@ function Run-VendorUninstaller {
         # but loses UninstallString. Manual surgery (quarantine + service
         # deletion) is the designed fallback and handles it, so recording this
         # as 'Failed' made a successful removal report failure and exit 1.
+        # Return $null (nothing attempted) - the caller must not add a second
+        # 'Failed' entry with an empty Target on top of this truthful one.
         Write-Log "  No UninstallString or QuietUninstallString found - falling back to manual surgery" 'Warn'
         Add-ManifestEntry -InstanceId $InstanceId -Action 'Uninstall' -Target $displayName -Result 'Skipped' -Details 'No uninstall string on the registry entry; manual surgery will handle this instance'
-        return $false
+        return $null
     }
 
     # Check if MSI
@@ -1494,17 +1498,28 @@ foreach ($inst in $scInstancesArray) {
                 $rebootRequired = $true
                 Write-Log "  Vendor uninstaller succeeded, reboot required (exit 3010)"
             } elseif ($uninstallResult -eq $true) {
-                # Exit 0 - uninstall succeeded
+                # Exit 0 - uninstall succeeded (entry already recorded inside
+                # Run-VendorUninstaller as Success with the exit code)
                 $uninstallSucceeded = $true
                 Write-Log "  Vendor uninstaller reported success"
-                $targetStr = Get-EntryPropertySafe -Instance $uninstallEntry -PropertyName 'UninstallString'
-                if (-not $targetStr) { $targetStr = Get-EntryPropertySafe -Instance $uninstallEntry -PropertyName 'QuietUninstallString' }
-                Add-ManifestEntry -InstanceId $instanceId -Action 'Uninstall' -Target $targetStr -Result 'Success'
+            } elseif ($null -eq $uninstallResult) {
+                # Nothing was attempted (no uninstall string / no entry); the
+                # truthful Skipped entry is already in the manifest. Record the
+                # DECISION here with a real target, never an empty one, and
+                # never as 'Failed' - a run whose manual surgery succeeds must
+                # not show a failed Uninstall.
+                Write-Log "  No vendor uninstaller available - proceeding with manual surgery" 'Warn'
+                $fallbackTarget = Get-EntryPropertySafe -Instance $uninstallEntry -PropertyName 'DisplayName'
+                if (-not $fallbackTarget) { $fallbackTarget = 'N/A' }
+                Add-ManifestEntry -InstanceId $instanceId -Action 'UninstallFallback' -Target $fallbackTarget -Result 'Planned' -Details 'No vendor uninstaller available; proceeding with manual surgery + quarantine'
             } else {
-                Write-Log "  Vendor uninstaller failed or returned no success signal" 'Warn'
-                $targetStr = Get-EntryPropertySafe -Instance $uninstallEntry -PropertyName 'UninstallString'
-                if (-not $targetStr) { $targetStr = Get-EntryPropertySafe -Instance $uninstallEntry -PropertyName 'QuietUninstallString' }
-                Add-ManifestEntry -InstanceId $instanceId -Action 'Uninstall' -Target $targetStr -Result 'Failed' -Details 'Falling back to manual surgery + quarantine'
+                # Genuine failure - the reason entry (exit code / timeout /
+                # validation refusal) is already recorded. Record the decision
+                # with a real target.
+                Write-Log "  Vendor uninstaller failed - proceeding with manual surgery" 'Warn'
+                $fallbackTarget = Get-EntryPropertySafe -Instance $uninstallEntry -PropertyName 'DisplayName'
+                if (-not $fallbackTarget) { $fallbackTarget = 'N/A' }
+                Add-ManifestEntry -InstanceId $instanceId -Action 'UninstallFallback' -Target $fallbackTarget -Result 'Planned' -Details 'Vendor uninstaller failed; proceeding with manual surgery + quarantine'
             }
         } else {
             Write-Log "  No uninstall entry found, will proceed to manual surgery" 'Warn'
@@ -1674,6 +1689,81 @@ try {
     Write-Log "Failed to write manifest: $($_.Exception.Message)" 'Error'
     $overallSuccess = $false
 }
+
+# -----------------------------------------------------------------------------
+# Write a HUMAN-READABLE removal report (plain English .txt)
+#
+# The JSON manifest above is machine-readable (consumed by the report stage and
+# resurrection logic), but it is not easy for a technician or client to read.
+# This .txt file is the human-facing deliverable: every action in plain English,
+# with the problems/failures called out up top.
+# -----------------------------------------------------------------------------
+$reportTxtPath = Join-Path $WorkDir 'removal-report.txt'
+try {
+    $lines = New-Object System.Collections.ArrayList
+    [void]$lines.Add("========================================================")
+    [void]$lines.Add(" SCREENCONNECT REMOVAL REPORT")
+    [void]$lines.Add("========================================================")
+    [void]$lines.Add("")
+    [void]$lines.Add("Generated (UTC) : $($manifestObj.GeneratedUtc)")
+    [void]$lines.Add("Computer        : $($manifestObj.ComputerName)")
+    [void]$lines.Add("Tool version    : $($manifestObj.Version)")
+    [void]$lines.Add("Mode            : $(if ($manifestObj.ExecuteMode) { 'EXECUTE (real removal)' } else { 'DRY-RUN (no changes made)' })")
+    [void]$lines.Add("Plan file       : $($manifestObj.PlanFile)")
+    [void]$lines.Add("Working dir     : $($manifestObj.WorkDir)")
+    [void]$lines.Add("Quarantine dir  : $($manifestObj.QuarantineDir)")
+    [void]$lines.Add("")
+
+    # --- PROBLEMS / FAILURES first (most important for a human) -------------
+    $problems = @($script:Manifest | Where-Object { $_.Result -in @('Failed','Rejected','PRODUCT_VERIFICATION_FAILED','LaunchFailed','TimeoutLeftRunning') })
+    [void]$lines.Add("--------------------------------------------------------")
+    if ($problems.Count -eq 0) {
+        [void]$lines.Add(" PROBLEMS: NONE - every attempted action succeeded.")
+    } else {
+        [void]$lines.Add(" PROBLEMS (" + $problems.Count + "):")
+        [void]$lines.Add("--------------------------------------------------------")
+        foreach ($p in $problems) {
+            $who = if ($p.InstanceId) { "Instance $($p.InstanceId): " } else { '' }
+            [void]$lines.Add("- $($who)$($p.Action) on [$($p.Target)] -> $($p.Result)")
+            if ($p.Details) { [void]$lines.Add("    $($p.Details)") }
+            if ($null -ne $p.ExitCode -and $p.ExitCode -ne '') { [void]$lines.Add("    Exit code: $($p.ExitCode)") }
+        }
+    }
+    [void]$lines.Add("")
+
+    # --- Plain-English summary counts -------------------------------------
+    [void]$lines.Add("--------------------------------------------------------")
+    [void]$lines.Add(" SUMMARY")
+    [void]$lines.Add("--------------------------------------------------------")
+    [void]$lines.Add(" Successful actions : $successCount")
+    [void]$lines.Add(" Failed actions     : $failedCount")
+    [void]$lines.Add(" Dry-run actions    : $dryRunCount")
+    [void]$lines.Add(" Deferred to reboot : $deferredCount")
+    [void]$lines.Add(" Verification skips : $verifFailCount (product could not be verified; left installed on purpose)")
+    [void]$lines.Add("")
+
+    # --- Full action log, in plain English, chronological ------------------
+    [void]$lines.Add("--------------------------------------------------------")
+    [void]$lines.Add(" FULL ACTION LOG")
+    [void]$lines.Add("--------------------------------------------------------")
+    foreach ($e in $script:Manifest.ToArray()) {
+        $when = $e.TimestampUtc
+        $who  = if ($e.InstanceId) { " [$($e.InstanceId)]" } else { '' }
+        $line = "$when$who  $($e.Action): $($e.Target) -> $($e.Result)"
+        [void]$lines.Add($line)
+        if ($e.Details) { [void]$lines.Add("            $($e.Details)") }
+    }
+    [void]$lines.Add("")
+    [void]$lines.Add("End of report. Machine-readable details are in removal-manifest.json.")
+    [void]$lines.Add("========================================================")
+
+    [System.IO.File]::WriteAllText($reportTxtPath, ($lines -join "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+    Write-Log "Human-readable report written: $reportTxtPath"
+} catch {
+    Write-Log "Failed to write removal report: $($_.Exception.Message)" 'Error'
+    $overallSuccess = $false
+}
+
 
 # -----------------------------------------------------------------------------
 # Final summary

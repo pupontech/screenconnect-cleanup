@@ -7,7 +7,7 @@
 #   . disk space check       (refuse below minimum free GB)
 #   . working directory      C:\RIT-SCC\<host>-<timestamp>\
 #   . master log open
-#   . tech name / client / incident date prompt
+#   . tech name / client prompt (incident date auto = computer's date)
 #   . System Restore point + registry hive export   [skip: -NoRestorePoint]
 #   . tool pack presence check via tools\Get-ToolPack.ps1 -Verify
 #
@@ -39,7 +39,9 @@ param(
     [string]$ToolPackPath,
 
     # Pre-staged answers for non-interactive runs (selftest/CI).
-    # When empty, prompts interactively as designed.
+    # TechName/ClientName prompt interactively when empty. IncidentDate is
+    # never prompted: it defaults to the computer's current date
+    # (owner decision 2026-08-26); pass -IncidentDate only to override.
     [string]$TechName = '',
     [string]$ClientName = '',
     [string]$IncidentDate = '',
@@ -271,18 +273,16 @@ function Test-ToolPack {
 }
 
 function Invoke-PromptTechInfo {
-    # Prompts for tech name / client / incident date unless supplied via params.
-    # Incident date is the anchor for the recent-files window (Stage 1).
+    # Prompts for tech name / client unless supplied via params. The incident
+    # date is NOT prompted: it defaults to the computer's current date
+    # (owner decision 2026-08-26); pass -IncidentDate to override. It remains
+    # the anchor for the recent-files window (Stage 1).
     if (-not $TechName)   { $script:TechAnswer   = (Read-Host 'Technician name') }
     else                  { $script:TechAnswer   = $TechName }
     if (-not $ClientName) { $script:ClientAnswer = (Read-Host 'Client / ticket name') }
     else                  { $script:ClientAnswer = $ClientName }
     if (-not $IncidentDate) {
-        $answer = Read-Host 'Incident date (YYYY-MM-DD, blank = today)'
-        if (-not $answer) {
-            $answer = (Get-Date).ToString('yyyy-MM-dd')
-        }
-        $script:IncidentAnswer = $answer
+        $script:IncidentAnswer = (Get-Date).ToString('yyyy-MM-dd')
     } else {
         $script:IncidentAnswer = $IncidentDate
     }

@@ -12,16 +12,13 @@ Where this document is uncertain, it says so. A stub adapter that honestly repor
 `NotVerified` is worth more than a plausible-looking one built on invented switches that
 fires on a paying client's machine.
 
-**The `scanners/` folder is built** (3 adapters: Defender, KVRT, ESET), each with
-documented switches, WhatIf support, and timeout handling. The MSERT adapter is still
-not built. `tools/Get-AVTools.ps1` stages KVRT, AdwCleaner, and ESET Online Scanner
-binaries from their official vendor download URLs (all three endpoints verified live
-2026-08-26).
-
-**GUI-only scanners are run ATTENDED, not driven by CLI (owner decision 2026-08-26):**
-ESET Online Scanner, Malwarebytes, and AdwCleaner are launched for the technician via
-`Invoke-GUIScanner.ps1`, which starts the EXE as a normal visible window and blocks
-until the technician closes it. The pipeline never invents silent-scan flags for these.
+**The scanner line-up is Malwarebytes only** (owner decision 2026-08-26: KVRT,
+ESET, AdwCleaner, and Microsoft Defender all removed). `tools/Get-AVTools.ps1`
+stages just `MBSetup.exe` (Malwarebytes MB5) from Malwarebytes' official URL.
+`Invoke-GUIScanner.ps1` launches it as a normal visible GUI window and blocks
+until the technician closes it, so Stage 7's after-snapshot + report are taken
+AFTER any GUI-driven cleaning has actually finished. The pipeline never invents
+silent-scan flags for it.
 
 ---
 
@@ -49,16 +46,16 @@ before it.
 
 | Tool | Role | Automation status | Licensing |
 |---|---|---|---|
-| **Defender `MpCmdRun.exe`** | Baseline scan | Microsoft-documented. `-Scan -ScanType 2` (full), `-SignatureUpdate`; results also via `Get-MpThreatDetection` / `Start-MpScan`. Log under `%ProgramData%\Microsoft\Windows Defender\Support\`. **Confident, but confirm against current docs.** | **None. Present on every machine. Build this adapter first.** |
+| **Defender `MpCmdRun.exe`** | Baseline scan | **REMOVED from the line-up 2026-08-26 (owner decision).** Adapter (`scanners/Invoke-DefenderScan.ps1`) deleted; Stage 5 no longer offers it. | Present on every machine. Removed by owner anyway. |
 | **KVRT** | Kaspersky removal tool | Has a documented CLI. **Every switch must be verified against the current build** — they changed between the 2020 and current releases. Report directory is under `%SystemDrive%\KVRT*_Data\`, name varies by version. | **APPROVED by the owner (decision D2).** Do not block on licensing. |
 | **ESET command-line scanner** | On-demand scan | Ships with licensed endpoint products. Verify: standalone use, exit-code table, detection export format. | **APPROVED (D3)** — the MSP's ESET license covers technician scans. |
-| **AdwCleaner** | PUP / adware / junk — **closest match to what scam sessions actually leave behind** | **Run attended via `Invoke-GUIScanner.ps1`** (launch + wait). A documented CLI exists (`/eula /scan /clean /noreboot /path`) but the owner's policy is to run AV through the GUI, so no CLI adapter is built. Staged by `tools\Get-AVTools.ps1`. | Free. Verify technician-use terms. |
+| **AdwCleaner** | PUP / adware / junk | **REMOVED from staging 2026-08-26 (owner decision):** not needed for this tool's workflow. Documented CLI existed (`/eula /scan /clean /noreboot /path`) but the policy is GUI-attended operation; AdwCleaner was dropped entirely rather than kept as a GUI tool. | Free. |
 | **MSERT** (Microsoft Safety Scanner) | Free Microsoft second opinion, self-expiring | Verify switches; log believed to be `%SystemRoot%\debug\msert.log`. | Likely none. Verify. |
-| **Malwarebytes** | On-demand scan | **Run attended via `Invoke-GUIScanner.ps1`** (`-Scanner Malwarebytes`). Consumer MBAM has no CLI; the CLI-capable product is a paid business SKU — not approved. `Get-AVTools.ps1` stages the current MB5 installer (MBSetup.exe) from `downloads.malwarebytes.com/file/mb-windows/` (verified live 2026-08-26, FileVersion 5.6.x). | Paid, per-endpoint. Not approved for automation. |
+| **Malwarebytes** | On-demand scan | **The only staged scanner (owner decision 2026-08-26).** Run attended via `Invoke-GUIScanner.ps1` (`-Scanner Malwarebytes`). Consumer MBAM has no CLI; the CLI-capable product is a paid business SKU — not approved. `Get-AVTools.ps1` stages the current MB5 installer (MBSetup.exe) from `downloads.malwarebytes.com/file/mb-windows/` (verified live 2026-08-26, FileVersion 5.6.x). | Paid, per-endpoint. Not approved for automation. |
 | **RKill** | Kill malware processes before scanning (Tron's stage-0 trick) | Minimal CLI documentation. | Verify commercial-use terms. |
 | **TDSSKiller** | **RECOMMEND EXCLUDING** | — | Deprecated by Kaspersky, and reportedly abused by threat actors in 2024 to disable EDR — meaning dropping it on a client machine may trip the client's own security stack. Bad trade. **[VERIFY the reporting, but the recommendation stands.]** |
 
-Realistic Stage 5 line-up: **Defender + AdwCleaner + KVRT + ESET + MSERT.**
+Realistic Stage 5 line-up (2026-08-26, owner decision): **Malwarebytes only.**
 
 ---
 

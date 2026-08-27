@@ -81,12 +81,12 @@ hold", "Scanner-process contracts OK", removal runtime contracts OK, integration
     it reaches detect-remote-access.ps1 after elevation (SCC_ARGS env forwarding).
 4.4 Confirm fltmc privilege probe and default KEEP prompt semantics are unchanged.
 
-## 5. Scanner adapters (Stage 5, Defender/ESET/KVRT)
+## 5. Scanner adapters (Stage 5, ESET/KVRT)
 
-5.1 WhatIf: all three adapters with -WhatIf must return Skipped without spawning a
+5.1 WhatIf: both adapters with -WhatIf must return Skipped without spawning a
     process.
 5.2 Chatty scanner (synthetic stand-in binary flooding stdout+stderr): no deadlock,
-    output captured, exit-code mapping unchanged (Defender 0/2, ESET 0/50/10/100,
+    output captured, exit-code mapping unchanged (ESET 0/50/10/100,
     KVRT report-file detection).
 5.3 Hung scanner (synthetic stand-in that never exits): TimeoutMinutes respected,
     Status=Timeout with the new error string, process terminated, no orphan.
@@ -101,6 +101,30 @@ hold", "Scanner-process contracts OK", removal runtime contracts OK, integration
 6.2 Registration with NEITHER UninstallString nor QuietUninstallString: dry-run
     records a non-destructive Failed/Skipped manifest result and no ProcessInstance
     failure.
+
+## 6b. FIELD VALIDATION (2026-08-26, machine INPIRON4SANITY2, real install)
+
+A real removal ran on live Windows with ExecuteMode=true (manifest 2026-08-26
+15:39 UTC). Evidence-backed results:
+
+- ProductVerification Passed; ValidateUninstallKey Accepted (instance id
+  763257a7941a63ef confirmed from DisplayName + install dir) -> M0 key-map
+  identity path validated on a real install.
+- No UninstallString present on the registration (tampered/damaged key case):
+  recorded Skipped with the truthful "manual surgery will handle this instance"
+  note, NOT Failed.
+- Manual surgery completed: Quarantine Success (19 files hashed to
+  quarantine-hashes-763257a7941a63ef.csv), DeleteService Success,
+  DeleteUninstallKey Success (exported to .reg first), CleanPersistence
+  Skipped (no artifacts). No reboot needed.
+
+Defect found from this run and fixed (see commit that adds this note): the
+main loop recorded a SECOND 'Uninstall' entry with Result=Failed and an EMPTY
+Target on the no-uninstall-string path, so a successful surgery-run showed a
+failed Uninstall. Fixed: Run-VendorUninstaller returns $null when nothing was
+attempted (truthful Skipped entry already written); the main loop records the
+decision as Action=UninstallFallback, Result=Planned, Target=DisplayName.
+CI test updated to assert the new truth.
 6.3 HKCU cleanup: after the test, the created GUID leaf is removed and the
     RIT-SCC-CI parent is removed only when empty.
 

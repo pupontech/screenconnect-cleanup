@@ -39,12 +39,12 @@ echo   You will be prompted before each step. Ctrl+C to abort.
 echo.
 echo   1 toolpack     2 preflight    3 before-snapshot
 echo   4 detection    5 REMOVE       6 antivirus scans
-echo   7 tikun        8 after-snapshot+diff            9 report
+echo   7 tikun        8 uninstall-AV 9 after-snapshot+diff   10 report
 echo  ============================================================
 echo.
 
 rem ---- Step 1: tool pack -----------------------------------------------------
-echo  STEP 1 of 9: Build/verify tool pack (Sysinternals + KVRT/ESET/Malwarebytes)
+echo  STEP 1 of 9: Build/verify tool pack (Sysinternals + Malwarebytes)
 set /p GO="    Run now? [Y/n] "
 if /i not "%GO%"=="n" (
     if exist "%~dp0tools\Get-ToolPack.ps1" (
@@ -130,61 +130,11 @@ set GO=
 
 rem ---- Step 6: antivirus scans - each one is its own step ---------------------
 echo.
-echo  STEP 6 of 9: Antivirus scans. Each scanner is asked for separately and
-echo    runs to completion before the next one starts.
+echo  STEP 6 of 9: Antivirus scans. (Malwarebytes only, per owner decision.)
+echo    Runs to completion before the next step starts.
 
 echo.
-echo    -- 6a: Microsoft Defender (built in) --
-set /p GO="    Run Defender scan? [Y/n] "
-if /i not "%GO%"=="n" (
-    set /p DRY="       Dry-run only (just print the command line)? [y/N] "
-    if /i "!DRY!"=="y" (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scanners\Invoke-DefenderScan.ps1" -WhatIf
-    ) else (
-        echo        Running Defender scan - this can take a while.
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scanners\Invoke-DefenderScan.ps1"
-    )
-    set DRY=
-)
-set GO=
-
-echo.
-echo    -- 6b: Kaspersky Virus Removal Tool (KVRT), interactive GUI --
-set /p GO="    Launch KVRT? [Y/n] "
-if /i not "%GO%"=="n" (
-    if exist "%~dp0tools\AV\KVRT.exe" (
-        echo        Launching KVRT. Accept the EULA, run the scan, and review
-        echo        anything it finds in the KVRT window.
-        start "" "%~dp0tools\AV\KVRT.exe"
-        echo.
-        echo        This script is WAITING for you. Do not press anything here
-        echo        until the KVRT scan has finished.
-        pause
-    ) else (
-        echo        [WARN] tools\AV\KVRT.exe not staged - run step 1 first.
-    )
-)
-set GO=
-
-echo.
-echo    -- 6c: ESET Online Scanner (interactive GUI) --
-set /p GO="    Launch ESET Online Scanner? [y/N] "
-if /i "%GO%"=="y" (
-    if exist "%~dp0tools\AV\esetonlinescanner.exe" (
-        echo        Launching ESET Online Scanner. Run the scan in its window.
-        start "" "%~dp0tools\AV\esetonlinescanner.exe"
-        echo.
-        echo        This script is WAITING for you. Do not press anything here
-        echo        until the ESET scan has finished.
-        pause
-    ) else (
-        echo        [WARN] tools\AV\esetonlinescanner.exe not staged - run step 1 first.
-    )
-)
-set GO=
-
-echo.
-echo    -- 6d: Malwarebytes (interactive GUI) --
+echo    -- 6a: Malwarebytes (interactive GUI) --
 set /p GO="    Launch Malwarebytes installer/scanner? [y/N] "
 if /i "%GO%"=="y" (
     if exist "%~dp0tools\AV\MBSetup.exe" (
@@ -205,7 +155,7 @@ set GO=
 
 rem ---- Step 7: Tikun (OPT-IN - destructive, deletes without quarantine) --------
 echo.
-echo  STEP 7 of 9: Tikun ^(the general fix - tools\GeneralFix\^)
+echo  STEP 7 of 10: Tikun ^(the general fix - tools\GeneralFix\^)
 echo    Note: Tikun kills processes and DELETES files, folders and registry
 echo    Run-keys system-wide, including removable drives, without quarantine.
 echo    It also installs a scheduled task that reruns it at boot and on USB
@@ -224,9 +174,23 @@ if /i "%GO%"=="y" (
 )
 set GO=
 
-rem ---- Step 8: AFTER snapshot + diff ------------------------------------------
+rem ---- Step 8: Uninstall installed AV (attended) -------------------------------
 echo.
-echo  STEP 8 of 9: After-snapshot and diff vs the before-snapshot
+echo  STEP 8 of 10: Uninstall installed third-party antivirus (attended)
+echo    Opens each detected AV product's uninstaller for YOU to drive. Never
+echo    silent-uninstalls. Windows Defender is excluded (it is the OS, not
+echo    installed AV). Skips if none is detected. Type y to run it.
+set /p GO="    Run installed-AV uninstall now? [y/N] "
+if /i "%GO%"=="y" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-AVUninstaller.ps1" -LogDir "%~dp0logs"
+) else (
+    echo     Skipped. (To skip this in sc-cleanup.ps1 use -avu.)
+)
+set GO=
+
+rem ---- Step 9: AFTER snapshot + diff ------------------------------------------
+echo.
+echo  STEP 9 of 10: After-snapshot and diff vs the before-snapshot
 set /p GO="    Run now? [Y/n] "
 if /i not "%GO%"=="n" (
     powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect-snapshot.ps1" -Label after -OutFile "%~dp0snapshot_after.json" -Quiet
@@ -253,9 +217,9 @@ if /i not "%GO%"=="n" (
 )
 set GO=
 
-rem ---- Step 9: report ----------------------------------------------------------
+rem ---- Step 10: report ---------------------------------------------------------
 echo.
-echo  STEP 9 of 9: Generate the investigation report
+echo  STEP 10 of 10: Generate the investigation report
 if not defined FINDINGS_JSON (
     echo     [WARN] No findings.json available. Detection ^(step 4^) must run first,
     echo         or enter the full path to an existing findings.json.

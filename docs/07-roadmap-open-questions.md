@@ -18,12 +18,12 @@ box" tool has value on day one.
 
 | | Milestone | Deliverable | State |
 |---|---|---|---|
-| **M0** | **Live lab validation.** Install ScreenConnect from a test cloud instance in a VM. Confirm the relay-identity extraction. Uninstall, document remnants. | Corrected key map | **NOT DONE — top priority** (requires a Windows VM / live ScreenConnect; out of scope for agents) |
+| **M0** | **Live lab validation.** Install ScreenConnect from a test cloud instance in a VM. Confirm the relay-identity extraction. Uninstall, document remnants. | Corrected key map | **PARTIAL (field, 2026-08-26):** real removal on INPIRON4SANITY2 confirmed instance identity via DisplayName + install-dir match and the no-UninstallString surgery fallback end-to-end. Relay-key extraction (Q1/Q2) still needs a test-cloud install lab run |
 | **M1** | Stages 0, 1, 8 — snapshot + report, read-only | Usable immediately, cannot hurt anything | **Built & Linux-verified** (Windows content paths still unverified — see below) |
 | **M2** | Stage 2 — ScreenConnect + RAT detection | `-sr` detect-only mode | **PoC DONE** (verified on a real machine) |
 | **M3** | Stage 7 — after-snapshot + diff | Catches resurrections | **Built & Linux-verified** |
-| **M4** | Stage 5 — scanner adapters (Defender first) | Optional, skippable | **Built** — Defender, KVRT, ESET adapters (Linux WhatIf-verified; real exec unverified). AdwCleaner/MSERT not built. |
-| **M5** | Stages 3, 4 — approval gate + removal + quarantine + reboot resume | **Only after heavy VM-snapshot testing** | **Implemented, untested on live Windows** (Stage 3 emits plan.json; Stage 4 consumes it, dry-run unless explicitly confirmed) |
+| **M4** | Stage 5 — scanner (Malwarebytes) | Optional, skippable | **Built** — Malwarebytes launched attended via Invoke-GUIScanner.ps1 (GUI launch-and-wait). KVRT/ESET adapters + AdwCleaner + Defender removed from scope 2026-08-26 (owner); Stage 5 now stages/launches Malwarebytes only. |
+| **M5** | Stages 3, 4 — approval gate + removal + quarantine + reboot resume | **Only after heavy VM-snapshot testing** | **LIVE-VALIDATED (field, 2026-08-26):** full removal executed with ExecuteMode=true on INPIRON4SANITY2 via the manual-surgery path (quarantine + service delete + uninstall-key cleanup), manifest truthful after the UninstallFallback fix. 3010 reboot-resume path still needs a lab run |
 | **M6** | Stage 6 — targeted Procmon | Respawn investigation | **Not started** (opt-in stub only) |
 | **M7** | Top-level `sc-cleanup.ps1` stage runner tying it together | The actual product | **Built & Linux end-to-end verified** (detect-remote-access stubbed on Linux) |
 
@@ -51,9 +51,7 @@ Windows** — see the "Needs a Windows VM" column below.
 | `preflight.ps1` | 17 KB | OK | clean | **Yes** — `-SelfTest` rc=0, full run fail+succeed paths | Checkpoint-Computer, reg.exe hive save, elevation, Win32_OperatingSystem, C:\ free space |
 | `diff-snapshots.ps1` | 9.8 KB | OK | clean | **Yes** — real pair CLEAN rc=0; synthetic resurrection test rc=1; pytest suite | Windows-only section content (same caveat as Stage 1) |
 | `sc-cleanup.ps1` | 33 KB | OK | clean | **Yes** — full pipeline end-to-end rc=0; flags `-sa/-sr/-np/-offline/-WhatIf` functional | real Stage 2/4/5/6 Windows execution |
-| `scanners/Invoke-DefenderScan.ps1` | 13 KB | OK | clean | **Yes** — WhatIf + synthetic command line; **safety fix applied** (no silent remediation; see below) | real MpCmdRun scan + threat-history mapping |
-| `scanners/Invoke-KVRTScan.ps1` | — | OK | clean | **Yes** — WhatIf, NotInstalled shape | real `kvrt.exe` exec, exit codes, report parsing |
-| `scanners/Invoke-ESETScan.ps1` | — | OK | clean | **Yes** — WhatIf, NotInstalled shape | real `ecls.exe` exec, exit codes, log parsing |
+| `Invoke-GUIScanner.ps1` | — | OK | clean | **Yes** — launches Malwarebytes GUI, blocks until closed (4h cap) | real `MBSetup.exe` attended run |
 
 **Action for whoever continues:** the read-only half of the pipeline (Stages 0,1,2,7,8
 + the orchestrator) is built and proven on Linux to the extent a non-Windows host allows.
@@ -85,10 +83,11 @@ None have been verified against current vendor documentation yet. KVRT and ESET 
 approved for use (D2, D3), but "approved" is not "documented." **Do not write adapters
 from memory.**
 
-> **Status (2026-08-23):** Resolved for the three built adapters. Every switch in
-> `Invoke-DefenderScan.ps1`, `Invoke-KVRTScan.ps1`, and `Invoke-ESETScan.ps1` was taken
-> from vendor docs fetched during authoring (URLs cited in each script header). AdwCleaner
-> and MSERT adapters are **still not built**. A real-box run is still required to confirm
+> **Status (2026-08-23, updated 2026-08-26):** Resolved for the two built adapters.
+> Every switch in `Invoke-KVRTScan.ps1` and `Invoke-ESETScan.ps1` was taken
+> from vendor docs fetched during authoring (URLs cited in each script header). MSERT
+> is still not built, and AdwCleaner + Microsoft Defender were removed from scope on
+> 2026-08-26 (owner decisions). A real-box run is still required to confirm
 > the detection parsers and exit-code mappings behave as documented.
 
 ### Q5 — Sysinternals download URL pattern
@@ -98,20 +97,21 @@ use a third-party mirror.
 ### Q4b — Integration review findings (2026-08-23)
 From the independent module review (t_f2f5e295), carried to the integration pass:
 
-1. **HIGH / safety — FIXED.** `Invoke-DefenderScan.ps1` defaulted to a `-ScanType 1`
-   quick scan and dropped `-DisableRemediation`, allowing Defender to silently remediate
-   (violating the read-only default, docs/06). **Resolved:** the adapter now always uses
-   a custom scan (`-ScanType 3`) of the system drive with `-DisableRemediation`; quick
-   scans are never used. Re-verified: both default and targeted command lines carry
-   `-DisableRemediation`, no `-ScanType 1` present.
+1. **HIGH / safety — FIXED (then moot).** `Invoke-DefenderScan.ps1` defaulted to a
+   `-ScanType 1` quick scan and dropped `-DisableRemediation`, allowing Defender to
+   silently remediate (violating the read-only default, docs/06). **Resolved:** the
+   adapter always used a custom scan (`-ScanType 3`) of the system drive with
+   `-DisableRemediation`; re-verified no `-ScanType 1` present. **Moot since
+   2026-08-26:** the Defender adapter was removed from the line-up by owner decision.
 2. **HIGH / scope — Amcache missing.** The Stage 1 retrospective expansion implements
    Prefetch, ShimCache, BAM/DAM, UserAssist, SRUM but **no Amcache** collector, schema
    field, or diff class. Either implement Amcache or formally revise scope. **Open.**
-3. **MEDIUM / semantics — Defender historical detections.** `Get-ThreatDetections` reads
-   all of `Get-MpThreatDetection` history and reports it as this run's `Detections`; a
-   pre-existing detection can be mis-attributed. Also copies Support logs but does not
-   parse a scanner log, partly conflicting with the docs/02 "read the log, never stdout"
-   rule. **Open** — document the exception or split historical vs scan-specific.
+3. **MEDIUM / semantics — Defender historical detections (moot).** `Get-ThreatDetections`
+   read all of `Get-MpThreatDetection` history and reported it as this run's
+   `Detections`; a pre-existing detection could be mis-attributed. Also copied Support
+   logs without parsing a scanner log, partly conflicting with the docs/02 "read the
+   log, never stdout" rule. **Moot since 2026-08-26:** the Defender adapter was
+   removed from the line-up by owner decision.
 4. **MEDIUM / validation — Windows-only decoders unverified.** ShimCache offsets,
    BAM/DAM P/Invoke, UserAssist offset, Prefetch naming, SRUM live-copy all need a
    real-box cross-check against known-good forensic tooling. **Open.**

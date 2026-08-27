@@ -3,10 +3,10 @@
   technician to finish with it.
 
   WHY THIS EXISTS
-    ESET Online Scanner and Malwarebytes (consumer MBAM) have no documented
-    unattended/silent scan switches (verified 2026-08-26 against vendor docs;
-    see docs/05-tools-scanners-tron.md). The pipeline therefore cannot drive
-    them - but the technician can. This script does only three things:
+    Malwarebytes (consumer MBAM) has no documented unattended/silent scan
+    switches (verified 2026-08-26 against vendor docs; see docs/05-tools-scanners-tron.md).
+    The pipeline therefore cannot drive it - but the technician can. This script
+    does only three things:
 
       1. find or take an explicit path to the scanner EXE,
       2. launch it as a NORMAL VISIBLE GUI process,
@@ -18,14 +18,12 @@
   report are taken AFTER any GUI-driven cleaning has actually finished.
 
   USAGE
-    .\Invoke-GUIScanner.ps1 -Scanner ESET            # esetonlinescanner.exe
     .\Invoke-GUIScanner.ps1 -Scanner Malwarebytes    # MBSetup.exe
-    .\Invoke-GUIScanner.ps1 -Scanner AdwCleaner      # adwcleaner.exe
     .\Invoke-GUIScanner.ps1 -ToolPath C:\path\tool.exe   # any explicit EXE
 
   Search order when -ToolPath is not given:
-    tools\AV\<name>.exe next to this script, then C:\AdwCleaner (AdwCleaner's
-    own working dir), then the user's Downloads folder, then TEMP.
+    tools\AV\<name>.exe next to this script, then the user's Downloads
+    folder, then TEMP.
     If not found: exits 3 with a clear message; nothing is downloaded here -
     staging is tools\Get-AVTools.ps1's job.
 
@@ -44,7 +42,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('ESET', 'Malwarebytes', 'AdwCleaner')]
+    [ValidateSet('Malwarebytes')]
     [string]$Scanner,
     [string]$ToolPath,              # explicit path wins over -Scanner lookup
     [int]$TimeoutMinutes = 240      # cap for an abandoned GUI window
@@ -67,9 +65,7 @@ function Get-HomeDir {
 }
 
 $knownTools = @{
-    'ESET'         = 'esetonlinescanner.exe'
     'Malwarebytes' = 'MBSetup.exe'
-    'AdwCleaner'   = 'adwcleaner.exe'
 }
 
 # ---------------------------------------------------------------------------
@@ -91,7 +87,6 @@ if ($ToolPath) {
         (Join-Path $scriptRoot $name),
         (Join-Path $scriptRoot ('..\tools\AV\' + $name))
     )
-    if ($Scanner -eq 'AdwCleaner') { $candidates += 'C:\AdwCleaner\adwcleaner.exe' }
     $homeDir = Get-HomeDir
     if ($homeDir) { $candidates += (Join-Path $homeDir ('Downloads\' + $name)) }
     $candidates += @(
@@ -106,7 +101,7 @@ if ($ToolPath) {
         exit 3
     }
 } else {
-    Write-Error "Specify -Scanner ESET|Malwarebytes|AdwCleaner or -ToolPath <exe>."
+    Write-Error "Specify -Scanner Malwarebytes or -ToolPath <exe>."
     exit 3
 }
 

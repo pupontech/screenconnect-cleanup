@@ -2,29 +2,28 @@
 # Build a clean deploy bundle: scripts + docs only, no Sysinternals binaries.
 # Output: <parent>/screenconnect-cleanup-deploy.zip
 #
-# NOTE: tools/Get-ToolPack.ps1 and tools/Get-AVTools.ps1 are referenced by
-# sc-cleanup.ps1 / preflight.ps1 / START-HERE.bat but are NOT currently present
-# in the repo (they were never committed; the downloader/stager scripts must be
-# rebuilt from the official vendor URLs before a deploy bundle can stage the AV
-# scanners). This script therefore copies them only when they exist and warns
-# otherwise, so a bundle is still produced for the read-only half of the tool.
+# tools/Get-ToolPack.ps1 (Sysinternals) and tools/Get-AVTools.ps1 (Malwarebytes
+# stager) are bundled when present; both are committed to the repo. Get-AVTools
+# stages only MBSetup.exe (Malwarebytes MB5) from Malwarebytes' official URL.
 set -euo pipefail
 SRC="$(cd "$(dirname "$0")" && pwd)"
-OUT="$(dirname "$SRC")/screenconnect-cleanup-deploy.zip"
+OUT_BASE="$(dirname "$SRC")/screenconnect-cleanup"
+# Version is read from the VERSION file (repo root). Fall back to 'dev' if absent.
+VER="$(tr -d '[:space:]' < "$SRC/VERSION" 2>/dev/null || echo dev)"
+OUT="${OUT_BASE}-v${VER}.zip"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 D="$STAGE/screenconnect-cleanup"
-mkdir -p "$D/scanners" "$D/tools"
+mkdir -p "$D/tools"
 
 # Core scripts + docs (all required). Fail loudly if any are missing.
 for f in sc-cleanup.ps1 preflight.ps1 collect-snapshot.ps1 diff-snapshots.ps1 \
          detect-remote-access.ps1 remove-screenconnect.ps1 \
-         Invoke-ReviewAndRemove.ps1 Invoke-GUIScanner.ps1 Run-DetectRemoteAccess.bat START-HERE.bat \
+         Invoke-ReviewAndRemove.ps1 Invoke-GUIScanner.ps1 Invoke-AVUninstaller.ps1 Run-DetectRemoteAccess.bat START-HERE.bat \
          targets.json New-InvestigationReport.ps1 DEPLOY.md; do
   cp "$SRC/$f" "$D/"
 done
 [ -f "$SRC/README.md" ] && cp "$SRC/README.md" "$D/"
-cp "$SRC"/scanners/*.ps1 "$D/scanners/"
 [ -d "$SRC/docs" ] && cp -r "$SRC/docs" "$D/docs"
 
 # Optional tool-pack downloader/stager scripts. Copy when present, warn when not.
@@ -42,6 +41,12 @@ if [ -n "$missing_tools" ]; then
   echo "          staging the tool pack / AV scanners on a client machine)" >&2
 fi
 
+# Stamp the version into the bundle so it is self-identifying even if the
+# file is renamed. Do NOT overwrite an existing VERSION (keep the repo one).
+if [ ! -f "$D/VERSION" ]; then
+  cp "$SRC/VERSION" "$D/VERSION"
+fi
+
 python3 - "$OUT" "$STAGE" <<'PY'
 import sys, zipfile, os
 out, stage = sys.argv[1], sys.argv[2]
@@ -55,5 +60,5 @@ with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
 print('wrote', out)
 PY
 
-echo "--- bundle contents ---"
+echo "Bundle: $(basename "$OUT")"
 python3 -c "import zipfile,sys; [print(i.filename, i.file_size) for i in zipfile.ZipFile('$OUT').infolist()]"

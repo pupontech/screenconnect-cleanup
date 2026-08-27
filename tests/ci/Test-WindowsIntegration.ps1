@@ -222,8 +222,9 @@ Check 'sc-cleanup -WhatIf exits 0' ($whatIfRc -eq 0) "rc=$whatIfRc"
 #      b. nostrings sibling: ScreenConnect-labelled key with NEITHER
 #         UninstallString NOR QuietUninstallString, only a verified
 #         InstallLocation -> Run-VendorUninstaller takes its clean
-#         false-return branch ("no uninstall string, manual surgery")
-#         and the failure-recording line must not crash either.
+#         null-return branch ("no uninstall string, manual surgery")
+#         and the main loop's fallback-decision recording must not
+#         crash and must not lie about a failure.
 #    Non-destructive: dry-run (no -Execute) never starts a process and
 #    never executes a registry command string; the fabricated uninstall
 #    paths point at files that do not exist on the runner.
@@ -244,9 +245,9 @@ try {
     # Sibling of the quiet-only leaf: ScreenConnect-labelled, but with NO
     # uninstall command at all - just DisplayName + InstallLocation pointing
     # at the verified install dir. This drives Run-VendorUninstaller into its
-    # false-return branch (no command -> record Skipped, return $false), so
-    # the main loop's failure-recording path runs against an entry that has
-    # neither value.
+    # null-return branch (no command -> record Skipped, return $null), so
+    # the main loop's fallback-decision recording runs against an entry that
+    # has neither value.
     $bareInstallDir = 'C:\Program Files (x86)\ScreenConnect Client (nostrings)'
     New-ItemProperty -LiteralPath $bareKey -Name 'DisplayName' -PropertyType String -Value 'ScreenConnect Client (nostrings)' -Force | Out-Null
     New-ItemProperty -LiteralPath $bareKey -Name 'InstallLocation' -PropertyType String -Value $bareInstallDir -Force | Out-Null
@@ -316,12 +317,12 @@ try {
         $qDryRun = @($qEntries | Where-Object { $_.Action -eq 'Uninstall' -and $_.Result -eq 'DryRun' -and $_.InstanceId -eq 'quietonly' })
         Check 'quiet-only uninstall: recorded as clean dry-run' ($qDryRun.Count -ge 1)
 
-        # --- Sibling false-return branch (neither uninstall value) ---
+        # --- Sibling null-return branch (neither uninstall value) ---
         # No crash on the failure-recording path either.
         $bProcFail = @($qEntries | Where-Object { $_.Action -eq 'ProcessInstance' -and $_.Result -eq 'Failed' -and $_.InstanceId -eq 'nostrings' })
         Check 'nostrings uninstall: no ProcessInstance crash' ($bProcFail.Count -eq 0)
 
-        # Run-VendorUninstaller MUST have taken its designed false-return
+        # Run-VendorUninstaller MUST have taken its designed null-return
         # branch: no command on the key -> recorded Skipped (not Failed),
         # manual-surgery fallback announced.
         $bSkipped = @($qEntries | Where-Object {
@@ -330,19 +331,30 @@ try {
             $_.Result -eq 'Skipped' -and
             $_.Details -like '*No uninstall string*manual surgery*'
         })
-        Check 'nostrings uninstall: false-return branch recorded Skipped' ($bSkipped.Count -ge 1)
+        Check 'nostrings uninstall: null-return branch recorded Skipped' ($bSkipped.Count -ge 1)
 
-        # The main loop then records its fallback decision WITHOUT crashing:
-        # Result 'Failed' (fallback to manual surgery) and an empty Target,
-        # because neither registry value exists to report.
+        # The main loop then records its fallback DECISION without crashing
+        # and without a misleading failure: Action 'UninstallFallback',
+        # Result 'Planned', and a real Target (DisplayName) instead of an
+        # empty one. A run whose manual surgery succeeds must never show
+        # 'Uninstall: Failed'.
         $bFallback = @($qEntries | Where-Object {
             $_.InstanceId -eq 'nostrings' -and
-            $_.Action -eq 'Uninstall' -and
-            $_.Result -eq 'Failed' -and
-            $_.Details -eq 'Falling back to manual surgery + quarantine'
+            $_.Action -eq 'UninstallFallback' -and
+            $_.Result -eq 'Planned' -and
+            $_.Details -like '*manual surgery + quarantine*'
         })
-        Check 'nostrings uninstall: fallback decision recorded without crash' ($bFallback.Count -eq 1)
-        Check 'nostrings uninstall: fallback Target empty (no registry string reported)' ($bFallback.Count -eq 1 -and [string]::IsNullOrEmpty([string]$bFallback[0].Target))
+        Check 'nostrings uninstall: fallback decision recorded as Planned' ($bFallback.Count -eq 1)
+        Check 'nostrings uninstall: fallback Target carries DisplayName' ($bFallback.Count -eq 1 -and [string]$bFallback[0].Target -eq 'ScreenConnect Client (nostrings)')
+
+        # Nothing may record the stringless registration as a failed
+        # Uninstall - there was nothing to run.
+        $bUfail = @($qEntries | Where-Object {
+            $_.InstanceId -eq 'nostrings' -and
+            $_.Action -eq 'Uninstall' -and
+            $_.Result -eq 'Failed'
+        })
+        Check 'nostrings uninstall: no Failed Uninstall entry' ($bUfail.Count -eq 0)
 
         # Non-destructive correctness: nothing was executed or claimed done -
         # no Success and no DryRun Uninstall for the stringless entry.
