@@ -96,7 +96,10 @@ if ($SrcRoot -and (Test-Path -LiteralPath $SrcRoot)) {
 
 function Import-SccRequiredModule {
     param([string]$Name)
-    $manifest = Join-Path $SrcRoot $Name "$Name.psd1"
+    # NOTE: nested 2-arg Join-Path - the 3-arg form (-AdditionalChildPath)
+    # does not exist in Windows PowerShell 5.1 and throws
+    # ParameterBindingException there (caught by the GUI smoke test).
+    $manifest = Join-Path (Join-Path $SrcRoot $Name) "$Name.psd1"
     if (-not (Test-Path -LiteralPath $manifest)) {
         Write-Host ("Missing required module: {0} ({1} not found)" -f $Name, $manifest) -ForegroundColor Red
         exit 2
@@ -169,7 +172,7 @@ if ($Headless) {
     if ($Mode -eq 'Full') { $requiredBackends += @('Scc.Remedy') }
     if (-not $SkipScanners) { $requiredBackends += @('Scc.Scanners') }
     foreach ($mod in $requiredBackends) {
-        $mf = Join-Path $SrcRoot $mod "$mod.psd1"
+        $mf = Join-Path (Join-Path $SrcRoot $mod) "$mod.psd1"
         if (-not (Test-Path -LiteralPath $mf)) {
             Write-Host ("Missing backend module for mode {0}: {1}" -f $Mode, $mod) -ForegroundColor Red
             exit 2
@@ -177,7 +180,7 @@ if ($Headless) {
         try { Import-Module -Name $mf -Force -ErrorAction Stop } catch { Write-Host ("Failed to import {0}: {1}" -f $mod, $_.Exception.Message) -ForegroundColor Red; exit 2 }
     }
     # Tools is optional (preflight probe); import if present
-    $toolsManifest = Join-Path $SrcRoot 'Scc.Tools' 'Scc.Tools.psd1'
+    $toolsManifest = Join-Path (Join-Path $SrcRoot 'Scc.Tools') 'Scc.Tools.psd1'
     if (Test-Path -LiteralPath $toolsManifest) { try { Import-Module -Name $toolsManifest -Force -ErrorAction SilentlyContinue } catch { } }
 
     # Create or resume run

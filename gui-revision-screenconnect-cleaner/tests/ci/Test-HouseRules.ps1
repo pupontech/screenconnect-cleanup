@@ -6,6 +6,9 @@
 #   2. Every .json parses cleanly via ConvertFrom-Json
 #   3. Every .bat is CRLF (no bare LF)
 #   4. No *.zip / *.exe committed under the new tree
+#   5. No 3-argument Join-Path in shipped .ps1/.psm1 (the 3-arg form uses
+#      -AdditionalChildPath, which does not exist in Windows PowerShell 5.1
+#      and throws ParameterBindingException at runtime there)
 #
 # Exit codes: 0 = clean, 1 = violations.
 # PowerShell 5.1 compatible. Pure ASCII, no BOM.
@@ -108,6 +111,37 @@ foreach ($b in $binaries) {
     # Allow build/output ignored? .gitignore already excludes build/output/*.zip but CI still enforces no zip anywhere.
     $rel = $b.FullName.Substring($newRoot.Length + 1)
     $violations += ("BINARY    : {0} (zip/exe must not be committed)" -f $rel)
+}
+
+# ---------------------------------------------------------------------------
+# Rule 5: no 3-argument Join-Path in shipped .ps1/.psm1.
+# The 3-arg form binds -AdditionalChildPath (PowerShell 6+ only); on Windows
+# PowerShell 5.1 it throws "A positional parameter cannot be found..." at
+# RUNTIME. tests/ is exempt: those 3-arg calls run under pwsh in CI only.
+# ---------------------------------------------------------------------------
+$stripQuotes = '"[^"]*"|''[^'']*'''
+# 3+ bare positional tokens after Join-Path with NO parentheses, braces,
+# hyphens (named params), assignment, or pipe tokens among them. That
+# excludes legit nested forms, named params, and one-line statement
+# continuations (`} catch {`), while still catching `Join-Path A B C`.
+$joinPath3 = 'Join-Path\s+[^\s(){}=;,|-]+\s+[^\s(){}=;,|-]+\s+[^\s(){}=;,|-]+'
+foreach ($f in $files) {
+    if ($f.Extension.ToLowerInvariant() -notin @('.ps1', '.psm1')) { continue }
+    $rel = $f.FullName.Substring($newRoot.Length + 1)
+    # tests/ is exempt (3-arg calls run under pwsh in CI only); match both
+    # separator styles so this works identically on Linux and Windows.
+    if ($rel -like 'tests\*' -or $rel -like 'tests/*') { continue }
+    if ($rel -like 'audit\*' -or $rel -like 'audit/*') { continue }
+    $lineNo = 0
+    foreach ($line in [System.IO.File]::ReadAllLines($f.FullName)) {
+        $lineNo++
+        if ($line.TrimStart().StartsWith('#')) { continue }
+        # Strip quoted strings first so spaces inside literals are not tokens.
+        $bare = [regex]::Replace($line, $stripQuotes, '""')
+        if ($bare -match $joinPath3) {
+            $violations += ("3ARG-JOINPATH : {0}:{1} (3-arg Join-Path breaks PowerShell 5.1 - nest 2-arg calls)" -f $rel, $lineNo)
+        }
+    }
 }
 
 if (@($violations).Count -gt 0) {
