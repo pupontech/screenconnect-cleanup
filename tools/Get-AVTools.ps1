@@ -74,12 +74,21 @@ function Get-DownloadFile {
     Say ("Downloading " + $Label + "...")
     try {
         Invoke-WebRequest -Uri $Url -OutFile $Dest -UseBasicParsing -ErrorAction Stop
-        Say ("  OK: " + $Dest) 'Green'
         try {
             $item = Get-Item -LiteralPath $Dest
             $ver = $item.VersionInfo.FileVersion
             if ($ver) { Say ("       version: " + $ver + "  size: " + $item.Length) 'DarkGray' }
+            # A real KVRT/EOS download is tens of MB. A tiny file means an HTML
+            # error page or a partial/interrupted download; a corrupt exe would
+            # then 'launch' silently and fail. Reject it so staging fails loudly
+            # (observed: "KVRT no longer launches" = 0-byte/partial KVRT.exe).
+            if ($item.Length -lt 1048576) {
+                Remove-Item -LiteralPath $Dest -Force -ErrorAction SilentlyContinue
+                Say ("  FAILED: " + $Label + " looks incomplete (" + $item.Length + " bytes < 1 MB) - removed, re-run staging.") 'Yellow'
+                return $false
+            }
         } catch { }
+        Say ("  OK: " + $Dest) 'Green'
         return $true
     } catch {
         Say ("  FAILED: " + $_.Exception.Message) 'Yellow'

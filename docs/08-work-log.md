@@ -1102,3 +1102,27 @@ suite green; new scanner-contract asserts (wingetViaCmd + null guard).
 NOT proven on Windows: the actual winget alias behavior on the owner's
 machine - needs their live re-test. If it still crashes, the new [WARN]
 errorlevel echoes in Step 6c/9 pinpoint the failing command.
+
+## 17. v1.7.8 - KVRT "no longer launches" diagnostics (2026-08-27, main)
+
+Owner live report: "kvrt no longer launcher son this latest vesrion".
+Investigation: the KVRT launch path (START-HERE 6a -> Invoke-GUIScanner
+-Scanner KVRT -> candidate search -> Start-Process) is BYTE-IDENTICAL to
+v1.7.6 where KVRT ran. Zip==tree confirmed for all 4 relevant files; KVRT
+download URL verified alive (HTTP 200); synthetic KVRT launch rc=0. So the
+failure is environmental and was SILENT:
+- Step 6a's only gate is `if exist tools\AV\KVRT.exe` - passes for a
+  0-byte/partial exe; Start-Process then fails with no errorlevel echo and
+  the bat just continued, looking like "doesn't launch".
+- Most likely cause: a corrupt/partial KVRT.exe from an earlier staging run
+  (Get-AVTools never verified the download size).
+
+Fix:
+- 6a/6b echo `[WARN] ... errorlevel N` on launch failure.
+- Get-AVTools.Get-DownloadFile rejects <1MB downloads (delete + FAILED +
+  "re-run staging") so a broken exe can't be staged silently.
+Verified: KVRT launcher rc=0, -Verify rc=0 with staged fakes, reject
+threshold logic, bat scan clean, full suite green.
+
+NOT proven on Windows: the user's actual staging state - re-run Step 1, then
+6a; the new WARN lines will name the failure if it persists.

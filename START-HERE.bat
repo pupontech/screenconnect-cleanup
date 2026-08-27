@@ -131,6 +131,7 @@ set /p GO="    Launch KVRT? [y/N] "
 if /i "%GO%"=="y" (
     if exist "%~dp0tools\AV\KVRT.exe" (
         powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-GUIScanner.ps1" -Scanner KVRT
+        if errorlevel 1 echo        [WARN] KVRT launch failed with errorlevel !errorlevel! - see the message above
     ) else (
         echo        [WARN] tools\AV\KVRT.exe not staged - run step 1 first.
     )
@@ -143,6 +144,7 @@ set /p GO="    Launch ESET Online Scanner? [y/N] "
 if /i "%GO%"=="y" (
     if exist "%~dp0tools\AV\esetonlinescanner.exe" (
         powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-GUIScanner.ps1" -Scanner ESET
+        if errorlevel 1 echo        [WARN] ESET launch failed with errorlevel !errorlevel! - see the message above
     ) else (
         echo        [WARN] tools\AV\esetonlinescanner.exe not staged - run step 1 first.
     )

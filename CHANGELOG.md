@@ -3,6 +3,12 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.8] - 2026-08-27
+KVRT "no longer launches" on the latest zip (owner live report) - the KVRT launch code itself is byte-identical to the version where it worked, so the failure was environmental and silent. Fixed by making staging and launch failures LOUD:
+- **`START-HERE.bat` Steps 6a/6b** now echo `[WARN] ... errorlevel N` when KVRT/ESET launch fails (previously the failure was swallowed and the step looked like a no-op). The `if exist` gate passed for a 0-byte/partial exe, and Start-Process then failed silently.
+- **`tools/Get-AVTools.ps1`** now sanity-checks every download: a staged KVRT/ESET smaller than 1 MB (HTML error page, partial or interrupted download) is deleted and reported FAILED instead of leaving a broken exe that "launches" to nothing. A corrupt/0-byte KVRT.exe from an earlier failed staging is the most likely cause of the report.
+- Verified: KVRT launch path regression-checked on Linux (rc=0), Get-AVTools -Verify passes with staged KVRT+EOS, reject-threshold logic checked, bat paren/CRLF scan clean, full CI suite green.
+
 ## [1.7.7] - 2026-08-27
 Crash right after the Malwarebytes step (owner live report) - fixed the two crash classes in that neighborhood:
 - **`Invoke-GUIScanner.ps1` Malwarebytes launch**: winget on Windows 10/11 is an App Execution Alias (0-byte WindowsApps reparse stub). `Start-Process -FilePath` on the stub is unreliable in PS 5.1 (silent `$null` process handle, or "not a valid Win32 application") and the next line called `$proc.WaitForExit(...)` on a possibly-null process - an unhandled exception that killed the launcher right after the Malwarebytes launch. winget is now launched through `cmd.exe /c winget install -e --id Malwarebytes.Malwarebytes` (the OS resolves the alias; console stays visible), and a null-process guard reports LaunchFailed cleanly instead of crashing.
