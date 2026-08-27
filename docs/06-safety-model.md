@@ -16,6 +16,13 @@ Nothing is removed without a technician seeing the finding and its evidence. **T
 no unattended removal mode, and no flag that detects and removes in one step.** This is
 the single rule that separates this tool from a destructive script.
 
+> **Owner-directive exception (2026-08-27):** the guided runner `START-HERE.bat`
+> Steps 4+5 no longer prompt — detection runs automatically and Step 5 removes every
+> detected ScreenConnect instance (`Invoke-ReviewAndRemove.ps1 -Yes`) and logs to
+> manifest + report. The interactive gate remains in `sc-cleanup.ps1` and in direct
+> runs of `Invoke-ReviewAndRemove.ps1` without `-Yes`. Quarantine-never-delete,
+> ScreenConnect-only targeting and the prominent red pre-removal banner all still apply.
+
 When Stage 4 is built, it must consume an **approved plan file** produced by Stage 3 —
 the destructive code should not be reachable without that artifact existing.
 

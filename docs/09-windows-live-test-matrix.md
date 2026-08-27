@@ -79,7 +79,9 @@ hold", "Scanner-process contracts OK", removal runtime contracts OK, integration
     (never a silent exit 0).
 4.3 Run-DetectRemoteAccess.bat argument forwarding: pass a target argument; confirm
     it reaches detect-remote-access.ps1 after elevation (SCC_ARGS env forwarding).
-4.4 Confirm fltmc privilege probe and default KEEP prompt semantics are unchanged.
+4.4 Confirm fltmc privilege probe works and that START-HERE.bat Steps 4+5 run
+    automatically (no prompts; Step 5 auto-removes + logs) per owner directive
+    2026-08-27.
 
 ## 5. Scanner downloads and attended GUI launches (Stage 5, KVRT/ESET; Malwarebytes via winget)
 

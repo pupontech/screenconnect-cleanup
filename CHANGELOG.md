@@ -3,6 +3,13 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.4] - 2026-08-27
+Guided runner removes the ScreenConnect check/removal prompts - it now just runs, removes and logs (owner directive: "remove the prompts asking to check for screenconnect and just run and remove and log").
+- `START-HERE.bat` **Step 4** (detection) runs automatically with no prompt: full scan (`detect-remote-access.ps1 -All -NoPause`).
+- `START-HERE.bat` **Step 5** (removal) runs automatically with no prompt: `Invoke-ReviewAndRemove.ps1 -Yes` - every detected ScreenConnect instance is marked REMOVE, `-Execute` applied, everything logged to `removal-manifest.json` + `removal-report.txt`. The prominent red banner still prints before removal; quarantine-never-delete and ScreenConnect-only targeting are unchanged.
+- `Invoke-ReviewAndRemove.ps1 -Yes` is now the automatic mode used by the guided runner (was "unattended lab use"); the interactive per-instance gate and typed confirmation remain for direct runs without `-Yes` and for `sc-cleanup.ps1` Stage 3 (unchanged).
+- Docs (README, safety model, START-HERE, live-test matrix) updated to record the owner-directive exception to the review gate.
+
 ## [1.7.3] - 2026-08-27
 Malwarebytes is now installed and uninstalled via winget (owner directive: "change malwarebytes to installing and uninstalling via winget via winget install -e --id Malwarebytes.Malwarebytes"). No more MBSetup.exe staging or GUI-installer launch.
 - `tools/Get-AVTools.ps1` stages **KVRT.exe + esetonlinescanner.exe only**; the Malwarebytes download (downloads.malwarebytes.com) and the InternalShare MBSetup fallback are removed.

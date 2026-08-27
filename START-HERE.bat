@@ -86,13 +86,8 @@ set GO=
 
 rem ---- Step 4: detection -----------------------------------------------------
 echo.
-echo  STEP 4 of 10: Remote-access detection (read-only)
-set /p GO="    Full scan of all known targets? [y/N] "
-if /i "%GO%"=="y" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0detect-remote-access.ps1" -All -NoPause
-) else (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0detect-remote-access.ps1" -NoPause
-)
+echo  STEP 4 of 10: Remote-access detection (read-only, automatic)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0detect-remote-access.ps1" -All -NoPause
 set GO=
 set "FINDINGS_JSON="
 rem dir /b prints only the bare filename, so walk the timestamped folders
@@ -108,23 +103,20 @@ if not defined FINDINGS_JSON (
     echo     [i] Latest findings: !FINDINGS_JSON!
 )
 
-rem ---- Step 5: REVIEW + REMOVE ------------------------------------------------
+rem ---- Step 5: REMOVE (automatic) ----------------------------------------------
 echo.
-echo  STEP 5 of 10: Review detected ScreenConnect and REMOVE the approved ones
-echo    This is the step that removes ScreenConnect. KEEP is the default - type y
-echo    for each instance you actually want to remove. Files are quarantined,
-echo    never deleted, and every action is recorded in removal-manifest.json.
-set /p GO="    Run removal review now? [Y/n] "
-if /i not "%GO%"=="n" (
-    if exist "%~dp0Invoke-ReviewAndRemove.ps1" (
-        if defined FINDINGS_JSON (
-            powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-ReviewAndRemove.ps1" -FindingsJson "!FINDINGS_JSON!"
-        ) else (
-            powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-ReviewAndRemove.ps1"
-        )
+echo  STEP 5 of 10: Remove detected ScreenConnect (automatic - no prompts)
+echo    Every detected ScreenConnect instance is removed; files are quarantined,
+echo    never deleted; every action is logged to removal-manifest.json +
+echo    removal-report.txt. Owner directive 2026-08-27: run + remove + log only.
+if exist "%~dp0Invoke-ReviewAndRemove.ps1" (
+    if defined FINDINGS_JSON (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-ReviewAndRemove.ps1" -FindingsJson "!FINDINGS_JSON!" -Yes
     ) else (
-        echo     [WARN] Invoke-ReviewAndRemove.ps1 missing - cannot remove.
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-ReviewAndRemove.ps1" -Yes
     )
+) else (
+    echo     [WARN] Invoke-ReviewAndRemove.ps1 missing - cannot remove.
 )
 set GO=
 

@@ -974,3 +974,31 @@ NOT proven on Windows: real winget install/uninstall of Malwarebytes (needs
 the owner's live test - winget presence, package id validity, agreement
 prompts, and the Malwarebytes uninstall behavior via winget are all
 vendor/environment dependent).
+
+## 13. v1.7.4 - guided runner: no prompts, just run+remove+log (2026-08-27, main)
+
+Owner directive: "remove the prompts asking to check for screenconnect and
+just run and remove and log".
+
+Changes:
+- START-HERE.bat Step 4: no [y/N] prompt - always runs the full detection
+  scan (detect-remote-access.ps1 -All -NoPause).
+- START-HERE.bat Step 5: no [Y/n] prompt - always runs
+  Invoke-ReviewAndRemove.ps1 -Yes (auto-mark every ScreenConnect instance
+  REMOVE, -Execute, log to manifest + report). The -Yes banner still prints
+  prominently before removal; quarantine-never-delete and ScreenConnect-only
+  targeting are unchanged.
+- Invoke-ReviewAndRemove.ps1: -Yes is now the guided-runner automatic mode
+  (banner reworded; was "LAB USE ONLY"). Interactive gate + typed
+  confirmation remain for direct runs without -Yes and for sc-cleanup.ps1
+  Stage 3 (untouched).
+- Docs: README, docs/06-safety-model.md (owner-directive exception to the
+  Stage-3 gate), 00-START-HERE.md, 09-windows-live-test-matrix.md updated.
+
+PROVEN on Linux: synthetic findings with 2 instances + -Yes -WhatIfOnly ran
+to completion with ZERO Read-Host prompts (60s timeout canary - a leftover
+prompt would have hung), both instances auto-marked REMOVE, plan.json written
+Decision=ALL_REMOVE RemovalConfirmed=true rc=0. Full CI suite green.
+
+NOT proven on Windows: the full auto-remove run on a live machine (needs the
+owner's live test); sc-cleanup.ps1 Stage 3 gate is unchanged.

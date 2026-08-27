@@ -60,7 +60,7 @@ Two corollaries that shape the whole design:
 | 0 Preflight | admin check, restore point, working dir, tool pack | built (was "not started") |
 | 1 Snapshot (before) | services, tasks, autoruns, processes, connections | built (was "draft") |
 | **2 Detection** | **ScreenConnect instance identity + other RAT presence** | **BUILT + TESTED** |
-| 3 Technician review | approval gate — nothing removed without it | built (interactive y/n, was "not started") |
+| 3 Technician review | approval gate — nothing removed without it | built (interactive y/n in `sc-cleanup.ps1`; guided runner Step 5 auto-removes + logs — owner directive 2026-08-27) |
 | 4 Remove / quarantine | stop, uninstall, quarantine, clean persistence | **built, dry-run default** (was "not started") |
 | 5 Scanners | KVRT, ESET Online Scanner (attended GUI; Defender + AdwCleaner removed); Malwarebytes install/uninstall via winget | built |
 | 6 Procmon (targeted) | "something reinstalled it — what?" | stub (opt-in only) |
@@ -86,14 +86,14 @@ screenconnect-cleanup/
   preflight.ps1                   Stage 0 preflight. BUILT (Linux-verified).
   collect-snapshot.ps1            Stage 1/7 snapshot collector. BUILT.
   detect-remote-access.ps1        Stage 2 detector. BUILT, TESTED, read-only.
-  Invoke-ReviewAndRemove.ps1      Stage 3 review gate -> Stage 4. BUILT.
+  Invoke-ReviewAndRemove.ps1      Stage 3 review gate -> Stage 4. BUILT. (-Yes = automatic remove + log, used by START-HERE Step 5.)
   remove-screenconnect.ps1        Stage 4 removal/containment. BUILT, dry-run default.
   diff-snapshots.ps1              Stage 7 before/after diff. BUILT.
   New-InvestigationReport.ps1     Stage 8 report. BUILT (XSS + empty-case verified).
   scanners are staged by `tools/Get-AVTools.ps1` and launched through
   `Invoke-GUIScanner.ps1` (KVRT/ESET attended GUI; Malwarebytes via winget).
   targets.json                    What to look for. 15 products, toggleable.
-  START-HERE.bat                  Guided 10-step launcher (Step 7 Tikun = opt-in destructive).
+  START-HERE.bat                  Guided 10-step launcher (Steps 4+5 = automatic detect+remove, no prompts — owner directive 2026-08-27; Step 7 Tikun = opt-in destructive).
   RUN-REMOVAL-TEST.bat            Lab-only -ExecuteRemoval test launcher.
   Run-DetectRemoteAccess.bat      Double-click detection launcher.
   make-deploy-bundle.sh           Builds the field-deploy zip.

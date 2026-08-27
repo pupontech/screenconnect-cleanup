@@ -15,7 +15,9 @@
   product in targets.json is detect/report-only and is never touched.
 
   Dry-run by default. Nothing is removed unless the technician types the
-  confirmation phrase (or -Yes is passed for unattended lab use).
+  confirmation phrase, or -Yes is passed. START-HERE.bat Step 5 passes -Yes:
+  the guided runner detects, removes and logs automatically with NO prompts
+  (owner directive 2026-08-27).
 
   PS 5.1 compatible. Pure ASCII, no BOM.
   Exit codes: 0 = ok (including "nothing to do"), 1 = removal reported failure.
@@ -31,7 +33,9 @@ param(
     # Where to look for findings when -FindingsJson is not given.
     [string]$ScanRoot = "$env:USERPROFILE\Desktop\RemoteAccessScan",
 
-    # Unattended: mark every instance REMOVE and skip the typed confirmation.
+    # Automatic: mark every ScreenConnect instance REMOVE and skip the typed
+    # confirmation. Used by START-HERE.bat Step 5 (owner directive 2026-08-27:
+    # "just run and remove and log").
     [switch]$Yes,
 
     # Review and write plan.json, but never call the remover.
@@ -94,9 +98,10 @@ Write-Line ("Found " + $instances.Count + " ScreenConnect instance(s).") 'White'
 
 if ($Yes) {
     Write-Line ""
-    Write-Line "  *** -Yes: UNATTENDED REMOVAL. Every ScreenConnect instance will be" 'Red'
-    Write-Line "  *** marked REMOVE and -Execute applied with NO typed confirmation." 'Red'
-    Write-Line "  *** LAB USE ONLY on a disposable, snapshotted VM." 'Red'
+    Write-Line "  *** -Yes: AUTOMATIC REMOVAL (owner directive 2026-08-27). Every" 'Red'
+    Write-Line "  *** ScreenConnect instance is marked REMOVE and -Execute applied" 'Red'
+    Write-Line "  *** with NO typed confirmation. ScreenConnect-only; quarantine," 'Red'
+    Write-Line "  *** never delete; every action is logged to the manifest + report." 'Red'
     Write-Line ""
 }
 

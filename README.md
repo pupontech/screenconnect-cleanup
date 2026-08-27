@@ -21,7 +21,9 @@ existing tool answers the question that actually matters.
 > module (`remove-screenconnect.ps1`). Removal is **not read-only**: given an approved
 > plan and `-Execute`, it stops services, runs vendor uninstallers, moves files to
 > quarantine, and removes service/persistence registrations. It is dry-run by default
-> and gated behind a technician review. **On live Windows, nothing beyond the dry-run has
+> and gated behind a technician review in `sc-cleanup.ps1`; the **guided runner
+> (`START-HERE.bat` Step 5) removes automatically and logs everything** (owner
+> directive 2026-08-27 — no review prompts). **On live Windows, nothing beyond the dry-run has
 > been validated** — see [Status](#status) and the caveats.
 
 ---
@@ -69,7 +71,7 @@ Two further consequences worth stating plainly:
 | 0 — Preflight | admin check, restore point, working dir, tool pack | **built** (Linux-verified; Win-only paths unverified) |
 | 1 — Snapshot (before) | services, tasks, autoruns, processes, connections, + retro artifacts | **built** (Linux-verified; Win-only content unverified) |
 | **2 — Detection** | **ScreenConnect instance identity + other RAT presence** | **PoC works** (verified on a real machine) |
-| 3 — Technician review | approval gate — nothing is removed without it | **built** (interactive y/n prompt; no GUI) |
+| 3 — Technician review | approval gate — nothing is removed without it | **built** (interactive y/n prompt in `sc-cleanup.ps1`; the guided runner skips it — Step 5 auto-removes + logs per owner directive 2026-08-27) |
 | 4 — Remove / quarantine | stop, uninstall, quarantine, clean persistence | **built, dry-run default** (never run on live Windows; skipped by default via `-sr`) |
 | 5 — Scanners | KVRT, ESET Online Scanner (GUI, attended); Malwarebytes installed via winget (`winget install -e --id Malwarebytes.Malwarebytes`) | **built** (`Get-AVTools.ps1` downloads KVRT + ESET from official vendor URLs; `Invoke-GUIScanner` launches visible attended GUIs and runs the Malwarebytes winget install; AdwCleaner/Defender remain removed; real exec unverified) |
 | 6 — Uninstall installed AV | open each detected third-party AV uninstaller (attended GUI) | **built** (Invoke-AVUninstaller; Windows Defender excluded; results in report) |
@@ -181,12 +183,21 @@ prove the assumptions are right — only a live install can.
 Detection and removal are deliberately separate. Stage 4 consumes an
 **approved plan file** produced by the Stage 3 review — the destructive code is not
 reachable without a technician having seen the evidence and typed a confirmation.
-There is no flag that detects and removes in one step for production use.
+There is no flag that detects and removes in one step for production use in
+`sc-cleanup.ps1`.
 
-The exception is a **lab-only** `-ExecuteRemoval` switch on `sc-cleanup.ps1` (and the
-accompanying `RUN-REMOVAL-TEST.bat`), which pre-authorizes every detected ScreenConnect
-instance for removal with no typed confirmation. It prints a prominent red banner and is
-intended **only** for a disposable, snapshotted VM. Never run it on a client machine.
+The exceptions:
+- **`sc-cleanup.ps1 -ExecuteRemoval`** (with `RUN-REMOVAL-TEST.bat`) is **lab-only**:
+  it pre-authorizes every detected ScreenConnect instance for removal with no typed
+  confirmation, prints a prominent red banner, and is intended **only** for a
+  disposable, snapshotted VM.
+- **Guided runner (`START-HERE.bat` Steps 4 + 5)** — owner directive 2026-08-27
+  ("just run and remove and log"): detection and removal run automatically with **no
+  prompts**. Step 5 passes `-Yes` to `Invoke-ReviewAndRemove.ps1`, which marks every
+  detected ScreenConnect instance REMOVE, applies `-Execute`, and logs everything to
+  `removal-manifest.json` + `removal-report.txt`. Quarantine-never-delete and the
+  ScreenConnect-only policy still apply; a prominent red banner is printed before
+  removal runs.
 
 ### Quarantine, never delete
 
