@@ -3,6 +3,24 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.13] - 2026-08-27
+The last step now OPENS the report folder and the report itself (owner
+directive: "on the last step the folder with the report should be opened and
+the report itself should be opened as well"):
+- **`START-HERE.bat` Step 10**: after the report is confirmed written, the
+  runner opens the folder with the report file selected
+  (`explorer /select,"%~dp0report.html"`) and opens the report in the default
+  browser (`start "" "%~dp0report.html"`). Only when the report actually
+  exists; the [WARN] paths are unchanged.
+- **`sc-cleanup.ps1` Stage 9** (orchestrator path): same behavior - Explorer
+  opens the work dir with report.html selected, then the report opens in the
+  default browser. Both opens are non-fatal (logged as WARN if they fail;
+  the report is already on disk).
+- CI: new C5 contract in Test-PipelineLauncherContracts.ps1 asserts both
+  auto-open lines exist in the bat Step 10 and both Start-Process calls in
+  sc-cleanup.ps1 Stage 9.
+- Verified: full CI suite green, bat all-CRLF (278 lines), zip byte-verified.
+
 ## [1.7.12] - 2026-08-27
 Snapshot collection refactored to run in parallel WAVES (owner directive:
 "can it be refactored to speed up faster"). Previously only 3 of 18 sections

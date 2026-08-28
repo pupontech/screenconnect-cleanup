@@ -20,6 +20,9 @@
 #       useful error when elevation cannot be launched/cancelled
 #       instead of exiting silently.
 #   C4. Touched .bat files are pure ASCII, no BOM, CRLF line endings.
+#   C5. The last step opens the report folder (Explorer) and the report
+#       itself (default browser) - in START-HERE.bat Step 10 and in
+#       sc-cleanup.ps1 Stage 9 (owner directive 2026-08-27).
 #
 # Exit codes: 0 = all contracts hold, 1 = violations found.
 # PowerShell 5.1 compatible. Pure ASCII, no BOM.
@@ -167,6 +170,24 @@ foreach ($name in $launchers) {
     if ($lfCount -gt 0) {
         Add-Failure 'C4' ("{0}: {1} lone LF line ending(s) found - .bat files must use CRLF." -f $name, $lfCount)
     }
+}
+
+# --- C5: report auto-open at the end of a run --------------------------------
+# Owner directive 2026-08-27: the last step opens the report folder (Explorer)
+# and the report itself (default browser). Both the guided runner (START-HERE
+# Step 10) and the orchestrator (sc-cleanup.ps1 Stage 9) must do it.
+$startHereBat = Read-AsciiText (Join-Path $repoRoot 'START-HERE.bat')
+if ($startHereBat -notmatch 'explorer /select,"%~dp0report\.html"') {
+    Add-Failure 'C5' "START-HERE.bat Step 10 does not open the report folder (explorer /select)."
+}
+if ($startHereBat -notmatch 'start "" "%~dp0report\.html"') {
+    Add-Failure 'C5' "START-HERE.bat Step 10 does not open the report itself (start \"\" report.html)."
+}
+if ($cleanup -notmatch 'explorer\.exe') {
+    Add-Failure 'C5' "sc-cleanup.ps1 Stage 9 does not open the report folder via explorer.exe."
+}
+if ($cleanup -notmatch 'Start-Process -FilePath \$reportHtml') {
+    Add-Failure 'C5' "sc-cleanup.ps1 Stage 9 does not open the report itself (Start-Process reportHtml)."
 }
 
 if ($failures.Count -gt 0) {

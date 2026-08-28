@@ -1,4 +1,12 @@
 ----
+15. v1.7.13 - last step opens the report folder + report (owner directive:
+    "on the last step the folder with the report should be opened and the
+    report itself should be opened as well")
+- START-HERE.bat Step 10: explorer /select + start "" after report written.
+- sc-cleanup.ps1 Stage 9: Start-Process explorer.exe /select + Start-Process
+  report.html, both non-fatal (WARN log on failure).
+- CI C5 contract added (both paths asserted). Suite green, bat CRLF kept.
+----
 14. v1.7.12 - snapshot collection in parallel waves (owner directive: "can it
     be refactored to speed up faster")
 - New: waves B (services/processes/accounts/WMI), C (autoruns/installed

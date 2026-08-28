@@ -254,6 +254,9 @@ if defined FINDINGS_JSON (
         powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -OutputPath "%~dp0report.html"
         if exist "%~dp0report.html" (
             echo     [i] Report written to .\report.html
+            rem Owner directive 2026-08-27: open the report folder + report.
+            explorer /select,"%~dp0report.html"
+            start "" "%~dp0report.html"
         ) else (
             echo     [WARN] Report was not produced.
         )

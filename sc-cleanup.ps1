@@ -922,6 +922,21 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
     if ($rc -ne 0) { throw ("New-InvestigationReport.ps1 exited with code " + $rc) }
     Write-StageLog ("Report generated: " + $reportHtml)
 
+    # Owner directive 2026-08-27: end a run by opening the report folder
+    # (Explorer) and the report itself (default browser) so the technician
+    # sees the result immediately. Failures here are non-fatal - the report
+    # already exists on disk.
+    try {
+        $null = Start-Process -FilePath explorer.exe -ArgumentList ('/select,"' + $reportHtml + '"') -ErrorAction Stop
+    } catch {
+        Write-StageLog ("Could not open report folder: " + $_.Exception.Message) 'Warn'
+    }
+    try {
+        $null = Start-Process -FilePath $reportHtml -ErrorAction Stop
+    } catch {
+        Write-StageLog ("Could not open report: " + $_.Exception.Message) 'Warn'
+    }
+
     # Also produce a machine-readable results.json with key findings
     $findings = Get-Content $findingsJson -Raw | ConvertFrom-Json
     # Safe nested access - stages may have been skipped (Result = $null).
