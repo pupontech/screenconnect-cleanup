@@ -78,6 +78,33 @@ $knownTools = @{
     'KVRT' = 'KVRT.exe'
     'ESET' = 'esetonlinescanner.exe'
 }
+
+function Test-PeExecutable {
+    # Cheap structural validity check: a real Windows PE starts with 'MZ' and
+    # carries the 'PE\0\0' signature at the offset stored in e_lfanew (0x3C).
+    # A partial/interrupted download can pass an existence check AND a size
+    # check, then silently "launch to nothing" ("KVRT downloaded but does not
+    # launch" - the observed failure). Only a structurally valid PE passes.
+    param([string]$Path)
+    try {
+        $fs = [System.IO.File]::OpenRead($Path)
+        try {
+            $buf = New-Object byte[] 4096
+            $n = $fs.Read($buf, 0, 4096)
+            if ($n -lt 64) { return $false }
+            if ($buf[0] -ne 0x4D -or $buf[1] -ne 0x5A) { return $false }   # 'MZ'
+            $peOff = [BitConverter]::ToInt32($buf, 0x3C)
+            if ($peOff -lt 0 -or ($peOff + 4) -gt $n) { return $false }
+            return ($buf[$peOff] -eq 0x50 -and $buf[$peOff + 1] -eq 0x45 -and
+                    $buf[$peOff + 2] -eq 0 -and $buf[$peOff + 3] -eq 0)    # 'PE\0\0'
+        } finally {
+            $fs.Dispose()
+        }
+    } catch {
+        return $false
+    }
+}
+
 # Scanners that are INSTALLED via winget instead of being staged as EXEs
 # (owner directive 2026-08-27: Malwarebytes install/uninstall via winget).
 $wingetScanners = @{
@@ -153,6 +180,15 @@ if ($ToolPath) {
 
 if (-not $target) {
     Write-Host ("Scanner not found: " + $Scanner) -ForegroundColor Red
+    exit 3
+}
+
+# The staged EXE must actually BE a Windows executable. A broken/truncated
+# file (partial download that is big enough to pass the staging size check)
+# used to "launch to nothing" silently. Name the failure instead.
+if ($target -and -not $wingetViaCmd -and -not (Test-PeExecutable -Path $target)) {
+    Write-Host ("Scanner file is corrupt/truncated (not a valid executable): " + $target) -ForegroundColor Red
+    Write-Host "Re-run Step 1 - Get-AVTools.ps1 re-fetches and validates it." -ForegroundColor Yellow
     exit 3
 }
 

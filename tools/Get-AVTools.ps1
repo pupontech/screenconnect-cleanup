@@ -68,11 +68,39 @@ function Say {
 # considered usable (and therefore skippable) when it is at least this big.
 $script:minToolBytes = 1048576
 
+function Test-PeExecutable {
+    # Cheap structural validity check: a real Windows PE starts with 'MZ' and
+    # carries the 'PE\0\0' signature at the offset stored in e_lfanew (0x3C).
+    # A partial/interrupted download can pass a SIZE check while still being
+    # broken ("KVRT downloaded but does not launch" - the observed failure);
+    # only a structurally valid PE is treated as a usable, skippable copy.
+    param([string]$Path)
+    try {
+        $fs = [System.IO.File]::OpenRead($Path)
+        try {
+            $buf = New-Object byte[] 4096
+            $n = $fs.Read($buf, 0, 4096)
+            if ($n -lt 64) { return $false }
+            if ($buf[0] -ne 0x4D -or $buf[1] -ne 0x5A) { return $false }   # 'MZ'
+            $peOff = [BitConverter]::ToInt32($buf, 0x3C)
+            if ($peOff -lt 0 -or ($peOff + 4) -gt $n) { return $false }
+            return ($buf[$peOff] -eq 0x50 -and $buf[$peOff + 1] -eq 0x45 -and
+                    $buf[$peOff + 2] -eq 0 -and $buf[$peOff + 3] -eq 0)    # 'PE\0\0'
+        } finally {
+            $fs.Dispose()
+        }
+    } catch {
+        return $false
+    }
+}
+
 function Test-ToolUsable {
     param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { return $false }
     try {
-        return ((Get-Item -LiteralPath $Path -ErrorAction Stop).Length -ge $script:minToolBytes)
+        $item = Get-Item -LiteralPath $Path -ErrorAction Stop
+        if ($item.Length -lt $script:minToolBytes) { return $false }
+        return (Test-PeExecutable -Path $Path)
     } catch {
         return $false
     }
@@ -87,7 +115,7 @@ if ($Verify) {
         if (Test-ToolUsable $p) {
             Say ("  present: " + $p) 'Green'
         } elseif (Test-Path -LiteralPath $p) {
-            Say ("  CORRUPT (under 1 MB - re-run staging to fetch a fresh copy): " + $p) 'Red'
+            Say ("  CORRUPT (under 1 MB or not a valid executable - re-run staging to fetch a fresh copy): " + $p) 'Red'
             $ok = $false
         } else {
             Say ("  MISSING: " + $p) 'Red'
@@ -118,12 +146,13 @@ function Get-DownloadFile {
             $ver = $item.VersionInfo.FileVersion
             if ($ver) { Say ("       version: " + $ver + "  size: " + $item.Length) 'DarkGray' }
             # A real KVRT/EOS download is tens of MB. A tiny file means an HTML
-            # error page or a partial/interrupted download; a corrupt exe would
-            # then 'launch' silently and fail. Reject it so staging fails loudly
-            # (observed: "KVRT no longer launches" = 0-byte/partial KVRT.exe).
-            if ($item.Length -lt 1048576) {
+            # error page or a partial/interrupted download; a larger file can
+            # still be a truncated download. Validate the PE header too, so a
+            # corrupt exe can never be swapped in (it would 'launch' silently
+            # and fail - the "KVRT no longer launches" failure mode).
+            if ($item.Length -lt 1048576 -or -not (Test-PeExecutable -Path $part)) {
                 Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
-                Say ("  FAILED: " + $Label + " looks incomplete (" + $item.Length + " bytes < 1 MB) - removed, re-run staging.") 'Yellow'
+                Say ("  FAILED: " + $Label + " looks incomplete or corrupt (" + $item.Length + " bytes, not a valid executable) - removed, re-run staging.") 'Yellow'
                 return $false
             }
         } catch { }
@@ -153,7 +182,7 @@ function Ensure-Tool {
             return $true
         }
         if (Test-Path -LiteralPath $Dest) {
-            Say ("  existing copy is corrupt/partial (under 1 MB) - fetching a fresh copy") 'Yellow'
+            Say ("  existing copy is corrupt/partial (under 1 MB or not a valid executable) - fetching a fresh copy") 'Yellow'
         } else {
             Say ("  not staged in " + $ToolDir + " yet - downloading") 'DarkGray'
         }

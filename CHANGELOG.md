@@ -3,6 +3,29 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.17] - 2026-08-27
+KVRT still "does not launch" (owner live report on v1.7.14) - root cause
+nailed: the staging "usable copy" check was SIZE-ONLY, so a broken-but-big
+file (e.g. a download interrupted at 30 MB, or any >1-MB non-executable) was
+treated as valid, SKIPPED by the v1.7.10 skip logic forever, and then
+launched to nothing. Fixed with a structural **PE-header validation** (MZ +
+PE\0\0 signature at e_lfanew) at every point that touches a staged exe:
+- **Get-AVTools.ps1**: Test-ToolUsable now requires a valid PE header (not
+  just >= 1 MB), so a corrupt copy is NEVER skipped - it is re-fetched.
+  Fresh downloads are PE-validated on the .part file BEFORE the atomic swap,
+  so a corrupt exe can never be staged. -Verify flags such files CORRUPT.
+- **Invoke-GUIScanner.ps1**: launch-time guard - if the resolved scanner exe
+  exists but fails the PE check, it now says exactly that
+  ("Scanner file is corrupt/truncated (not a valid executable): <path>")
+  and exits 3, instead of Start-Process silently doing nothing.
+- CI: new scanner-contract assertions for the PE check in both scripts and
+  the corrupt messages.
+- Verified with crafted-PE fixtures + a request-counted local server:
+  3-MB zeros file (valid size, no PE) is now flagged corrupt, re-downloaded
+  and swapped for a valid PE; valid-PE copies still skip with ZERO requests;
+  the launch guard exits 3 with the message on a corrupt KVRT.exe and lets a
+  valid PE through. Full CI suite green.
+
 ## [1.7.16] - 2026-08-27
 Snapshot speed-up (round 2) + live progress bar in the cmd window (owner
 directives: "can you improve the snapshot before and after logic to speed up"

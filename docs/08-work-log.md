@@ -1,4 +1,14 @@
 ----
+19. v1.7.17 - KVRT "does not launch" root cause: size-only staging check
+    (owner live report on v1.7.14)
+- A partial download bigger than 1 MB passed Test-ToolUsable, was skipped as
+  "already present" forever, then launched to nothing.
+- Fix: Test-PeExecutable (MZ + PE\0\0 at e_lfanew) required at skip time,
+  download time (on .part before swap) and launch time (Invoke-GUIScanner
+  exits 3 with a named message instead of silent nothing).
+Verified: 3MB-zeros file re-downloaded + swapped to valid PE; valid PE skips
+with 0 requests; launch guard exit 3 on corrupt, passes valid. Suite green.
+----
 18. v1.7.16 - snapshot groups + progress bar + flat-array regression fix
     (owner directives: "improve the snapshot before and after logic to speed
     up" and "add a progress bar inside the cmd so I can know its still going")

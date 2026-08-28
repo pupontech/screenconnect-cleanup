@@ -53,6 +53,8 @@ else {
     if ($text -notmatch 'corrupt/partial') { Add-Failure 'Get-AVTools.ps1 does not re-download corrupt/partial (under 1 MB) copies.' }
     if ($text -notmatch '1048576') { Add-Failure 'Get-AVTools.ps1 missing the 1 MB sanity threshold constant.' }
     if ($text -notmatch 'CORRUPT \(under 1 MB') { Add-Failure 'Get-AVTools.ps1 -Verify does not flag under-1-MB copies as corrupt.' }
+    if ($text -notmatch 'function Test-PeExecutable') { Add-Failure 'Get-AVTools.ps1 missing the PE-header validity check (Test-PeExecutable) - a broken-but-big download would be skipped as "already present".' }
+    if ($text -notmatch 'not a valid executable') { Add-Failure 'Get-AVTools.ps1 does not report corrupt PE files as such (not a valid executable).' }
     if ($text -notmatch '\$part = \$Dest \+ ''\.part''') { Add-Failure 'Get-AVTools.ps1 does not download to a .part staging file (atomic swap needed so a partial download cannot poison the staged exe).' }
     if ($text -notmatch 'Move-Item -LiteralPath \$part -Destination \$Dest') { Add-Failure 'Get-AVTools.ps1 does not atomically swap the .part file into place after the size check.' }
     if ($text -match 'Remove-Item -LiteralPath \$Dest') { Add-Failure 'Get-AVTools.ps1 deletes the destination BEFORE the download - a failed fetch leaves nothing staged (must keep the old file until a verified replacement exists).' }
@@ -80,6 +82,8 @@ else {
     if ($text -notmatch "'Malwarebytes\\Anti-Malware\\mbam\.exe'") { Add-Failure 'Invoke-GUIScanner.ps1 does not launch the Malwarebytes GUI (mbam.exe) after a successful winget install.' }
     if ($text -notmatch '\$\{env:ProgramFiles\(x86\)\}') { Add-Failure 'Invoke-GUIScanner.ps1 missing the braced ${env:ProgramFiles(x86)} mbam.exe lookup (PS 5.1-safe).' }
     if ($text -notmatch 'Drive a scan in the Malwarebytes UI') { Add-Failure 'Invoke-GUIScanner.ps1 missing the Malwarebytes GUI attended-scan prompt.' }
+    if ($text -notmatch 'Test-PeExecutable') { Add-Failure 'Invoke-GUIScanner.ps1 missing the launch-time PE-header guard - a corrupt staged exe would launch to nothing silently.' }
+    if ($text -notmatch 'Scanner file is corrupt/truncated') { Add-Failure 'Invoke-GUIScanner.ps1 missing the corrupt-scanner error message.' }
     if ($text -notmatch "Join-Path \`$scriptRoot \('tools\\AV\\' \+ \`$name\)") {
         Add-Failure 'Invoke-GUIScanner.ps1 does not search tools\\AV\\ (Get-AVTools.ps1 default staging sibling).'
     }
