@@ -45,7 +45,9 @@
       On timeout the process is LEFT RUNNING (killing it mid-scan could abort a
       cleanup mid-write); the script reports Timeout and exits 4.
     - Exit codes: 0 technician closed the tool; 2 tool failed to start;
-      3 tool not found; 4 timeout reached (process still running).
+      3 tool not found; 4 timeout reached (process still running);
+      5 launched EXE exited within the 60s launch-grace window with no
+      surviving GUI process (reported as failure, never as a completed scan).
 
   House rules: PS 5.1 compatible, pure ASCII, no BOM.
 #>
@@ -186,7 +188,13 @@ if (-not $target) {
 # The staged EXE must actually BE a Windows executable. A broken/truncated
 # file (partial download that is big enough to pass the staging size check)
 # used to "launch to nothing" silently. Name the failure instead.
-if ($target -and -not $wingetViaCmd -and -not (Test-PeExecutable -Path $target)) {
+$fileSizeBytes = $null
+$peValid = $null
+if ($target -and -not $wingetViaCmd -and (Test-Path -LiteralPath $target)) {
+    try { $fileSizeBytes = (Get-Item -LiteralPath $target).Length } catch { }
+    $peValid = Test-PeExecutable -Path $target
+}
+if ($target -and -not $wingetViaCmd -and -not $peValid) {
     Write-Host ("Scanner file is corrupt/truncated (not a valid executable): " + $target) -ForegroundColor Red
     Write-Host "Re-run Step 1 - Get-AVTools.ps1 re-fetches and validates it." -ForegroundColor Yellow
     exit 3
@@ -247,15 +255,68 @@ if ($null -eq $proc) {
 }
 
 $timedOut = $false
-if (-not $proc.WaitForExit($TimeoutMinutes * 60 * 1000)) {
-    $timedOut = $true   # deliberately NOT killed: mid-scan kill could corrupt a cleanup
+$earlyExit = $false
+$earlyExitCode = $null
+$waitMs = $TimeoutMinutes * 60 * 1000
+
+# ---------------------------------------------------------------------------
+# Wait, with a launch-grace probe for the direct EXE scanners (KVRT/ESET).
+# A real GUI scanner stays alive while the technician drives it. If the
+# launched process exits within the first 60 seconds, that is NOT a completed
+# scan: either the client's own AV killed it, the staged copy is still
+# broken, or it was a self-extracting launcher that handed off to a child
+# process. Name the failure instead of silently reporting Completed.
+# (The winget path is exempt: cmd.exe /c winget exits quickly by design.)
+# ---------------------------------------------------------------------------
+if ($toolArgs.Count -eq 0) {
+    $graceMs = 60000
+    if ($proc.WaitForExit($graceMs)) {
+        # Launched EXE exited within the grace window - suspicious.
+        try { $earlyExitCode = $proc.ExitCode } catch { }
+        $elapsedNow = [int]((Get-Date) - $start).TotalSeconds
+        # Hand-off check: a surviving child process (self-extractor pattern)
+        # means the GUI may still be up - wait on the child instead of
+        # declaring failure.
+        $handoff = $null
+        try {
+            $handoff = Get-CimInstance -ClassName Win32_Process -Filter "ParentProcessId = $($proc.Id)" -ErrorAction SilentlyContinue |
+                       Where-Object { $_.ProcessId -ne $proc.Id } | Select-Object -First 1
+        } catch { $handoff = $null }
+        if ($handoff) {
+            Write-Host ("  [i] " + $toolLabel + " launcher exited after " + $elapsedNow + "s but child " + $handoff.Name + " (PID " + $handoff.ProcessId + ") is still running - waiting on the child GUI.") -ForegroundColor Yellow
+            try {
+                $childProc = Get-Process -Id $handoff.ProcessId -ErrorAction Stop
+                $remainingMs = $waitMs - $elapsedNow * 1000
+                if ($remainingMs -lt 1000) { $remainingMs = 1000 }
+                if (-not $childProc.WaitForExit($remainingMs)) {
+                    $timedOut = $true   # deliberately NOT killed: mid-scan kill could corrupt a cleanup
+                }
+            } catch {
+                Write-Host ("  [WARN] could not attach to child process " + $handoff.ProcessId + ": " + $_.Exception.Message) -ForegroundColor Yellow
+                $earlyExit = $true
+            }
+        } else {
+            $earlyExit = $true
+        }
+    } else {
+        $remainingMs = $waitMs - $graceMs
+        if ($remainingMs -lt 1000) { $remainingMs = 1000 }
+        if (-not $proc.WaitForExit($remainingMs)) {
+            $timedOut = $true   # deliberately NOT killed: mid-scan kill could corrupt a cleanup
+        }
+    }
+} else {
+    if (-not $proc.WaitForExit($waitMs)) {
+        $timedOut = $true   # deliberately NOT killed: mid-scan kill could corrupt a cleanup
+    }
 }
 
 $end = Get-Date
 $duration = [int]($end - $start).TotalSeconds
 $exitCode = $null
 if (-not $timedOut) {
-    try { $exitCode = $proc.ExitCode } catch { }
+    if ($earlyExit) { $exitCode = $earlyExitCode }
+    else { try { $exitCode = $proc.ExitCode } catch { } }
 }
 
 # Malwarebytes: winget just installed it - launch the GUI so the technician
@@ -293,6 +354,7 @@ if ($wingetViaCmd -and -not $timedOut -and $exitCode -eq 0) {
 
 $status = 'Completed'
 if ($timedOut) { $status = 'Timeout' }
+elseif ($earlyExit) { $status = 'ExitedEarly' }
 
 $result = @{
     Tool            = $toolLabel
@@ -301,12 +363,22 @@ $result = @{
     EndTimeUtc      = $end.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
     DurationSeconds = $duration
     ProcessExitCode = $exitCode
+    ScannerPath     = $target
+    FileSizeBytes   = $fileSizeBytes
+    PeValid         = $peValid
+    EarlyExit       = $earlyExit
 }
 $result | ConvertTo-Json -Compress | Write-Output
 
 if ($timedOut) {
     Write-Host ("TIMEOUT after " + $TimeoutMinutes + " min - scanner still running; pipeline result marked Timeout.") -ForegroundColor Yellow
     exit 4
+}
+if ($earlyExit) {
+    Write-Host ("SUSPICIOUS: " + $toolLabel + " exited " + $duration + "s after launch (exit code " + $earlyExitCode + ") with no surviving GUI process. This is NOT counted as a completed scan.") -ForegroundColor Yellow
+    Write-Host "  Likely causes: the client's own antivirus blocked the tool, a stale/corrupt staged copy, or SmartScreen interference." -ForegroundColor Yellow
+    Write-Host "  Check Task Manager for kvrt*/kaspersky* processes and re-stage with Get-AVTools.ps1 -Force before retrying." -ForegroundColor Yellow
+    exit 5
 }
 
 Write-Host ("Technician closed the scanner after " + $duration + "s (exit code " + $exitCode + ").") -ForegroundColor Green

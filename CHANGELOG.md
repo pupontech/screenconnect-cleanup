@@ -3,6 +3,33 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.19] - 2026-08-28
+KVRT "does not launch" (owner live report on v1.7.17) - third report on this
+failure mode. Root-cause check: the official KVRT URL serves a real 114 MB PE
+(verified from CI, passes the v1.7.17 PE-header guard), so download/staging
+were cleared. The remaining blind spot was the LAUNCH itself:
+- **The launcher could not tell "GUI open, technician scanning" from "process
+  died instantly".** `Invoke-GUIScanner.ps1` did `Start-Process -PassThru` +
+  `WaitForExit` and reported `Completed` on ANY exit - so a KVRT that was
+  killed by the client's own AV, or a self-extracting launcher that exited
+  while its child GUI was still starting (or failing), read as a successful
+  scan.
+- **NEW - 60s launch-grace probe (direct EXE scanners only).** If the launched
+  process exits within 60s, the script now checks for a surviving child
+  process (self-extractor hand-off) and waits on it if found; if there is no
+  child, it reports `ExitedEarly` (exit code 5, shown in the report as
+  `ExitedEarly`, never as a completed scan) with guidance: client AV
+  blocking, stale staged copy (re-stage with `Get-AVTools.ps1 -Force`),
+  SmartScreen. The winget path is exempt (cmd exits quickly by design).
+- **NEW - richer scanner result JSON:** `ScannerPath`, `FileSizeBytes`,
+  `PeValid`, `EarlyExit` for every session, so the report can name what
+  actually happened instead of a bare status.
+- `sc-cleanup.ps1` Stage 5 maps exit 5 to the `ExitedEarly` status.
+- CI: new ScannerProcessContracts assertions for the grace probe + ExitedEarly.
+- Verified: parse/ASCII clean; grace-probe logic exercised on Linux against
+  the real extracted code (instant-exit -> ExitedEarly, alive-past-grace ->
+  normal wait, winget path untouched).
+
 ## [1.7.18] - 2026-08-28
 SPEC-axis review fixes (findings from the 2026-08-28 code review, items 1-9):
 - **FIX - results.json was always null on the verification fields.** Stage 9 read

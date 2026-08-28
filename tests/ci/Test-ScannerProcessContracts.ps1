@@ -84,6 +84,8 @@ else {
     if ($text -notmatch 'Drive a scan in the Malwarebytes UI') { Add-Failure 'Invoke-GUIScanner.ps1 missing the Malwarebytes GUI attended-scan prompt.' }
     if ($text -notmatch 'Test-PeExecutable') { Add-Failure 'Invoke-GUIScanner.ps1 missing the launch-time PE-header guard - a corrupt staged exe would launch to nothing silently.' }
     if ($text -notmatch 'Scanner file is corrupt/truncated') { Add-Failure 'Invoke-GUIScanner.ps1 missing the corrupt-scanner error message.' }
+    if ($text -notmatch '\$graceMs = 60000') { Add-Failure 'Invoke-GUIScanner.ps1 missing the 60s launch-grace probe - an instantly-exiting scanner would be reported as Completed.' }
+    if ($text -notmatch 'ExitedEarly') { Add-Failure 'Invoke-GUIScanner.ps1 missing the ExitedEarly status - an early-exiting scanner must never count as a completed scan.' }
     if ($text -notmatch "Join-Path \`$scriptRoot \('tools\\AV\\' \+ \`$name\)") {
         Add-Failure 'Invoke-GUIScanner.ps1 does not search tools\\AV\\ (Get-AVTools.ps1 default staging sibling).'
     }

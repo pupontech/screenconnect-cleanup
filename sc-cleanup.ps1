@@ -48,7 +48,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Constants & script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.7.18'
+$ScriptVersion = '1.7.19'
 $ScriptName = 'sc-cleanup.ps1'
 $PipelineStages = @(
     @{ Id = 0; Name = 'Preflight';            SkipFlag = '' },
@@ -720,6 +720,7 @@ $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 'sa' -St
             if ($rc -eq 2) { $status = 'LaunchFailed' }
             elseif ($rc -eq 3) { $status = 'NotInstalled' }
             elseif ($rc -eq 4) { $status = 'Timeout' }
+            elseif ($rc -eq 5) { $status = 'ExitedEarly' }
             elseif ($rc -ne 0) { $status = 'Failed' }
             $scannerResults += @{ Tool = $launch.Tool; Scanner = $launch.Scanner; Status = $status; ExitCode = $rc }
             Write-StageLog ($launch.Scanner + " session recorded: Status=" + $status + " ExitCode=" + $rc) 'Cyan'
