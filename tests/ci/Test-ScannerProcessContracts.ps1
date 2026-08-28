@@ -48,7 +48,12 @@ else {
     if ($text -notmatch 'download\.eset\.com/com/eset/tools/online_scanner/latest/esetonlinescanner\.exe') {
         Add-Failure 'Get-AVTools.ps1 missing the official ESET Online Scanner download URL.'
     }
-    if ($script:failures.Count -eq 0) { Write-Host '  OK Get-AVTools.ps1: KVRT/ESET official downloads, Malwarebytes winget-only.' }
+    if ($text -notmatch '\[switch\]\$Force') { Add-Failure 'Get-AVTools.ps1 missing the -Force re-download switch (skip-existing needs an explicit override).' }
+    if ($text -notmatch 'skipping download') { Add-Failure 'Get-AVTools.ps1 does not skip an already-present valid tool copy.' }
+    if ($text -notmatch 'corrupt/partial') { Add-Failure 'Get-AVTools.ps1 does not re-download corrupt/partial (under 1 MB) copies.' }
+    if ($text -notmatch '1048576') { Add-Failure 'Get-AVTools.ps1 missing the 1 MB sanity threshold constant.' }
+    if ($text -notmatch 'CORRUPT \(under 1 MB') { Add-Failure 'Get-AVTools.ps1 -Verify does not flag under-1-MB copies as corrupt.' }
+    if ($script:failures.Count -eq 0) { Write-Host '  OK Get-AVTools.ps1: KVRT/ESET official downloads, Malwarebytes winget-only, skip-existing staging.' }
 }
 
 # --- Contract 2: GUI scanner accepts exactly the attended scanner set -------

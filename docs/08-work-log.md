@@ -1,4 +1,18 @@
 ----
+12. v1.7.10 - Step 1 skips already-downloaded AV scanners (owner directive:
+    "check first of the tools are already downloaded if they are dont
+    download them again")
+- Get-ToolPack.ps1 already skipped via manifest; Get-AVTools.ps1 fetched
+  fresh every run. Now: Ensure-Tool keeps a valid copy (>= 1 MB) and skips;
+  corrupt/partial copies are removed + re-downloaded; -Force overrides;
+  -Verify flags <1 MB as CORRUPT (shared Test-ToolUsable rule).
+Verified: harness A (skip both, no download), B (0-byte KVRT re-downloaded,
+EOS skipped), C (-Verify CORRUPT + exit 1), D (valid -> exit 0), E (-Force
+re-downloads); full CI suite green. Real KVRT download completed during test
+B/E - the fresh-fetch path is live.
+NOT proven on Windows: live Step 1 run - second run should print
+"already present (N MB) - skipping download" for both scanners.
+----
 11. v1.7.9 - Malwarebytes launches after install (owner directive:
     "it should launch malwarebytes after install")
 - Step 6c (bat): winget ok -> locate mbam.exe (PF, then PF(x86)) ->

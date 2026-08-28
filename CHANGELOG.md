@@ -3,6 +3,31 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.10] - 2026-08-27
+Step 1 no longer re-downloads scanners that are already on disk (owner
+directive: "check if the tools are already downloaded - if they are, dont
+download them again"). Get-ToolPack.ps1 already skipped via its manifest;
+**Get-AVTools.ps1** was the offender - it fetched KVRT + ESET fresh on every
+single run (~150 MB of downloads each session):
+- **Skip-existing staging**: a staged KVRT.exe / esetonlinescanner.exe that is
+  present AND at least 1 MB (the v1.7.8 sanity threshold) is kept and skipped
+  with `already present (N MB) - skipping download`. Only missing or
+  corrupt/partial copies are fetched.
+- **Corrupt copies self-heal**: a present-but-under-1-MB file (0-byte / partial
+  / HTML error page - the v1.7.8 "KVRT does not launch" class) is removed and
+  re-downloaded automatically, so a broken stage can never silently persist.
+- **-Force** switch re-downloads even valid copies (fresh KVRT is desirable
+  before a big job); documented in the header.
+- **-Verify upgraded**: now flags under-1-MB copies as CORRUPT (red, exit 1)
+  instead of claiming "present" - verification and the skip logic share the
+  same 1 MB usability rule.
+- CI: new scanner-contract assertions for the -Force switch, the skip message,
+  the corrupt-re-download path, the 1 MB constant and the Verify CORRUPT flag.
+- Verified: harness scenarios - valid copies skipped with zero downloads;
+  0-byte KVRT flagged corrupt then re-downloaded while valid EOS was skipped;
+  -Verify exit 1 on corrupt / 0 on valid; -Force re-downloads both. Full CI
+  suite green.
+
 ## [1.7.9] - 2026-08-27
 Malwarebytes now LAUNCHES after the winget install (owner directive) - it was
 installed but never opened, so the technician had to find it in the Start Menu
