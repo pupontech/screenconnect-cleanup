@@ -23,6 +23,9 @@
 #   C5. The last step opens the report folder (Explorer) and the report
 #       itself (default browser) - in START-HERE.bat Step 10 and in
 #       sc-cleanup.ps1 Stage 9 (owner directive 2026-08-27).
+#   C6. collect-snapshot.ps1 collects sections in concurrent GROUPS
+#       (-Sections mode, Invoke-SectionGroups) and shows a live progress
+#       ticker that is not gated by -Quiet (owner directive 2026-08-28).
 #
 # Exit codes: 0 = all contracts hold, 1 = violations found.
 # PowerShell 5.1 compatible. Pure ASCII, no BOM.
@@ -188,6 +191,28 @@ if ($cleanup -notmatch 'explorer\.exe') {
 }
 if ($cleanup -notmatch 'Start-Process -FilePath \$reportHtml') {
     Add-Failure 'C5' "sc-cleanup.ps1 Stage 9 does not open the report itself (Start-Process reportHtml)."
+}
+
+# --- C6: snapshot group concurrency + live progress --------------------------
+# Owner directive 2026-08-28: speed up the before/after snapshots further and
+# show progress in the cmd window. collect-snapshot.ps1 must collect sections
+# in concurrent groups (-Sections mode) and tick a visible progress line that
+# is NOT gated by -Quiet (the guided runner passes -Quiet).
+$snap = Read-AsciiText (Join-Path $repoRoot 'collect-snapshot.ps1')
+if ($snap -notmatch '\[string\]\$Sections') {
+    Add-Failure 'C6' "collect-snapshot.ps1 missing the -Sections group-collection parameter."
+}
+if ($snap -notmatch 'Sections = \$map') {
+    Add-Failure 'C6' "collect-snapshot.ps1 does not emit the {Sections} group envelope."
+}
+if ($snap -notmatch 'Invoke-SectionGroups') {
+    Add-Failure 'C6' "collect-snapshot.ps1 missing the concurrent group runner (Invoke-SectionGroups)."
+}
+if ($snap -notmatch 'Write-Tick') {
+    Add-Failure 'C6' "collect-snapshot.ps1 missing the live progress ticker (Write-Tick)."
+}
+if ($snap -notmatch '\[snapshot " \+ \$Label') {
+    Add-Failure 'C6' "collect-snapshot.ps1 progress ticker does not label before/after."
 }
 
 if ($failures.Count -gt 0) {

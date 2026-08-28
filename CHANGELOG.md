@@ -3,6 +3,34 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.16] - 2026-08-27
+Snapshot speed-up (round 2) + live progress bar in the cmd window (owner
+directives: "can you improve the snapshot before and after logic to speed up"
+and "add a progress bar inside the cmd so I can know its still going"):
+- **Concurrent GROUPS instead of sequential waves.** v1.7.12 ran 4 waves one
+  after another (wall-clock = SUM of the waves). v1.7.16 starts all 4 groups
+  at once - CIM (scheduled tasks/services/accounts/WMI), network
+  (connections/firewall/processes/installed programs), registry (autoruns/
+  BAM-DAM/UserAssist/startup folders) and files (prefetch/ShimCache) - so
+  wall-clock = the SLOWEST group. Same 4-process peak as one old wave, only 4
+  job spawns instead of 14. Per-group sequential fallback and -NoParallel are
+  unchanged.
+- **Live progress ticker**: while collecting, the console shows
+  `[snapshot before] 12/17 sections, 34s elapsed` on a self-overwriting line.
+  It is NOT gated by -Quiet (the guided runner passes -Quiet and this is
+  exactly what the technician needs to see), and it labels before/after.
+- **CRITICAL FIX - flat section arrays restored.** The v1.7.12 wave merge used
+  the comma-wrap idiom (", @(...)") which double/triple-nested every section
+  in the output JSON: v1.7.12-15 shipped "[[[rows]]]" instead of "[rows]" (and
+  "[[]]" for empty sections). The diff/report still ran, but section arrays
+  were wrapped 2-3 levels deep. v1.7.16 stores rows flat (capture-then-
+  collect), verified with empty and non-empty synthetic data through the
+  whole receive/merge pipeline, and the diff-snapshots chain returns
+  "Verdict: CLEAN".
+- CI: new C6 contracts (group mode, {Sections} envelope, group runner, ticker
+  with before/after label). Verified: Linux e2e rc=0 with all 17 sections
+  flat, group-mode envelope smoke, -NoParallel e2e, diff chain, full suite.
+
 ## [1.7.15] - 2026-08-27
 One-liner install via irm | iex (owner directive: "can you create a irm/iex
 cmd line version of this tool and add to readme"):

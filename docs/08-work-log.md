@@ -1,4 +1,18 @@
 ----
+18. v1.7.16 - snapshot groups + progress bar + flat-array regression fix
+    (owner directives: "improve the snapshot before and after logic to speed
+    up" and "add a progress bar inside the cmd so I can know its still going")
+- Groups: 4 concurrent group jobs (CIM/network/registry/files) replace the
+  sequential waves -> wall-clock = slowest group, not sum of waves. 4 job
+  spawns, 4-process peak, per-group sequential fallback, -NoParallel intact.
+- Ticker: "[snapshot before] 12/17 sections, 34s elapsed" self-overwriting
+  line, NOT gated by -Quiet, labels before/after; serial tail ticks too.
+- REGRESSION FIX: v1.7.12-15 comma-wrap merge nested every section
+  ([[[rows]]]); v1.7.16 stores flat (probe-verified idiom: $out=<call>;
+  @($out)). Empty sections -> [], rows -> [row,row].
+Verified: e2e flat sections, group envelope smoke, synthetic-row receive
+proof, diff chain CLEAN, full CI green (C6 contracts added).
+----
 17. v1.7.15 - irm/iex one-liner bootstrap (owner directive: "can you create a
     irm/iex cmd line version of this tool and add to readme")
 - install-latest.ps1: latest-release API -> zip -> Desktop\ScreenConnect-

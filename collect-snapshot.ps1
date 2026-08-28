@@ -73,7 +73,8 @@ param(
     [string]$OutFile,
     [string]$Label = 'before',
     [int]$IncidentWindowDays = 0,
-    [string]$Section = '',      # internal: collect ONE section and exit (parallel jobs)
+    [string]$Section = '',      # internal: collect ONE section and exit (manual / single-section jobs)
+    [string]$Sections = '',     # internal: collect a comma-separated GROUP of sections and exit (v1.7.16 group jobs)
     [switch]$NoParallel,        # collect everything sequentially (no background jobs)
     [switch]$Quiet
 )
@@ -1228,121 +1229,196 @@ if (-not $OutFile) {
 Write-Info "Collecting snapshot (Label=$Label, IncidentWindowDays=$IncidentWindowDays)..."
 
 # ---------------------------------------------------------------------------
-# Single-section mode (used by the parallel jobs below): collect ONE section,
-# emit {Section, Data, Errors} as one JSON line, exit. Also lets a caller
-# collect just one section manually (collect-snapshot.ps1 -Section ScheduledTasks).
+# Single/group section mode (used by the parallel jobs below): collect one
+# section (-Section) or a comma-separated group (-Sections), emit one JSON
+# line, exit. Also lets a caller collect sections manually.
 # ---------------------------------------------------------------------------
-if ($Section) {
-    $data = $null
-    switch ($Section) {
-        'ScheduledTasks'    { $data = Sort-ByKey (Invoke-Section -Name 'ScheduledTasks' -ScriptBlock { Get-ScheduledTasksSection }) }
-        'FirewallRules'     { $data = Sort-ByKey (Invoke-Section -Name 'FirewallRules' -ScriptBlock { Get-FirewallRulesSection }) }
-        'Connections'       { $data = Sort-ByKey (Invoke-Section -Name 'Connections' -ScriptBlock { Get-ConnectionsSection }) }
-        'Services'          { $data = Sort-ByKey (Invoke-Section -Name 'Services' -ScriptBlock { Get-ServicesSection }) }
-        'Processes'         { $data = Sort-ByKey (Invoke-Section -Name 'Processes' -ScriptBlock { Get-ProcessesSection }) }
-        'LocalAccounts'     { $data = Sort-ByKey (Invoke-Section -Name 'LocalAccounts' -ScriptBlock { Get-LocalAccountsSection }) }
-        'WmiPersistence'    { $data = Sort-ByKey (Invoke-Section -Name 'WmiPersistence' -ScriptBlock { Get-WmiPersistenceSection }) }
-        'RegistryAutoruns'  { $data = Sort-ByKey (Invoke-Section -Name 'RegistryAutoruns' -ScriptBlock { Get-RegistryAutorunsSection }) }
-        'InstalledPrograms' { $data = Sort-ByKey (Invoke-Section -Name 'InstalledPrograms' -ScriptBlock { Get-InstalledProgramsSection }) }
-        'BamDam'            { $data = Sort-ByKey (Invoke-Section -Name 'BamDam' -ScriptBlock { Get-BamDamSection -WindowDays $IncidentWindowDays }) }
-        'UserAssist'        { $data = Sort-ByKey (Invoke-Section -Name 'UserAssist' -ScriptBlock { Get-UserAssistSection -WindowDays $IncidentWindowDays }) }
-        'Prefetch'          { $data = Sort-ByKey (Invoke-Section -Name 'Prefetch' -ScriptBlock { Get-PrefetchSection -WindowDays $IncidentWindowDays }) }
-        'ShimCache'         { $data = Sort-ByKey (Invoke-Section -Name 'ShimCache' -ScriptBlock { Get-ShimCacheSection -WindowDays $IncidentWindowDays }) }
-        'StartupFolders'    { $data = Sort-ByKey (Invoke-Section -Name 'StartupFolders' -ScriptBlock { Get-StartupFoldersSection }) }
-        default {
-            Write-Host ("Unknown section: " + $Section) -ForegroundColor Red
-            exit 2
-        }
+function Get-SectionDataByName {
+    # Returns a FLAT row array for one section (capture-then-collect; see
+    # Add-WaveData for why the comma-wrap idiom must not be used here).
+    param([string]$Name)
+    switch ($Name) {
+        'ScheduledTasks'    { $out = Sort-ByKey (Invoke-Section -Name 'ScheduledTasks' -ScriptBlock { Get-ScheduledTasksSection }); return @($out) }
+        'FirewallRules'     { $out = Sort-ByKey (Invoke-Section -Name 'FirewallRules' -ScriptBlock { Get-FirewallRulesSection }); return @($out) }
+        'Connections'       { $out = Sort-ByKey (Invoke-Section -Name 'Connections' -ScriptBlock { Get-ConnectionsSection }); return @($out) }
+        'Services'          { $out = Sort-ByKey (Invoke-Section -Name 'Services' -ScriptBlock { Get-ServicesSection }); return @($out) }
+        'Processes'         { $out = Sort-ByKey (Invoke-Section -Name 'Processes' -ScriptBlock { Get-ProcessesSection }); return @($out) }
+        'LocalAccounts'     { $out = Sort-ByKey (Invoke-Section -Name 'LocalAccounts' -ScriptBlock { Get-LocalAccountsSection }); return @($out) }
+        'WmiPersistence'    { $out = Sort-ByKey (Invoke-Section -Name 'WmiPersistence' -ScriptBlock { Get-WmiPersistenceSection }); return @($out) }
+        'RegistryAutoruns'  { $out = Sort-ByKey (Invoke-Section -Name 'RegistryAutoruns' -ScriptBlock { Get-RegistryAutorunsSection }); return @($out) }
+        'InstalledPrograms' { $out = Sort-ByKey (Invoke-Section -Name 'InstalledPrograms' -ScriptBlock { Get-InstalledProgramsSection }); return @($out) }
+        'BamDam'            { $out = Sort-ByKey (Invoke-Section -Name 'BamDam' -ScriptBlock { Get-BamDamSection -WindowDays $IncidentWindowDays }); return @($out) }
+        'UserAssist'        { $out = Sort-ByKey (Invoke-Section -Name 'UserAssist' -ScriptBlock { Get-UserAssistSection -WindowDays $IncidentWindowDays }); return @($out) }
+        'Prefetch'          { $out = Sort-ByKey (Invoke-Section -Name 'Prefetch' -ScriptBlock { Get-PrefetchSection -WindowDays $IncidentWindowDays }); return @($out) }
+        'ShimCache'         { $out = Sort-ByKey (Invoke-Section -Name 'ShimCache' -ScriptBlock { Get-ShimCacheSection -WindowDays $IncidentWindowDays }); return @($out) }
+        'StartupFolders'    { $out = Sort-ByKey (Invoke-Section -Name 'StartupFolders' -ScriptBlock { Get-StartupFoldersSection }); return @($out) }
+        default { throw ("Unknown section: " + $Name) }
     }
+}
+
+if ($Section) {
+    $out = Get-SectionDataByName -Name $Section
+    $data = @($out)
     $errs = New-Object System.Collections.ArrayList
     foreach ($e in $script:CollectionErrors) { [void]$errs.Add($e.Error) }
-    if ($null -eq $data) { $data = @() }
-    [pscustomobject]@{ Section = $Section; Data = @($data); Errors = $errs.ToArray() } |
+    [pscustomobject]@{ Section = $Section; Data = $data; Errors = $errs.ToArray() } |
+        ConvertTo-Json -Depth 8 -Compress | Write-Output
+    exit 0
+}
+
+if ($Sections) {
+    $map = [ordered]@{}
+    foreach ($n in ($Sections -split ',')) {
+        $n = $n.Trim()
+        if (-not $n) { continue }
+        $out = Get-SectionDataByName -Name $n
+        $map[$n] = @($out)
+    }
+    $errs = New-Object System.Collections.ArrayList
+    foreach ($e in $script:CollectionErrors) { [void]$errs.Add([pscustomobject]@{ Section = $e.Section; Error = $e.Error }) }
+    [pscustomobject]@{ Sections = $map; Errors = $errs.ToArray() } |
         ConvertTo-Json -Depth 8 -Compress | Write-Output
     exit 0
 }
 
 # ---------------------------------------------------------------------------
+# Parallel section collection (v1.7.16 - concurrent GROUPS + live progress):
+# the independent sections run in at most 4 concurrent background jobs - each
+# job collects a GROUP of sections via -Sections mode and emits one JSON line
+# {Sections: {name: data}, Errors: [{Section, Error}]}. v1.7.6 parallelized 3
+# sections; v1.7.12 ran sequential waves (wall-clock = SUM of waves); v1.7.16
+# starts every group at once, so wall-clock = MAX of the groups (same
+# 4-process peak as one old wave, only 4 job spawns instead of 14). Every
+# group falls back to its sections' sequential in-process blocks on ANY
+# failure (spawn, timeout, bad payload). While waiting, a live progress line
+# ticks in the console so the technician can see the snapshot is still
+# working - this is NOT gated by -Quiet (the guided runner runs -Quiet and
+# the progress bar is exactly what the technician needs to see).
+# Disable all background jobs with -NoParallel.
 # ---------------------------------------------------------------------------
-# Parallel section collection (v1.7.6+, extended v1.7.12 to bounded WAVES):
-# the independent sections run in background jobs - each job collects exactly
-# one section via -Section mode and emits {Section, Data, Errors} as one JSON
-# line. Wave A (scheduled tasks / firewall rules / network connections) has
-# been parallel since v1.7.6; v1.7.12 groups the rest of the slow sections
-# into waves of at most 4 concurrent jobs (CIM group, registry group, file
-# group) so a weak client never spawns a powershell.exe per section. Every
-# job falls back to its sequential in-process path on any failure (spawn,
-# timeout, bad payload). Disable everything with -NoParallel.
-# ---------------------------------------------------------------------------
-function Invoke-SectionJob {
-    # Start ONE background job that collects $Name via -Section mode.
+$script:waveData = @{}
+$script:doneSections = 0
+$script:groupTotal = 0
+
+function Add-WaveData {
+    # Store a section's rows FLAT. The comma-wrap idiom (", @(...)") that the
+    # older wave code used double/triple-nested sections in the final JSON
+    # (v1.7.12-15 shipped "[[[rows]]]" instead of "[rows]"). @($Data) collects
+    # the captured pipeline output, which stays flat for empty and non-empty.
+    param([string]$Name, $Data)
+    $script:waveData[$Name] = @($Data)
+    $script:doneSections++
+}
+
+function Write-Tick {
+    # Live "still working" line, overwritten in place with a carriage return.
+    param([switch]$ForceNewLine)
+    $el = [int]((Get-Date) - $startTime).TotalSeconds
+    $msg = "  [snapshot " + $Label + "] " + $script:doneSections + "/" + $script:groupTotal + " sections, " + $el + "s elapsed"
+    if ($ForceNewLine) {
+        Write-Host ("`r" + $msg + "      ")
+    } else {
+        Write-Host -NoNewline ("`r" + $msg + "      ")
+    }
+}
+
+function Invoke-GroupJob {
+    # Start ONE background job that collects $SectionList via -Sections mode.
     # Returns the job, or $null when the job could not be spawned.
-    param([string]$Name, [string]$ScriptPath)
+    param([string]$SectionList, [string]$ScriptPath)
     try {
         return (Start-Job -ScriptBlock {
             param($p, $s, $w)
-            & $p -Section $s -Quiet -NoParallel -IncidentWindowDays $w
-        } -ArgumentList $ScriptPath, $Name, $IncidentWindowDays)
+            & $p -Sections $s -Quiet -NoParallel -IncidentWindowDays $w
+        } -ArgumentList $ScriptPath, $SectionList, $IncidentWindowDays)
     } catch {
         return $null
     }
 }
 
-function Receive-SectionJob {
-    # Wait for one section job, parse its JSON envelope, and on ANY failure
-    # (no job, timeout, unparsable payload, wrong section) fall back to the
-    # sequential in-process block. Always returns an array.
-    param([string]$Name, $Job, [scriptblock]$SequentialBlock)
-    if ($null -eq $Job) {
-        Write-Info ("  (parallel " + $Name + " failed to start - using sequential path)")
-        return , @(& $SequentialBlock)
-    }
+function Receive-GroupJob {
+    # Parse a group job's {Sections, Errors} envelope and merge every section
+    # into $script:waveData. Returns $true on success; $false on any failure
+    # (the caller then runs that group's sections sequentially in-process).
+    param([string]$Group, $Job, [string[]]$Members)
+    if ($null -eq $Job) { return $false }
     try {
-        $null = Wait-Job -Job $Job -Timeout 300
         $raw = Receive-Job -Job $Job -ErrorAction Stop
-        Remove-Job -Job $Job -Force
         $text = ($raw | Out-String).Trim()
-        if ($text) {
-            $parsed = $null
-            try { $parsed = $text | ConvertFrom-Json } catch { }
-            if ($null -ne $parsed -and $parsed.Section -eq $Name -and $null -ne $parsed.Data) {
-                if ($parsed.Errors) {
-                    foreach ($pe in @($parsed.Errors)) { Add-CollectionError -Section $Name -ErrorText ([string]$pe) }
-                }
-                return , @($parsed.Data)
+        if (-not $text) { return $false }
+        $parsed = $null
+        try { $parsed = $text | ConvertFrom-Json } catch { }
+        if ($null -eq $parsed -or $null -eq $parsed.Sections) { return $false }
+        foreach ($n in $Members) {
+            if ($null -ne $parsed.Sections.$n) {
+                Add-WaveData -Name $n -Data @($parsed.Sections.$n)
+            } else {
+                Add-WaveData -Name $n -Data @()
             }
         }
-        Write-Info ("  (parallel " + $Name + " returned nothing - using sequential path)")
+        if ($parsed.Errors) {
+            foreach ($pe in @($parsed.Errors)) {
+                $secName = $pe.Section
+                $errText = $pe.Error
+                if (-not $secName) { $secName = $Group }
+                Add-CollectionError -Section $secName -ErrorText ([string]$errText)
+            }
+        }
+        return $true
     } catch {
-        Write-Info ("  (parallel " + $Name + " failed - using sequential path)")
+        return $false
     }
-    return , @(& $SequentialBlock)
 }
 
-function Invoke-SectionWave {
-    # Run a group of sections as one bounded wave: start all their jobs first,
-    # then wait for each (so they actually overlap), each with its own
-    # sequential fallback. Results land in $script:waveData[<name>].
-    param([string[]]$Names, [hashtable]$Blocks, [string]$ScriptPath)
+function Invoke-SectionGroups {
+    # Start all group jobs at once (bounded at 4), wait with a live progress
+    # tick, merge results. A failed group runs its sections sequentially
+    # in-process instead. Results land in $script:waveData[<section>].
+    param([string[]]$GroupNames, [hashtable]$GroupMembers, [hashtable]$Blocks, [string]$ScriptPath)
+    foreach ($g in $GroupNames) { $script:groupTotal += @($GroupMembers[$g]).Count }
+
+    if ($NoParallel) {
+        foreach ($g in $GroupNames) {
+            foreach ($n in @($GroupMembers[$g])) {
+                Add-WaveData -Name $n -Data (& $Blocks[$n])
+            }
+        }
+        Write-Tick -ForceNewLine
+        return
+    }
+
     $jobs = @{}
-    foreach ($n in $Names) {
-        if ($NoParallel) {
-            $script:waveData[$n] = , @(& $Blocks[$n])
-        } else {
-            $jobs[$n] = Invoke-SectionJob -Name $n -ScriptPath $ScriptPath
-        }
+    foreach ($g in $GroupNames) {
+        $jobs[$g] = Invoke-GroupJob -SectionList (@($GroupMembers[$g]) -join ',') -ScriptPath $ScriptPath
     }
-    if (-not $NoParallel) {
-        foreach ($n in $Names) {
-            $script:waveData[$n] = , @(Receive-SectionJob -Name $n -Job $jobs[$n] -SequentialBlock $Blocks[$n])
-        }
-    }
-}
 
-function Invoke-ParallelSection {
-    param([string]$Name, [scriptblock]$SequentialBlock, [string]$ScriptPath)
-    if ($NoParallel) { return , @(& $SequentialBlock) }
-    return , @(Receive-SectionJob -Name $Name -Job (Invoke-SectionJob -Name $Name -ScriptPath $ScriptPath) -SequentialBlock $SequentialBlock)
+    $pending = @($GroupNames)
+    while ($pending.Count -gt 0) {
+        $live = @($pending | Where-Object { $null -ne $jobs[$_] })
+        if ($live.Count -gt 0) {
+            $null = Wait-Job -Job ($live | ForEach-Object { $jobs[$_] }) -Timeout 2
+        }
+        $still = @()
+        foreach ($g in $pending) {
+            if ($null -eq $jobs[$g]) {
+                # job could not be spawned -> sequential fallback now
+                Write-Info ("  (parallel group " + $g + " failed to start - using sequential path)")
+                foreach ($n in @($GroupMembers[$g])) { Add-WaveData -Name $n -Data (& $Blocks[$n]) }
+                continue
+            }
+            if ($jobs[$g].State -eq 'Running') { $still += $g; continue }
+            # finished (Completed / Failed / Stopped): merge, or fall back
+            $ok = Receive-GroupJob -Group $g -Job $jobs[$g] -Members @($GroupMembers[$g])
+            Remove-Job -Job $jobs[$g] -Force
+            if (-not $ok) {
+                Write-Info ("  (parallel group " + $g + " returned nothing - using sequential path)")
+                foreach ($n in @($GroupMembers[$g])) { Add-WaveData -Name $n -Data (& $Blocks[$n]) }
+            }
+        }
+        $pending = $still
+        Write-Tick
+    }
+    Write-Tick -ForceNewLine
 }
 
 $isAdmin = Test-IsAdmin
@@ -1355,46 +1431,53 @@ try {
     Add-CollectionError -Section 'OSInfo' -ErrorText $_.Exception.Message
 }
 
-Write-Info '  - Wave A: scheduled tasks, network connections, firewall rules (parallel)'
-$scheduledTasks = Invoke-ParallelSection -Name 'ScheduledTasks' -SequentialBlock { Sort-ByKey (Invoke-Section -Name 'ScheduledTasks' -ScriptBlock { Get-ScheduledTasksSection }) } -ScriptPath $PSCommandPath
-$connections = Invoke-ParallelSection -Name 'Connections' -SequentialBlock { Sort-ByKey (Invoke-Section -Name 'Connections' -ScriptBlock { Get-ConnectionsSection }) } -ScriptPath $PSCommandPath
-$firewallRules = Invoke-ParallelSection -Name 'FirewallRules' -SequentialBlock { Sort-ByKey (Invoke-Section -Name 'FirewallRules' -ScriptBlock { Get-FirewallRulesSection }) } -ScriptPath $PSCommandPath
-
-$script:waveData = @{}
-$waveBlocks = @{
+$sectionBlocks = @{
+    'ScheduledTasks'    = { Sort-ByKey (Invoke-Section -Name 'ScheduledTasks' -ScriptBlock { Get-ScheduledTasksSection }) }
     'Services'          = { Sort-ByKey (Invoke-Section -Name 'Services' -ScriptBlock { Get-ServicesSection }) }
     'Processes'         = { Sort-ByKey (Invoke-Section -Name 'Processes' -ScriptBlock { Get-ProcessesSection }) }
     'LocalAccounts'     = { Sort-ByKey (Invoke-Section -Name 'LocalAccounts' -ScriptBlock { Get-LocalAccountsSection }) }
     'WmiPersistence'    = { Sort-ByKey (Invoke-Section -Name 'WmiPersistence' -ScriptBlock { Get-WmiPersistenceSection }) }
-    'RegistryAutoruns'  = { Sort-ByKey (Invoke-Section -Name 'RegistryAutoruns' -ScriptBlock { Get-RegistryAutorunsSection }) }
+    'Connections'       = { Sort-ByKey (Invoke-Section -Name 'Connections' -ScriptBlock { Get-ConnectionsSection }) }
+    'FirewallRules'     = { Sort-ByKey (Invoke-Section -Name 'FirewallRules' -ScriptBlock { Get-FirewallRulesSection }) }
     'InstalledPrograms' = { Sort-ByKey (Invoke-Section -Name 'InstalledPrograms' -ScriptBlock { Get-InstalledProgramsSection }) }
+    'RegistryAutoruns'  = { Sort-ByKey (Invoke-Section -Name 'RegistryAutoruns' -ScriptBlock { Get-RegistryAutorunsSection }) }
     'BamDam'            = { Sort-ByKey (Invoke-Section -Name 'BamDam' -ScriptBlock { Get-BamDamSection -WindowDays $IncidentWindowDays }) }
     'UserAssist'        = { Sort-ByKey (Invoke-Section -Name 'UserAssist' -ScriptBlock { Get-UserAssistSection -WindowDays $IncidentWindowDays }) }
+    'StartupFolders'    = { Sort-ByKey (Invoke-Section -Name 'StartupFolders' -ScriptBlock { Get-StartupFoldersSection }) }
     'Prefetch'          = { Sort-ByKey (Invoke-Section -Name 'Prefetch' -ScriptBlock { Get-PrefetchSection -WindowDays $IncidentWindowDays }) }
     'ShimCache'         = { Sort-ByKey (Invoke-Section -Name 'ShimCache' -ScriptBlock { Get-ShimCacheSection -WindowDays $IncidentWindowDays }) }
-    'StartupFolders'    = { Sort-ByKey (Invoke-Section -Name 'StartupFolders' -ScriptBlock { Get-StartupFoldersSection }) }
 }
 
-Write-Info '  - Wave B: services, processes, accounts, WMI persistence (parallel)'
-Invoke-SectionWave -Names @('Services', 'Processes', 'LocalAccounts', 'WmiPersistence') -Blocks $waveBlocks -ScriptPath $PSCommandPath
+# 14 sections collect in 4 CONCURRENT groups (same 4-process peak as one old
+# wave, but wall-clock = the slowest group instead of the sum of all waves).
+$groupMembers = @{
+    'CIM'      = @('ScheduledTasks', 'Services', 'LocalAccounts', 'WmiPersistence')
+    'Network'  = @('Connections', 'FirewallRules', 'Processes', 'InstalledPrograms')
+    'Registry' = @('RegistryAutoruns', 'BamDam', 'UserAssist', 'StartupFolders')
+    'Files'    = @('Prefetch', 'ShimCache')
+}
 
-Write-Info '  - Wave C: registry autoruns, installed programs, BAM/DAM, UserAssist (parallel)'
-Invoke-SectionWave -Names @('RegistryAutoruns', 'InstalledPrograms', 'BamDam', 'UserAssist') -Blocks $waveBlocks -ScriptPath $PSCommandPath
+Write-Info '  - Collecting 14 sections in 4 concurrent groups (CIM, network, registry, files)'
+Invoke-SectionGroups -GroupNames @('CIM', 'Network', 'Registry', 'Files') -GroupMembers $groupMembers -Blocks $sectionBlocks -ScriptPath $PSCommandPath
 
-Write-Info '  - Wave D: prefetch, ShimCache, startup folders (parallel)'
-Invoke-SectionWave -Names @('Prefetch', 'ShimCache', 'StartupFolders') -Blocks $waveBlocks -ScriptPath $PSCommandPath
-
+$scheduledTasks    = $script:waveData['ScheduledTasks']
 $services          = $script:waveData['Services']
 $processes         = $script:waveData['Processes']
 $localAccounts     = $script:waveData['LocalAccounts']
 $wmiPersistence    = $script:waveData['WmiPersistence']
-$registryAutoruns  = $script:waveData['RegistryAutoruns']
+$connections       = $script:waveData['Connections']
+$firewallRules     = $script:waveData['FirewallRules']
 $installedPrograms = $script:waveData['InstalledPrograms']
+$registryAutoruns  = $script:waveData['RegistryAutoruns']
 $bamDam            = $script:waveData['BamDam']
 $userAssist        = $script:waveData['UserAssist']
+$startupFolders    = $script:waveData['StartupFolders']
 $prefetch          = $script:waveData['Prefetch']
 $shimCache         = $script:waveData['ShimCache']
-$startupFolders    = $script:waveData['StartupFolders']
+
+# Serial tail: 3 more sections (system settings, recent files, SRUM) so the
+# progress counter runs to 17/17.
+$script:groupTotal = 17
 
 $rdpEnabled = $null
 try {
@@ -1409,6 +1492,8 @@ try {
 } catch {
     Add-CollectionError -Section 'SystemSettings' -ErrorText "Hosts file: $($_.Exception.Message)"
 }
+$script:doneSections = 15
+Write-Tick
 
 $recentFiles = @()
 $recentFilesCapHit = $false
@@ -1424,6 +1509,8 @@ if ($IncidentWindowDays -gt 0) {
         Add-CollectionError -Section 'RecentFiles' -ErrorText ($_.Exception.Message + $errLoc)
     }
 }
+$script:doneSections = 16
+Write-Tick
 
 $srumSnapshotDir = ''
 try {
@@ -1449,6 +1536,8 @@ try {
         OfflineCopyError = $_.Exception.Message; Limitations = @('Section failed entirely.')
     }
 }
+$script:doneSections = 17
+Write-Tick -ForceNewLine
 
 $result = [ordered]@{
     SchemaVersion      = $SchemaVersion
