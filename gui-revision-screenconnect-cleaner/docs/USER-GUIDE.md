@@ -59,12 +59,17 @@ Use `-WhatIf` to preview. Use `-Uninstall` to remove only what the installer pla
 The main view is a **runbook**: the same script list as the cmd version, as
 checkboxes, with a Run button and a live progress bar.
 
-- **Runbook checklist** - one checkbox per stage/script, in order:
-  Preflight, BEFORE snapshot, Remote-access detection, Review findings,
-  Contain + remove, Antivirus scans, AFTER snapshot, Before/After diff,
-  Investigation report. Checking a stage automatically checks everything
-  before it (scripts need their prerequisites); unchecking a stage unchecks
-  everything after it. All stages are checked by default (= full investigation).
+- **Runbook checklist** - one checkbox per step, mirroring the cmd version
+  (START-HERE.bat) 1:1:
+  Step 1 Build/verify tool pack, Step 2 Preflight checks, Step 3 BEFORE
+  snapshot, Step 4 Remote-access detection, Review findings (internal plan
+  gate), Step 5 REMOVE ScreenConnect, Step 6 Antivirus scans, Step 7 Tikun
+  (general fix), Step 8 Uninstall installed AV, Step 9 AFTER snapshot +
+  Before/After diff, Step 10 Investigation report. Checking a step
+  automatically checks everything before it (scripts need their
+  prerequisites); unchecking a step unchecks everything after it.
+  Destructive/attended-removal steps (5 REMOVE, 7 Tikun, 8 Uninstall AV)
+  are OFF by default - tick them explicitly to include them.
 - **Run Selected** - runs only the checked stages, in order, in the background.
 - **Run All** - checks every stage and runs the full investigation.
 - **Script progress bar** - shows overall progress and the currently running
@@ -86,7 +91,14 @@ previous runs for resume.
 
 ## Full Workflow Walkthrough
 
-### Stage 0: Preflight
+### Step 1: Build/verify tool pack (runbook stage 0)
+
+Resolves and verifies the core tool set (KVRT, ESET Online Scanner,
+Malwarebytes) via Scc.Tools: local cache -> NAS -> official vendor, with
+hash/signature verification. Non-fatal: missing tools are recorded and the
+run continues (the Scanners step will report them as unavailable).
+
+### Stage 1 (runbook step 2): Preflight
 - Admin elevation check (refuses if not admin and not overridden)
 - Restore point creation (configurable, default ON; verifies System Restore is actually enabled)
 - Working directory creation under `Documents\ScreenConnect Cleanup\Reports\SC-<date>-<host>-<time>\`
@@ -145,24 +157,43 @@ Per approved REMOVE item (ScreenConnect only):
 
 Writes `remediation.json` (every action, result, error) + `quarantine-manifest.json` (OriginalPath, QuarantinePath, SHA256, SizeBytes, MovedUtc, FindingId, Reason, ActionType, RestoreInstructions).
 
-### Stage 5: Scanners
-Runs enabled CLI scanners sequentially (Defender, KVRT, MSERT):
-- **Defender**: `MpCmdRun -Scan -ScanType 3 -DisableRemediation` on system drive; threat history read separately (labeled historical)
-- **KVRT**: Documented CLI, log dir `%SystemDrive%\KVRT*_Data`
-- **MSERT**: Documented CLI, log `%SystemRoot%\debug\msert.log`
+### Stage 6 (runbook step 6): Scanners
+Runs the **attended scanner trio** (owner AV policy - visible GUI, wait for
+close, no silent flags):
+- **KVRT** (Kaspersky Virus Removal Tool) - GUI launch, technician drives it
+- **ESET Online Scanner** - GUI launch, technician drives it
+- **Malwarebytes** - GUI launch, technician drives it
 
-Attended scanners (AdwCleaner, ESET Online, Malwarebytes):
-- Launch visible GUI, wait for close
-- Record Start/End/Duration + Result (Completed/Aborted/Timeout/LaunchFailed)
-
-Results written to `scanner-results/`. Skippable via `-SkipScanners` or Settings.
+Each tool is resolved via Scc.Tools (local cache -> NAS -> official vendor)
+first; a missing tool is recorded as `ToolUnavailable`, never fatal. Results
+are written to `scanner-results/` with Start/End/Duration + Result
+(Completed/Aborted/Timeout/LaunchFailed/ToolUnavailable). Skippable via
+`-SkipScanners` or Settings.
 
 **Scanner failure is non-fatal AND reported as failure** - never silently swallowed into a "clean" verdict.
 
-### Stage 6: Snapshot B (After)
+### Stage 7 (runbook step 7): Tikun (general fix)
+Attended launch of the legacy GeneralFix runner (the cmd version's
+"general fix" - deletes aggressively and can install a boot/USB scheduled
+task, so it is **destructive and OFF by default** in the runbook). The
+runner is not bundled with the GUI; it is located via config `tikun.path`,
+env `SCC_TIKUN_PATH`, `tools\GeneralFix` under the app folder, or
+`C:\Tools\GeneralFix`. When absent the stage records `ToolUnavailable`
+(non-fatal).
+
+### Stage 8 (runbook step 8): Uninstall installed third-party AV (attended)
+Discovers installed third-party security products (registry Uninstall keys,
+conservative vendor heuristic, Windows Defender/MSRT excluded) and opens
+each vendor uninstaller as a visible window for the technician to drive.
+Malwarebytes is uninstalled via winget when available. A leftover sweep
+moves remaining Start Menu / install-folder items to
+`<run>\av-uninstall-quarantine` (never deleted). Results land in
+`av-uninstall-results.json`. OFF by default in the runbook.
+
+### Stage 9 (runbook step 9): Snapshot B (After)
 Same collection as Stage 1, post-remediation.
 
-### Stage 7: Compare
+### Stage 10 (runbook step 9b): Compare
 Diffs Snapshot A vs B per section:
 - **Removed** - items in A not in B
 - **Still Present** - items in both
@@ -173,7 +204,7 @@ Flags resurrections in SC installations and remote-access services specifically.
 
 Writes `snapshots/diff.json`.
 
-### Stage 8: Report
+### Stage 11 (runbook step 10): Report
 Generates in run directory:
 - `report.html` - Self-contained, XSS-safe, all sections (see Report Locations)
 - `report.json` - Machine-readable everything

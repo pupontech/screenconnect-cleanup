@@ -10,7 +10,7 @@ Describe 'Module import (headless / Linux)' {
         (Get-Module -Name PresentationFramework) | Should -BeNullOrEmpty
         (Get-Module -Name Scc.UI) | Should -Not -BeNullOrEmpty
     }
-    It 'exports exactly the 12 public functions' {
+    It 'exports exactly the 13 public functions' {
         $fns = (Get-Command -Module Scc.UI).Name | Sort-Object
         $expected = @(
             'Get-SccNextStage', 'Get-SccRunbookStages', 'New-SccWorkflow', 'Start-SccApp',
@@ -27,21 +27,24 @@ Describe 'State machine and jobs (mocked backend)' {
     BeforeEach {
         Mock -ModuleName Scc.UI Import-Module { return $null }
         Mock -ModuleName Scc.UI Get-Module { return $null }
-        Mock -ModuleName Scc.UI Invoke-SccBackendPreflight { return [ordered]@{ ComputerInfo = [pscustomobject]@{ ComputerName = 'TEST'; IsAdmin = $true }; Internet = $null; Nas = $null } }
+        Mock -ModuleName Scc.UI Invoke-SccBackendPreflight { return [ordered]@{ ComputerInfo = [pscustomobject]@{ ComputerName = 'TEST'; IsAdmin = $true }; Internet = $null; Nas = $null; RestorePoint = [pscustomobject]@{ Status = 'Skipped' } } }
+        Mock -ModuleName Scc.UI Invoke-SccBackendToolPack { return @( [pscustomobject]@{ Tool = 'KVRT'; Status = 'Ready' }, [pscustomobject]@{ Tool = 'ESETOnline'; Status = 'Ready' }, [pscustomobject]@{ Tool = 'Malwarebytes'; Status = 'Ready' } ) }
         Mock -ModuleName Scc.UI Invoke-SccBackendSnapshot { param($Run, $Label, $Days) return [pscustomobject]@{ Label = $Label; CollectedUtc = [datetime]::UtcNow } }
         Mock -ModuleName Scc.UI Invoke-SccBackendDetection { return [pscustomobject]@{ ScreenConnect = @(); RemoteAccess = @(); Warnings = @() } }
         Mock -ModuleName Scc.UI Invoke-SccBackendRemediation { param($Run, $Plan) return [pscustomobject]@{ Executed = $true; DryRun = $true } }
-        Mock -ModuleName Scc.UI Invoke-SccBackendScanners { param($Run, $Timeout) return @( [pscustomobject]@{ ScannerName = 'Defender'; Status = 'Completed'; Detections = @() } ) }
+        Mock -ModuleName Scc.UI Invoke-SccBackendScanners { param($Run, $Timeout) return @( [pscustomobject]@{ ScannerName = 'KVRT'; Status = 'Completed'; Detections = @() } ) }
+        Mock -ModuleName Scc.UI Invoke-SccBackendTikun { return [pscustomobject]@{ Status = 'ToolUnavailable'; Detail = 'GeneralFix runner not found (test)' } }
+        Mock -ModuleName Scc.UI Invoke-SccBackendAVUninstall { return [pscustomobject]@{ Count = 0; Results = @() } }
         Mock -ModuleName Scc.UI Invoke-SccBackendCompare { param($Before, $After, $Run) return [pscustomobject]@{ Summary = @{} } }
         Mock -ModuleName Scc.UI Invoke-SccBackendReport { return [pscustomobject]@{ ReportPath = 'report.html' } }
     }
 
     Describe 'State machine - construction' {
-        It 'New-SccWorkflow builds 9 stages in order' {
+        It 'New-SccWorkflow builds 12 stages in order' {
             $wf = New-SccWorkflow -Mode Full
-            @($wf.Stages).Count | Should -Be 9
-            $wf.Stages[0].Name | Should -Be 'Preflight'
-            $wf.Stages[8].Name | Should -Be 'Report'
+            @($wf.Stages).Count | Should -Be 12
+            $wf.Stages[0].Name | Should -Be 'ToolPack'
+            $wf.Stages[11].Name | Should -Be 'Report'
             $wf.Mode | Should -Be 'Full'
         }
         It 'Get-SccNextStage returns first Pending stage' {
@@ -50,22 +53,25 @@ Describe 'State machine and jobs (mocked backend)' {
             $next.Index | Should -Be 0
         }
         It 'New-SccWorkflow -Stages runs only the selected stages' {
-            $wf = New-SccWorkflow -Mode Full -Stages @('Preflight', 'SnapshotBefore', 'Detection')
+            $wf = New-SccWorkflow -Mode Full -Stages @('ToolPack', 'Preflight', 'SnapshotBefore')
             $pending = @($wf.Stages | Where-Object { $_.Status -eq 'Pending' } | ForEach-Object { $_.Name })
-            $pending | Should -BeExactly @('Preflight', 'SnapshotBefore', 'Detection')
+            $pending | Should -BeExactly @('ToolPack', 'Preflight', 'SnapshotBefore')
             $skipped = @($wf.Stages | Where-Object { $_.Status -eq 'Skipped' } | ForEach-Object { $_.Name })
-            $skipped | Should -BeExactly @('Review', 'Remediate', 'Scanners', 'SnapshotAfter', 'Compare', 'Report')
-            $wf.Stages[4].Detail | Should -Be 'Not selected in runbook'
+            $skipped | Should -BeExactly @('Detection', 'Review', 'Remediate', 'Scanners', 'Tikun', 'UninstallAV', 'SnapshotAfter', 'Compare', 'Report')
+            $wf.Stages[5].Detail | Should -Be 'Not selected in runbook'
         }
         It 'New-SccWorkflow -Stages rejects unknown stage names' {
             { New-SccWorkflow -Mode Full -Stages @('Preflight', 'NotAStage') } | Should -Throw -ExpectedMessage '*unknown stage name*'
         }
-        It 'Get-SccRunbookStages returns the 9-stage catalog with display names' {
+        It 'Get-SccRunbookStages returns the 12-stage catalog with cmd-style display names' {
             $cat = @(Get-SccRunbookStages)
-            @($cat).Count | Should -Be 9
-            $cat[2].Name | Should -Be 'Detection'
-            $cat[2].DisplayName | Should -Match 'Remote-access detection'
-            $cat[2].Description | Should -Not -BeNullOrEmpty
+            @($cat).Count | Should -Be 12
+            $cat[0].Name | Should -Be 'ToolPack'
+            $cat[3].Name | Should -Be 'Detection'
+            $cat[3].DisplayName | Should -Match 'Remote-access detection'
+            $cat[3].Description | Should -Not -BeNullOrEmpty
+            $cat[7].Name | Should -Be 'Tikun'
+            $cat[8].Name | Should -Be 'UninstallAV'
         }
     }
 
@@ -91,21 +97,25 @@ Describe 'State machine and jobs (mocked backend)' {
         It 'Review stops headless without a plan (AwaitingReview)' {
             $wf = New-SccWorkflow -Mode Full
             Start-SccWorkflow -Workflow $wf -Mode Full
-            $wf.Stages[3].Status | Should -Be 'AwaitingReview'
+            $wf.Stages[4].Status | Should -Be 'AwaitingReview'
             $wf.Status | Should -Be 'AwaitingReview'
             $wf.Stages[0].Status | Should -Be 'Completed'
             $wf.Stages[1].Status | Should -Be 'Completed'
             $wf.Stages[2].Status | Should -Be 'Completed'
+            $wf.Stages[3].Status | Should -Be 'Completed'
         }
-        It 'DetectOnly mode auto-passes Review and skips Remediate' {
+        It 'DetectOnly mode auto-passes Review and skips Remediate/Scanners/Tikun/AV' {
             $wf = New-SccWorkflow -Mode DetectOnly
             Start-SccWorkflow -Workflow $wf -Mode DetectOnly
-            $wf.Stages[3].Status | Should -Be 'Completed'
-            $wf.Stages[4].Status | Should -Be 'Skipped'
+            $wf.Stages[4].Status | Should -Be 'Completed'
+            $wf.Stages[5].Status | Should -Be 'Skipped'
+            $wf.Stages[6].Status | Should -Be 'Skipped'
+            $wf.Stages[7].Status | Should -Be 'Skipped'
+            $wf.Stages[8].Status | Should -Be 'Skipped'
             $wf.Status | Should -Be 'Completed'
-            $wf.Stages[8].Status | Should -Be 'Completed'
+            $wf.Stages[11].Status | Should -Be 'Completed'
         }
-        It 'SkipScanners marks stage 5 Skipped' {
+        It 'SkipScanners marks stage 6 Skipped' {
             $wf = New-SccWorkflow -Mode Full -SkipScanners
             $planFile = Join-Path $TestDrive 'planSkip.json'
             @'
@@ -113,8 +123,8 @@ Describe 'State machine and jobs (mocked backend)' {
   "Items": [ { "FindingId": "SC1", "Product": "ScreenConnect", "TargetType": "Service", "Action": "REMOVE", "Detail": "x", "DisplayText": "y" } ] }
 '@ | Set-Content -Path $planFile
             Start-SccWorkflow -Workflow $wf -Mode Full -SkipScanners -PlanPath $planFile
-            $wf.Stages[5].Status | Should -Be 'Skipped'
-            $wf.Stages[6].Status | Should -Be 'Completed'
+            $wf.Stages[6].Status | Should -Be 'Skipped'
+            $wf.Stages[9].Status | Should -Be 'Completed'
             $wf.Status | Should -Be 'Completed'
         }
         It 'resume: stages 0-3 Completed -> next stage is 4' {
@@ -126,26 +136,28 @@ Describe 'State machine and jobs (mocked backend)' {
     }
 
     Describe 'State machine - prerequisite enforcement' {
-        It 'stage 4 (Remediate) skipped when stage 3 not Completed' {
+        It 'stage 5 (Remediate) skipped when stage 4 not Completed' {
             $wf = New-SccWorkflow -Mode Full
-            foreach ($i in 0..2) { $wf.Stages[$i].Status = 'Completed' }
-            $wf.Stages[3].Status = 'Failed'
+            foreach ($i in 0..3) { $wf.Stages[$i].Status = 'Completed' }
+            $wf.Stages[4].Status = 'Failed'
             Step-SccWorkflow -Workflow $wf
-            $wf.Stages[4].Status | Should -Be 'Skipped'
+            $wf.Stages[5].Status | Should -Be 'Skipped'
         }
-        It 'stage 6 (SnapshotAfter) skipped when stage 5 not Completed|Skipped' {
-            $wf = New-SccWorkflow -Mode Full
-            foreach ($i in 0..4) { $wf.Stages[$i].Status = 'Completed' }
-            $wf.Stages[5].Status = 'Failed'
-            Step-SccWorkflow -Workflow $wf
-            $wf.Stages[6].Status | Should -Be 'Skipped'
-        }
-        It 'stage 7 (Compare) skipped when stage 6 not Completed' {
+        It 'stage 9 (SnapshotAfter) skipped when stage 6 not Completed|Skipped' {
             $wf = New-SccWorkflow -Mode Full
             foreach ($i in 0..5) { $wf.Stages[$i].Status = 'Completed' }
             $wf.Stages[6].Status = 'Failed'
+            $wf.Stages[7].Status = 'Completed'
+            $wf.Stages[8].Status = 'Completed'
             Step-SccWorkflow -Workflow $wf
-            $wf.Stages[7].Status | Should -Be 'Skipped'
+            $wf.Stages[9].Status | Should -Be 'Skipped'
+        }
+        It 'stage 10 (Compare) skipped when stage 9 not Completed' {
+            $wf = New-SccWorkflow -Mode Full
+            foreach ($i in 0..8) { $wf.Stages[$i].Status = 'Completed' }
+            $wf.Stages[9].Status = 'Failed'
+            Step-SccWorkflow -Workflow $wf
+            $wf.Stages[10].Status | Should -Be 'Skipped'
         }
     }
 
@@ -154,9 +166,8 @@ Describe 'State machine and jobs (mocked backend)' {
             Mock -ModuleName Scc.UI Invoke-SccBackendDetection { throw 'boom' }
             $wf = New-SccWorkflow -Mode DetectOnly
             Start-SccWorkflow -Workflow $wf -Mode DetectOnly
-            $wf.Stages[2].Status | Should -Be 'Failed'
-            $wf.Stages[5].Status | Should -Be 'Completed'
-            $wf.Stages[8].Status | Should -Be 'Completed'
+            $wf.Stages[3].Status | Should -Be 'Failed'
+            $wf.Stages[11].Status | Should -Be 'Completed'
             $wf.Status | Should -Be 'Completed'
         }
     }

@@ -352,11 +352,16 @@ Exports:
 
 ## 4. Stage state machine (shared by GUI + headless)
 
-Stages: 0 Preflight, 1 SnapshotBefore, 2 Detection, 3 Review, 4 Remediate,
-5 Scanners, 6 SnapshotAfter, 7 Compare, 8 Report. Each stage: {Status, StartedUtc,
-EndedUtc, Detail, Skippable}. Transition rules: 1 always before 2..8; 4 requires 3
-Completed (plan.json exists with >= 0 REMOVE items); 6 requires 5 Completed or
-Skipped; 7 requires 6. Skipping allowed: 5 (scan skip), 4 (detect-only mode).
+Stages mirror the cmd runbook 1:1 (12 stages):
+0 ToolPack, 1 Preflight, 2 SnapshotBefore, 3 Detection, 4 Review,
+5 Remediate, 6 Scanners, 7 Tikun, 8 UninstallAV, 9 SnapshotAfter,
+10 Compare, 11 Report. Review is an internal plan gate (no cmd step);
+Procmon stays opt-in/advanced (not staged). Each stage: {Status, StartedUtc,
+EndedUtc, Detail, Skippable}. Transition rules: 2 always before 3..11;
+5 requires 4 Completed (plan.json exists with >= 0 REMOVE items);
+9 requires 6 Completed or Skipped; 10 requires 9. Skipping allowed:
+6 (scan skip), 5/7/8 (destructive/attended steps - unchecked by default
+in the runbook), 4 (detect-only mode auto-passes it).
 Resume: reload runstate.json, re-open run, re-enter at first non-Completed stage;
 Completed stages never re-run automatically.
 

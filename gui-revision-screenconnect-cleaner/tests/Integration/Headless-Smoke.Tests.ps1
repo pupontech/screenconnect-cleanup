@@ -120,6 +120,18 @@ Describe 'Headless Smoke - Wiring validator' {
 Describe 'Headless Smoke - Full pipeline (SkipScanners, mocked detection)' {
 
     BeforeAll {
+        # Mock the tool resolver so the ToolPack stage never performs real
+        # downloads during the smoke (KVRT/ESET are hundreds of MB).
+        Mock -ModuleName Scc.Tools Resolve-SccTool {
+            param($Tool)
+            return [pscustomobject]@{
+                Name = $Tool
+                Path = '/tmp/scc-smoke/' + $Tool + '/fake.exe'
+                Source = 'LocalCache'
+                Facts = [pscustomobject]@{}
+                Provenance = [pscustomobject]@{ Warnings = @(); CandidatesTried = @(); DownloadUrl = $null; FinalUrl = $null; Redirects = @() }
+            }
+        }
         # Mock detection inventories inside Scc.Detection to return synthetic
         # ScreenConnect service+process+uninstall -> 1 instance
         Mock -ModuleName Scc.Detection Get-SccServiceInventory {
@@ -193,25 +205,27 @@ Describe 'Headless Smoke - Full pipeline (SkipScanners, mocked detection)' {
         $sc[0].RelayHost | Should -Be 'support.example.com'
     }
 
-    It 'completes all stages (Preflight may be Skipped on Linux)' {
+    It 'completes all stages (ToolPack/Preflight may be Skipped on Linux)' {
         $statePath = Join-Path $script:smokeRunDir 'runstate.json'
         Test-Path -LiteralPath $statePath | Should -Be $true
         $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
-        @($state.Stages).Count | Should -Be 9
-        # Stage 0 Preflight: accept Completed or Skipped on non-Windows
-        $pre = $state.Stages | Where-Object { $_.Index -eq 0 }
-        $pre.Status | Should -Match '^(Completed|Skipped)$'
+        @($state.Stages).Count | Should -Be 12
+        # Stage 0 ToolPack / stage 1 Preflight: accept Completed or Skipped on non-Windows
+        foreach ($idx in @(0, 1)) {
+            $pre = $state.Stages | Where-Object { $_.Index -eq $idx }
+            $pre.Status | Should -Match '^(Completed|Skipped)$'
+        }
         # SnapshotBefore, Detection, Review, Compare, Report must be Completed
-        foreach ($idx in @(1,2,3,7,8)) {
+        foreach ($idx in @(2, 3, 4, 10, 11)) {
             $st = $state.Stages | Where-Object { $_.Index -eq $idx }
             $st.Status | Should -Be 'Completed' -Because ("stage {0} {1} must be Completed" -f $idx, $st.Name)
         }
         # Scanners must be Skipped
-        ($state.Stages | Where-Object { $_.Index -eq 5 }).Status | Should -Be 'Skipped'
+        ($state.Stages | Where-Object { $_.Index -eq 6 }).Status | Should -Be 'Skipped'
         # Remediate: with 0 REMOVE items it completes (dry-run)
-        ($state.Stages | Where-Object { $_.Index -eq 4 }).Status | Should -Be 'Completed'
+        ($state.Stages | Where-Object { $_.Index -eq 5 }).Status | Should -Be 'Completed'
         # SnapshotAfter must be Completed
-        ($state.Stages | Where-Object { $_.Index -eq 6 }).Status | Should -Be 'Completed'
+        ($state.Stages | Where-Object { $_.Index -eq 9 }).Status | Should -Be 'Completed'
     }
 
     It 'produces snapshots before.json, after.json and diff.json' {
@@ -268,6 +282,6 @@ Describe 'Headless Smoke - Full pipeline (SkipScanners, mocked detection)' {
         # Re-mock inside this It? Mocks from BeforeAll are still active for Scc.Detection
         $null = Start-SccWorkflow -Workflow $wf2 -Mode Full -SkipScanners
         $wf2.Status | Should -Be 'AwaitingReview'
-        ($wf2.Stages | Where-Object { $_.Index -eq 3 }).Status | Should -Be 'AwaitingReview'
+        ($wf2.Stages | Where-Object { $_.Index -eq 4 }).Status | Should -Be 'AwaitingReview'
     }
 }

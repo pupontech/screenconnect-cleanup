@@ -8,7 +8,7 @@
     Copyright         = '(c) 2026 ScreenConnect Cleaner Contributors. MIT License.'
     Description       = 'Centralized scanner management and adapters for CLI and GUI scanners.'
     RequiredModules = @('Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Management')
-    FunctionsToExport = @('Get-SccScannerList', 'Invoke-SccScanner', 'Invoke-SccGuiScanner')
+    FunctionsToExport = @('Get-SccScannerList', 'Invoke-SccScanner', 'Invoke-SccGuiScanner', 'Invoke-SccAVUninstaller')
     CmdletsToExport   = @()
     VariablesToExport  = @()
     AliasesToExport    = @()

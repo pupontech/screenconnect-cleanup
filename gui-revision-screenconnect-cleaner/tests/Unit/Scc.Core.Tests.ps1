@@ -129,7 +129,7 @@ Describe 'New-SccRun and run state' {
         Remove-Item -LiteralPath (Split-Path $script:reportRoot) -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    It 'creates correct dir tree with 9 Pending stages and valid RunId' {
+    It 'creates correct dir tree with 12 Pending stages and valid RunId' {
         $run = New-SccRun -ReportRoot $script:reportRoot -Technician 'T1' -Client 'C1' -ForceServer:$script:fs
         $run.RunId | Should -Match '^SC-\d{8}-[A-Z0-9_]{1,20}-\d{6}$'
         Test-Path -LiteralPath $run.RunDir | Should -BeTrue
@@ -137,7 +137,7 @@ Describe 'New-SccRun and run state' {
             Test-Path -LiteralPath (Join-Path $run.RunDir $s) | Should -BeTrue
         }
         $state = Get-SccRunState -RunId $run.RunId -ReportRoot $script:reportRoot
-        @($state.Stages).Count | Should -Be 9
+        @($state.Stages).Count | Should -Be 12
         foreach ($st in $state.Stages) { $st.Status | Should -Be 'Pending' }
         $script:runId = $run.RunId
     }
@@ -299,18 +299,18 @@ Describe 'runstate shape (resume contract)' {
         if (-not $script:runstateSetupOk) { Set-ItResult -Skipped -Because 'Windows setup failed'; return }
         $state = Get-SccRunState -RunId $script:rtRun.RunId
         $state | Should -Not -BeNullOrEmpty
-        @($state.Stages).Count | Should -Be 9
+        @($state.Stages).Count | Should -Be 12
         $state.Stages[0].Index | Should -Be 0
-        $state.Stages[0].Name | Should -Be 'Preflight'
-        $state.Stages[8].Index | Should -Be 8
-        $state.Stages[8].Name | Should -Be 'Report'
+        $state.Stages[0].Name | Should -Be 'ToolPack'
+        $state.Stages[11].Index | Should -Be 11
+        $state.Stages[11].Name | Should -Be 'Report'
         $state.Stages[2].Status | Should -Be 'Pending'
     }
     It 'Save-SccRunState updates the named stage and Get-SccRunState reads it back' {
         if (-not $script:runstateSetupOk) { Set-ItResult -Skipped -Because 'Windows setup failed'; return }
         Save-SccRunState -Run $script:rtRun -Stage 'Detection' -Status 'Completed' -Detail 'done'
         $state = Get-SccRunState -RunId $script:rtRun.RunId
-        $det = $state.Stages | Where-Object { $_.Index -eq 2 }
+        $det = $state.Stages | Where-Object { $_.Index -eq 3 }
         $det.Status | Should -Be 'Completed'
         $det.Detail | Should -Be 'done'
         $det.StartedUtc | Should -Not -BeNullOrEmpty

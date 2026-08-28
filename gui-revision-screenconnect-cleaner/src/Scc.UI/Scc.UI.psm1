@@ -31,6 +31,7 @@ $script:MainWindow = $null
 $script:AutoCloseAt = $null
 $script:RunbookWorkflow = $null
 $script:RunbookSelected = $null
+$script:RunbookActive = $false
 $script:RunbookCatalog = @()
 $script:RunbookBoxes = @()
 
@@ -121,10 +122,12 @@ function Import-SccResumeState {
 function Test-SccStageApplicable {
     param($Workflow, [int]$StageIndex)
     $mode = $Workflow.Mode
-    $applicable = @(0, 1, 2, 3, 4, 5, 6, 7, 8)
-    if ($mode -eq 'DetectOnly') { $applicable = @(0, 1, 2, 3, 5, 6, 7, 8) }
-    elseif ($mode -eq 'ScanOnly') { $applicable = @(0, 5, 8) }
-    if ($StageIndex -eq 5 -and $Workflow.SkipScanners) { return $false }
+    $applicable = @(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+    # DetectOnly is read-only: tool pack, preflight, snapshots, detection,
+    # review (auto-passes), compare, report. No remediation/scanners/tikun/AV.
+    if ($mode -eq 'DetectOnly') { $applicable = @(0, 1, 2, 3, 4, 9, 10, 11) }
+    elseif ($mode -eq 'ScanOnly') { $applicable = @(0, 6, 11) }
+    if ($StageIndex -eq 6 -and $Workflow.SkipScanners) { return $false }
     return ($applicable -contains $StageIndex)
 }
 
@@ -140,6 +143,60 @@ function Invoke-SccBackendPreflight {
     $out.ComputerInfo = Get-SccComputerInfo
     if (Get-Command -Name Test-SccInternet -ErrorAction SilentlyContinue) { $out.Internet = Test-SccInternet }
     if (Get-Command -Name Test-SccNas -ErrorAction SilentlyContinue) { $out.Nas = Test-SccNas }
+    # Restore point (cmd step 2 equivalent): best-effort, never fatal.
+    # Skip when config safety.restorePoint is explicitly false.
+    $out.RestorePoint = $null
+    $restoreEnabled = $true
+    try {
+        if (Get-Command -Name Get-SccConfig -ErrorAction SilentlyContinue) {
+            $cfg = Get-SccConfig
+            if ($null -ne $cfg -and $null -ne $cfg.safety -and $null -ne $cfg.safety.restorePoint) {
+                $restoreEnabled = [bool]$cfg.safety.restorePoint
+            }
+        }
+    } catch { }
+    if ($restoreEnabled) {
+        try {
+            if (Get-Command -Name Checkpoint-Computer -ErrorAction SilentlyContinue) {
+                $null = Checkpoint-Computer -Description 'ScreenConnectCleaner preflight' -RestorePointType 'MODIFY_SETTINGS' -ErrorAction Stop
+                $out.RestorePoint = [pscustomobject]@{ Status = 'Created'; Description = 'ScreenConnectCleaner preflight' }
+            } else {
+                $out.RestorePoint = [pscustomobject]@{ Status = 'Skipped'; Detail = 'Checkpoint-Computer unavailable on this host' }
+            }
+        } catch {
+            $out.RestorePoint = [pscustomobject]@{ Status = 'Failed'; Detail = $_.Exception.Message }
+        }
+    } else {
+        $out.RestorePoint = [pscustomobject]@{ Status = 'Skipped'; Detail = 'Disabled in config (safety.restorePoint=false)' }
+    }
+    return $out
+}
+
+function Invoke-SccBackendToolPack {
+    # cmd step 1 equivalent: ensure the core tool set is staged/verified.
+    # Non-fatal: missing tools are recorded, the run continues.
+    param($Run)
+    Assert-SccBackendFn -Function 'Resolve-SccTool' -Module 'Scc.Tools'
+    $wanted = @('KVRT', 'ESETOnline', 'Malwarebytes')
+    $out = @()
+    foreach ($t in $wanted) {
+        try {
+            $r = Resolve-SccTool -Tool $t -Run $Run
+            $path = ''
+            if ($null -ne $r -and $r.Path) { $path = $r.Path }
+            $src = ''
+            if ($null -ne $r -and $r.Source) { $src = $r.Source }
+            $out += [pscustomobject]@{
+                Tool   = $t
+                Status = $(if ($path) { 'Ready' } else { 'Missing' })
+                Path   = $path
+                Source = $src
+                Reason = $(if (-not $path -and $null -ne $r -and $r.Provenance) { ($r.Provenance.Warnings -join '; ') } else { '' })
+            }
+        } catch {
+            $out += [pscustomobject]@{ Tool = $t; Status = 'ResolveFailed'; Path = ''; Source = ''; Reason = $_.Exception.Message }
+        }
+    }
     return $out
 }
 
@@ -168,19 +225,96 @@ function Invoke-SccBackendRemediation {
 }
 
 function Invoke-SccBackendScanners {
+    # cmd step 6 equivalent + owner AV policy: the attended scanner trio
+    # (KVRT, ESET Online Scanner, Malwarebytes) launches as visible windows
+    # and waits for the technician. No CLI adapters for these.
     param($Run, $Timeout)
-    Assert-SccBackendFn -Function 'Invoke-SccScanner' -Module 'Scc.Scanners'
-    $list = @()
-    if (Get-Command -Name Get-SccScannerList -ErrorAction SilentlyContinue) {
-        $list = Get-SccScannerList -EnabledOnly
-    }
+    Assert-SccBackendFn -Function 'Invoke-SccGuiScanner' -Module 'Scc.Scanners'
+    $attended = @(
+        @{ Name = 'KVRT'; Catalog = 'KVRT' },
+        @{ Name = 'ESET'; Catalog = 'ESETOnline' },
+        @{ Name = 'Malwarebytes'; Catalog = 'Malwarebytes' }
+    )
     $results = @()
-    foreach ($s in $list) {
-        $name = $s.Name
-        if (-not $name) { $name = $s }
-        $results += Invoke-SccScanner -Name $name -Run $Run -TimeoutMinutes $Timeout
+    foreach ($a in $attended) {
+        $toolPath = $null
+        if (Get-Command -Name Resolve-SccTool -ErrorAction SilentlyContinue) {
+            try {
+                $tr = Resolve-SccTool -Tool $a.Catalog -Run $Run
+                if ($null -ne $tr -and $tr.Path) { $toolPath = $tr.Path }
+            } catch { }
+        }
+        $runHash = @{}
+        if ($Run) {
+            $runHash.RunId = $Run.RunId
+            $runHash.RunDir = $Run.RunDir
+        }
+        $results += Invoke-SccGuiScanner -Name $a.Name -Run $runHash -TimeoutMinutes $Timeout -ToolPath $toolPath
     }
     return $results
+}
+
+function Invoke-SccBackendTikun {
+    # cmd step 7 equivalent: attended launch of the GeneralFix runner.
+    # The runner is NOT bundled with the GUI (legacy cmd tool only); locate
+    # it via config tikun.path, then common locations. Absent = recorded
+    # non-fatally. GeneralFix is destructive (deletes without quarantine),
+    # so this stage is opt-in (unchecked by default in the runbook).
+    param($Run)
+    $candidates = @()
+    try {
+        if (Get-Command -Name Get-SccConfig -ErrorAction SilentlyContinue) {
+            $cfg = Get-SccConfig
+            if ($null -ne $cfg -and $null -ne $cfg.tikun -and $cfg.tikun.path) { $candidates += $cfg.tikun.path }
+        }
+    } catch { }
+    if ($env:SCC_TIKUN_PATH) { $candidates += $env:SCC_TIKUN_PATH }
+    # App root is two levels up from the module dir (src/Scc.UI -> app root).
+    $appRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    $candidates += (Join-Path $appRoot 'tools\GeneralFix')
+    $candidates += 'C:\Tools\GeneralFix'
+    $candidates += (Join-Path $env:ProgramData 'ScreenConnectCleaner\tools\GeneralFix')
+
+    $runner = $null
+    $searched = @()
+    foreach ($c in $candidates) {
+        if (-not $c) { continue }
+        $searched += $c
+        if (-not (Test-Path -LiteralPath $c)) { continue }
+        $bat = Get-ChildItem -LiteralPath $c -Filter '*.bat' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -ne $bat) { $runner = $bat.FullName; break }
+    }
+    if (-not $runner) {
+        return [pscustomobject]@{
+            Status = 'ToolUnavailable'
+            Detail = ('GeneralFix runner not found. Searched: ' + ($searched -join '; '))
+            Runner = $null
+        }
+    }
+    $start = [datetime]::UtcNow
+    try {
+        $proc = Start-Process -FilePath $runner -PassThru -ErrorAction Stop
+        $timedOut = -not $proc.WaitForExit(240 * 60 * 1000)
+        return [pscustomobject]@{
+            Status  = $(if ($timedOut) { 'TimeoutLeftRunning' } else { 'ClosedByUser' })
+            Detail  = ('Tikun (GeneralFix) attended launch: ' + $runner)
+            Runner  = $runner
+            StartedUtc = $start.ToString('o')
+        }
+    } catch {
+        return [pscustomobject]@{
+            Status = 'LaunchFailed'
+            Detail = $_.Exception.Message
+            Runner = $runner
+        }
+    }
+}
+
+function Invoke-SccBackendAVUninstall {
+    # cmd step 8 equivalent: attended third-party AV uninstall (ported).
+    param($Run, [int]$TimeoutMinutes = 240)
+    Assert-SccBackendFn -Function 'Invoke-SccAVUninstaller' -Module 'Scc.Scanners'
+    return (Invoke-SccAVUninstaller -Run $Run -TimeoutMinutes $TimeoutMinutes)
 }
 
 function Invoke-SccBackendCompare {
@@ -200,24 +334,31 @@ function Invoke-SccStageBody {
 
     switch ($Stage.Index) {
         0 {
+            $Workflow.Data.ToolPack = Invoke-SccBackendToolPack -Run $Workflow.Run
+            $missing = @($Workflow.Data.ToolPack | Where-Object { $_.Status -ne 'Ready' })
+            $Stage.Detail = ('Tool pack: ' + @($Workflow.Data.ToolPack).Count + ' tools, ' + @($missing).Count + ' missing')
+            $Stage.Status = 'Completed'
+        }
+        1 {
             $r = Invoke-SccBackendPreflight
             $Workflow.Data.ComputerInfo = $r.ComputerInfo
             $Workflow.Data.Internet = $r.Internet
             $Workflow.Data.Nas = $r.Nas
+            $Workflow.Data.RestorePoint = $r.RestorePoint
             $Stage.Detail = 'Preflight checks collected'
             $Stage.Status = 'Completed'
         }
-        1 {
+        2 {
             $Workflow.Data.SnapshotBefore = Invoke-SccBackendSnapshot -Run $Workflow.Run -Label before -Days $Workflow.IncidentWindowDays
             $Stage.Detail = 'Snapshot (before) collected'
             $Stage.Status = 'Completed'
         }
-        2 {
+        3 {
             $Workflow.Data.Findings = Invoke-SccBackendDetection -Run $Workflow.Run
             $Stage.Detail = 'Detection complete'
             $Stage.Status = 'Completed'
         }
-        3 {
+        4 {
             # Review gate
             if ($Workflow.Mode -ne 'Full') {
                 $Stage.Status = 'Completed'
@@ -235,10 +376,10 @@ function Invoke-SccStageBody {
             $Stage.Status = 'AwaitingReview'
             $Stage.Detail = 'Awaiting remediation plan approval (headless stops here; provide -PlanPath or approve in GUI)'
         }
-        4 {
+        5 {
             $plan = $Workflow.Data.Plan
             if ($null -eq $plan) { $plan = Get-SccPlanFromRun -Workflow $Workflow }
-            if ($null -eq $plan) { throw 'No remediation plan available for stage 4 (Remediate).' }
+            if ($null -eq $plan) { throw 'No remediation plan available for stage 5 (Remediate).' }
             # Dry-run unless the GUI review gate explicitly authorized execution
             # (two-step typed confirmation) by setting Data.ExecuteRemediation.
             $execute = ($Workflow.Data.ExecuteRemediation -eq $true)
@@ -250,22 +391,34 @@ function Invoke-SccStageBody {
             }
             $Stage.Status = 'Completed'
         }
-        5 {
+        6 {
             $Workflow.Data.ScannerResults = Invoke-SccBackendScanners -Run $Workflow.Run -Timeout $Workflow.ScannerTimeout
             $Stage.Detail = ('Scanners run: ' + @($Workflow.Data.ScannerResults).Count)
             $Stage.Status = 'Completed'
         }
-        6 {
+        7 {
+            $Workflow.Data.Tikun = Invoke-SccBackendTikun -Run $Workflow.Run
+            $Stage.Detail = $Workflow.Data.Tikun.Detail
+            $Stage.Status = 'Completed'
+        }
+        8 {
+            $Workflow.Data.AVUninstall = Invoke-SccBackendAVUninstall -Run $Workflow.Run
+            $n = 0
+            if ($Workflow.Data.AVUninstall -and $Workflow.Data.AVUninstall.Results) { $n = @($Workflow.Data.AVUninstall.Results).Count }
+            $Stage.Detail = ('AV uninstaller: ' + $n + ' product(s) handled (attended)')
+            $Stage.Status = 'Completed'
+        }
+        9 {
             $Workflow.Data.SnapshotAfter = Invoke-SccBackendSnapshot -Run $Workflow.Run -Label after -Days $Workflow.IncidentWindowDays
             $Stage.Detail = 'Snapshot (after) collected'
             $Stage.Status = 'Completed'
         }
-        7 {
+        10 {
             $Workflow.Data.Diff = Invoke-SccBackendCompare -Before $Workflow.Data.SnapshotBefore -After $Workflow.Data.SnapshotAfter -Run $Workflow.Run
             $Stage.Detail = 'Before/After comparison complete'
             $Stage.Status = 'Completed'
         }
-        8 {
+        11 {
             $Workflow.Data.Report = Invoke-SccBackendReport -Run $Workflow.Run
             $Stage.Detail = 'Report generated'
             $Stage.Status = 'Completed'
@@ -303,16 +456,21 @@ function New-SccWorkflow {
 
     # NOTE: local is $stageList - never $stages (case-insensitive collision
     # with the -Stages parameter would clobber the caller's selection).
+    # 12 stages = the cmd version's runbook 1:1 (Review is the internal
+    # plan gate, not a cmd step; Procmon stays opt-in/advanced).
     $stageList = @(
-        (New-SccStageRecord 0 'Preflight'      $false)
-        (New-SccStageRecord 1 'SnapshotBefore' $false)
-        (New-SccStageRecord 2 'Detection'      $false)
-        (New-SccStageRecord 3 'Review'         $false)
-        (New-SccStageRecord 4 'Remediate'      $true)
-        (New-SccStageRecord 5 'Scanners'       $true)
-        (New-SccStageRecord 6 'SnapshotAfter'  $false)
-        (New-SccStageRecord 7 'Compare'        $false)
-        (New-SccStageRecord 8 'Report'         $false)
+        (New-SccStageRecord 0  'ToolPack'       $true)
+        (New-SccStageRecord 1  'Preflight'      $false)
+        (New-SccStageRecord 2  'SnapshotBefore' $false)
+        (New-SccStageRecord 3  'Detection'      $false)
+        (New-SccStageRecord 4  'Review'         $false)
+        (New-SccStageRecord 5  'Remediate'      $true)
+        (New-SccStageRecord 6  'Scanners'       $true)
+        (New-SccStageRecord 7  'Tikun'          $true)
+        (New-SccStageRecord 8  'UninstallAV'    $true)
+        (New-SccStageRecord 9  'SnapshotAfter'  $false)
+        (New-SccStageRecord 10 'Compare'        $false)
+        (New-SccStageRecord 11 'Report'         $false)
     )
 
     # Runbook stage selection: only the named stages run; everything else is
@@ -353,21 +511,25 @@ function New-SccWorkflow {
 }
 
 # ---------------------------------------------------------------------------
-# Runbook catalog for the main GUI view: the cmd-version script list, one
-# checkbox per stage. DisplayName mirrors the START-HERE.bat step wording
-# where a cmd equivalent exists.
+# Runbook catalog for the main GUI view: the cmd version's script list, one
+# checkbox per stage. DisplayName and Description mirror START-HERE.bat so a
+# technician comparing the GUI to the cmd finds the same steps. Review is an
+# internal plan gate (no cmd step); Procmon stays opt-in/advanced.
 # ---------------------------------------------------------------------------
 function Get-SccRunbookStages {
     return @(
-        ([pscustomobject]@{ Index = 0; Name = 'Preflight';      DisplayName = 'Stage 0 - Preflight';              Description = 'Preflight checks (admin, disk, config)' })
-        ([pscustomobject]@{ Index = 1; Name = 'SnapshotBefore'; DisplayName = 'Stage 1 - BEFORE snapshot';        Description = 'Baseline evidence (must run first)' })
-        ([pscustomobject]@{ Index = 2; Name = 'Detection';      DisplayName = 'Stage 2 - Remote-access detection'; Description = 'Read-only, automatic' })
-        ([pscustomobject]@{ Index = 3; Name = 'Review';         DisplayName = 'Stage 3 - Review findings';        Description = 'Remediation plan gate' })
-        ([pscustomobject]@{ Index = 4; Name = 'Remediate';      DisplayName = 'Stage 4 - Contain + remove';       Description = 'ScreenConnect only, plan-gated, dry-run default' })
-        ([pscustomobject]@{ Index = 5; Name = 'Scanners';       DisplayName = 'Stage 5 - Antivirus scans';        Description = 'KVRT / ESET / Malwarebytes (attended)' })
-        ([pscustomobject]@{ Index = 6; Name = 'SnapshotAfter';  DisplayName = 'Stage 6 - AFTER snapshot';         Description = 'Post-run evidence' })
-        ([pscustomobject]@{ Index = 7; Name = 'Compare';        DisplayName = 'Stage 7 - Before/After diff';      Description = 'Resurrection check' })
-        ([pscustomobject]@{ Index = 8; Name = 'Report';         DisplayName = 'Stage 8 - Investigation report';   Description = 'HTML / JSON / technician summary' })
+        ([pscustomobject]@{ Index = 0;  Name = 'ToolPack';       DisplayName = 'Step 1 - Build/verify tool pack';          Description = 'KVRT, ESET Online, Malwarebytes (Scc.Tools resolve + verify)' })
+        ([pscustomobject]@{ Index = 1;  Name = 'Preflight';      DisplayName = 'Step 2 - Preflight checks';                Description = 'Admin, disk, config, restore point (cmd step 2)' })
+        ([pscustomobject]@{ Index = 2;  Name = 'SnapshotBefore'; DisplayName = 'Step 3 - BEFORE snapshot';                 Description = 'Baseline evidence (cmd step 3)' })
+        ([pscustomobject]@{ Index = 3;  Name = 'Detection';      DisplayName = 'Step 4 - Remote-access detection';         Description = 'Read-only, automatic (cmd step 4)' })
+        ([pscustomobject]@{ Index = 4;  Name = 'Review';         DisplayName = 'Review findings (plan gate)';             Description = 'Internal gate - approve remediation plan (no cmd step)' })
+        ([pscustomobject]@{ Index = 5;  Name = 'Remediate';      DisplayName = 'Step 5 - REMOVE ScreenConnect';            Description = 'Dry-run default; plan-gated, quarantine-never-delete (cmd step 5)' })
+        ([pscustomobject]@{ Index = 6;  Name = 'Scanners';       DisplayName = 'Step 6 - Antivirus scans';                Description = 'KVRT / ESET / Malwarebytes, attended (cmd step 6)' })
+        ([pscustomobject]@{ Index = 7;  Name = 'Tikun';          DisplayName = 'Step 7 - Tikun (general fix)';            Description = 'Attended GeneralFix runner; DESTRUCTIVE, opt-in (cmd step 7)' })
+        ([pscustomobject]@{ Index = 8;  Name = 'UninstallAV';    DisplayName = 'Step 8 - Uninstall installed AV';          Description = 'Attended vendor uninstallers, opt-in (cmd step 8)' })
+        ([pscustomobject]@{ Index = 9;  Name = 'SnapshotAfter';  DisplayName = 'Step 9 - AFTER snapshot';                 Description = 'Post-run evidence (cmd step 9)' })
+        ([pscustomobject]@{ Index = 10; Name = 'Compare';        DisplayName = 'Step 9b - Before/After diff';              Description = 'Resurrection check (cmd step 9)' })
+        ([pscustomobject]@{ Index = 11; Name = 'Report';         DisplayName = 'Step 10 - Investigation report';          Description = 'HTML / JSON / technician summary (cmd step 10)' })
     )
 }
 
@@ -400,23 +562,23 @@ function Step-SccWorkflow {
     }
 
     # Hard prerequisite checks (ARCHITECTURE section 4)
-    if ($stage.Index -eq 4 -and $Workflow.Stages[3].Status -ne 'Completed') {
+    if ($stage.Index -eq 5 -and $Workflow.Stages[4].Status -ne 'Completed') {
         $stage.Status = 'Skipped'
-        $stage.Detail = 'Requires stage 3 (Review) Completed with a plan'
+        $stage.Detail = 'Requires stage 4 (Review) Completed with a plan'
         $stage.EndedUtc = [datetime]::UtcNow
         Save-SccStageState -Workflow $Workflow -Stage $stage
         return $Workflow
     }
-    if ($stage.Index -eq 6 -and $Workflow.Stages[5].Status -notin @('Completed', 'Skipped')) {
+    if ($stage.Index -eq 9 -and $Workflow.Stages[6].Status -notin @('Completed', 'Skipped')) {
         $stage.Status = 'Skipped'
-        $stage.Detail = 'Requires stage 5 (Scanners) Completed or Skipped'
+        $stage.Detail = 'Requires stage 6 (Scanners) Completed or Skipped'
         $stage.EndedUtc = [datetime]::UtcNow
         Save-SccStageState -Workflow $Workflow -Stage $stage
         return $Workflow
     }
-    if ($stage.Index -eq 7 -and $Workflow.Stages[6].Status -ne 'Completed') {
+    if ($stage.Index -eq 10 -and $Workflow.Stages[9].Status -ne 'Completed') {
         $stage.Status = 'Skipped'
-        $stage.Detail = 'Requires stage 6 (SnapshotAfter) Completed'
+        $stage.Detail = 'Requires stage 9 (SnapshotAfter) Completed'
         $stage.EndedUtc = [datetime]::UtcNow
         Save-SccStageState -Workflow $Workflow -Stage $stage
         return $Workflow
@@ -847,8 +1009,10 @@ function Start-SccGuiJobWithToken {
         $script:ActiveJob = $handle
         # Drive the runbook progress bar from the SHARED workflow object the
         # runspace mutates live (same object reference in the token copy).
+        # NOTE: stage records stay scalar-only (single-writer window: the
+        # runspace writes, the STA UI thread reads every 200ms - stale reads
+        # are benign; never put in-place-mutated collections in a stage).
         $script:RunbookWorkflow = $Token.Workflow
-        $script:RunbookSelected = $null
         Set-SccRunbookBusy -Busy $true
         Set-SccGuiStatus -Text ('Running: ' + $JobName)
     } catch {
@@ -872,13 +1036,16 @@ function Update-SccRunbookList {
         $list.Children.Clear()
         $script:RunbookCatalog = @(Get-SccRunbookStages)
         $script:RunbookBoxes = @()
+        # Destructive/attended-removal steps are OFF by default (detect-only
+        # default preserved): Remediate (5), Tikun (7), UninstallAV (8).
+        $defaultOff = @(5, 7, 8)
         foreach ($rec in $script:RunbookCatalog) {
             $box = [System.Windows.Controls.CheckBox]::new()
             $box.Margin = [System.Windows.Thickness]::new(2, 4, 2, 4)
             $box.FontSize = 13
             $box.Foreground = [System.Windows.Media.Brushes]::Black
             $box.Content = ($rec.DisplayName + ' - ' + $rec.Description)
-            $box.IsChecked = $true
+            $box.IsChecked = ($defaultOff -notcontains $rec.Index)
             $box.Tag = $rec.Index
             # NOTE: use the SENDER's Tag for the chain comparison, never a
             # loop variable - PowerShell scriptblocks capture variables by
@@ -929,7 +1096,10 @@ function Start-SccRunbookJob {
             return
         }
         $wf = New-SccWorkflow -Mode Full -Stages $names -Run (New-SccGuiRun)
+        # Order matters: Start-SccGuiJobWithToken must NOT see the runbook
+        # selection as "not a runbook job", so set the flags BEFORE the call.
         $script:RunbookSelected = @($script:RunbookCatalog | Where-Object { $names -contains $_.Name } | ForEach-Object { $_.Index })
+        $script:RunbookActive = $true
         Set-SccGuiStatus -Text ('Runbook: ' + (@($names).Count) + ' stage(s) selected - starting.')
         Start-SccGuiJobWithToken -Token @{ Cancelled = $false; Workflow = $wf } -JobName ('Runbook (' + @($names).Count + ' stages)')
     } catch {
@@ -941,30 +1111,37 @@ function Set-SccRunbookBusy {
     param([bool]$Busy)
     try {
         if ($null -eq $script:Dash) { return }
-        foreach ($n in @('BtnRunSelected', 'BtnRunAll', 'BtnDetectionOnly', 'BtnScanOnly')) {
+        foreach ($n in @('BtnRunSelected', 'BtnRunAll', 'BtnDetectionOnly', 'BtnScanOnly', 'BtnResumeRun')) {
             $b = $script:Dash.FindName($n)
             if ($null -ne $b) { $b.IsEnabled = -not $Busy }
         }
-    } catch { }
+    } catch {
+        Set-SccGuiStatus -Text ('Runbook busy-toggle error: ' + $_.Exception.Message)
+    }
 }
 
 function Update-SccRunbookProgress {
-    # Called from the dispatcher timer while a job runs. Progress is computed
-    # from the live workflow object shared with the runspace: completed
-    # (selected) stages / selected total, plus the running stage's label.
+    # Called from the dispatcher timer while a runbook job runs. Progress is
+    # computed from the live workflow object shared with the runspace:
+    # completed (selected) stages / selected total, plus the running stage's
+    # label. Non-runbook jobs (Detection/Scan/Resume) leave the bar alone.
     try {
         if ($null -eq $script:Dash) { return }
+        if (-not $script:RunbookActive) { return }
         $bar = $script:Dash.FindName('PrgRun')
         $txt = $script:Dash.FindName('TxtProgress')
         if ($null -eq $bar -or $null -eq $txt) { return }
         $wf = $script:RunbookWorkflow
         if ($null -eq $wf) { return }
         $selIdx = $script:RunbookSelected
-        if ($null -eq $selIdx -or @($selIdx).Count -eq 0) { $selIdx = @(0, 1, 2, 3, 4, 5, 6, 7, 8) }
+        if ($null -eq $selIdx -or @($selIdx).Count -eq 0) { $selIdx = @(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) }
         $total = @($selIdx).Count
         $selected = @($wf.Stages | Where-Object { $selIdx -contains $_.Index })
         $done = @($selected | Where-Object { $_.Status -eq 'Completed' -or $_.Status -eq 'Skipped' }).Count
-        $running = @($selected | Where-Object { $_.Status -eq 'Running' } | Select-Object -First 1)
+        # NOTE: no @() wrapper - an empty pipeline result must be $null here,
+        # otherwise the phantom 0.5 half-stage credit is always applied and
+        # the label renders 'Running: - (N/M)' between stages.
+        $running = $selected | Where-Object { $_.Status -eq 'Running' } | Select-Object -First 1
         $pct = [int]((($done + $(if ($null -ne $running) { 0.5 } else { 0 })) / $total) * 100)
         if ($pct -gt 100) { $pct = 100 }
         if ($pct -lt 0) { $pct = 0 }
@@ -981,26 +1158,61 @@ function Update-SccRunbookProgress {
             $label = ('Progress: {0} of {1} stages done ({2}%)' -f $done, $total, $pct)
         }
         $txt.Text = $label
-    } catch { }
+    } catch {
+        Set-SccGuiStatus -Text ('Runbook progress error: ' + $_.Exception.Message)
+    }
 }
 
 function Complete-SccRunbookProgress {
-    # Called when the active job finishes: finalize the progress bar.
+    # Called when the ACTIVE job finishes. Honest final state: 100% +
+    # 'Run finished.' only on a real Completed run; a failed job or a pause
+    # at the review gate reports that instead. Non-runbook jobs reset the
+    # bar so it never claims a run that did not happen.
+    param(
+        [string]$State,
+        [bool]$AwaitingReview = $false,
+        [bool]$Failed = $false,
+        [string]$ErrorText = ''
+    )
     try {
         if ($null -eq $script:Dash) { return }
         $bar = $script:Dash.FindName('PrgRun')
         $txt = $script:Dash.FindName('TxtProgress')
+        $wasRunbook = $script:RunbookActive
         $script:RunbookWorkflow = $null
         $script:RunbookSelected = $null
+        $script:RunbookActive = $false
         Set-SccRunbookBusy -Busy $false
         if ($null -eq $bar -or $null -eq $txt) { return }
-        $bar.Value = 100
-        $txt.Text = 'Run finished.'
-    } catch { }
+        if (-not $wasRunbook) {
+            $bar.Value = 0
+            $txt.Text = 'Ready.'
+            return
+        }
+        if ($AwaitingReview) {
+            $txt.Text = 'Paused - review required. Approve the plan in the findings window to continue.'
+            return
+        }
+        if ($Failed) {
+            $txt.Text = ('Run failed: ' + $ErrorText)
+            return
+        }
+        if ($State -eq 'Completed') {
+            $bar.Value = 100
+            $txt.Text = 'Run finished.'
+            return
+        }
+        $txt.Text = ('Run ended: ' + $State)
+    } catch {
+        Set-SccGuiStatus -Text ('Runbook completion error: ' + $_.Exception.Message)
+    }
 }
 
 function Start-SccGuiJob {
     param([string]$Mode, [string]$JobName)
+    # Non-runbook jobs do not drive the runbook bar: no selection to measure.
+    $script:RunbookActive = $false
+    $script:RunbookSelected = $null
     $wf = New-SccWorkflow -Mode $Mode -Run (New-SccGuiRun)
     Start-SccGuiJobWithToken -Token @{ Cancelled = $false; Workflow = $wf } -JobName $JobName
 }
@@ -1130,6 +1342,15 @@ function Show-SccFindingsWindow {
                     }
                     $null = New-SccGuiPlan -Workflow $Workflow -ViewModels $viewModels
                     $Workflow.Data.ExecuteRemediation = $false
+                    # Mark the Review gate Completed so the continuation job
+                    # does not re-pause at AwaitingReview (Get-SccNextStage
+                    # returns AwaitingReview stages first - without this the
+                    # findings window would reopen after every approval).
+                    $reviewGate = @($Workflow.Stages | Where-Object { $_.Name -eq 'Review' })[0]
+                    if ($null -ne $reviewGate) {
+                        $reviewGate.Status = 'Completed'
+                        $reviewGate.Detail = 'Plan approved in GUI'
+                    }
                     Set-SccGuiStatus -Text 'Plan approved - continuing workflow (dry-run remediation).'
                     $w.Close()
                     Start-SccGuiJobWithToken -Token @{ Cancelled = $false; Workflow = $Workflow } -JobName 'ContinueAfterReview'
@@ -1211,6 +1432,13 @@ function Show-SccRemediationWindow {
                         return
                     }
                     $Workflow.Data.ExecuteRemediation = $true
+                    # Same Review-gate fix as the dry-run approve path: mark
+                    # it Completed so the continuation job proceeds to Remediate.
+                    $reviewGate = @($Workflow.Stages | Where-Object { $_.Name -eq 'Review' })[0]
+                    if ($null -ne $reviewGate) {
+                        $reviewGate.Status = 'Completed'
+                        $reviewGate.Detail = 'Remediation execution approved in GUI'
+                    }
                     Set-SccGuiStatus -Text 'Execution authorized - running remediation.'
                     $w.Close()
                     Start-SccGuiJobWithToken -Token @{ Cancelled = $false; Workflow = $Workflow } -JobName 'RemediateExecute'
@@ -1345,7 +1573,7 @@ function Start-SccApp {
                 Set-SccGuiStatus -Text $msg
                 $awaitingReview = ($null -ne $job.Result -and $job.Result.Status -eq 'AwaitingReview')
                 $failedJob = ($final -eq 'Failed')
-                Complete-SccRunbookProgress
+                Complete-SccRunbookProgress -State $final -AwaitingReview $awaitingReview -Failed $failedJob -ErrorText $detail
                 Reset-SccJob
                 $script:ActiveJob = $null
                 # Review gate: Full-mode run reached stage 3 with no plan.

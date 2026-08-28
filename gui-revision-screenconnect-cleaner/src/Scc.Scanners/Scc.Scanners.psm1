@@ -501,6 +501,7 @@ function Invoke-SccGuiScanner {
 
     $start = [datetime]::UtcNow
     $knownTools = @{
+        'KVRT'         = 'KVRT.exe'
         'ESET'         = 'esetonlinescanner.exe'
         'Malwarebytes' = 'MBSetup.exe'
         'AdwCleaner'   = 'adwcleaner.exe'
@@ -1108,10 +1109,278 @@ function Invoke-SccMSERTAdapter {
 }
 
 # ---------------------------------------------------------------------------
+# Public: Invoke-SccAVUninstaller
+#   Attended uninstaller for installed third-party AV (ported from the cmd
+#   pipeline's Invoke-AVUninstaller.ps1, owner policy 2026-08-27).
+#   Discovers installed security products, opens each vendor uninstaller as
+#   a visible window for the TECHNICIAN to drive (never silent flags),
+#   except Malwarebytes which is uninstalled via winget when available.
+#   A leftover sweep moves remaining Start Menu / install-folder items to a
+#   quarantine dir (never deleted). Excludes Windows Defender / MSRT.
+# ---------------------------------------------------------------------------
+function Invoke-SccAVUninstaller {
+    [CmdletBinding()]
+    param(
+        $Run,
+        [int]$TimeoutMinutes = 240,
+        [switch]$ListOnly
+    )
+
+    # Vendors considered installed third-party AV. Conservative on purpose:
+    # never try to open a Windows OS component's uninstaller.
+    $avKeywords = @(
+        'McAfee', 'Norton', 'Symantec', 'Avast', 'AVG', 'Bitdefender', 'Kaspersky',
+        'ESET', 'Sophos', 'Trend Micro', 'Webroot', 'Malwarebytes', 'Avira',
+        'Panda', 'F-Secure', 'BullGuard', 'Comodo', 'ZoneAlarm', 'Cylance',
+        'CrowdStrike', 'SentinelOne', 'Carbon Black', 'Traps', 'Cortex XDR',
+        'Windows Defender'
+    )
+    $osExclude = @('Windows Defender', 'Microsoft Security Client', 'Microsoft Defender', 'MSRT', 'Windows Malicious Software Removal')
+    $wingetUninstallIds = @{
+        'Malwarebytes' = 'Malwarebytes.Malwarebytes'
+    }
+
+    function Test-IsSccInstalledAv {
+        param([string]$Name)
+        if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+        foreach ($x in $osExclude) { if ($Name -like ('*' + $x + '*')) { return $false } }
+        foreach ($k in $avKeywords) { if ($Name -like ('*' + $k + '*')) { return $true } }
+        return $false
+    }
+
+    function Get-SccInstalledAv {
+        $keys = @(
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+            'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+        )
+        $found = @()
+        foreach ($key in $keys) {
+            if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $key)) { continue }
+            foreach ($p in (Microsoft.PowerShell.Management\Get-ItemProperty -Path ($key + '\*') -ErrorAction SilentlyContinue)) {
+                $disp = $p.DisplayName
+                $unin = $p.UninstallString
+                if ([string]::IsNullOrWhiteSpace($disp)) { continue }
+                if (-not (Test-IsSccInstalledAv -Name $disp)) { continue }
+                if ([string]::IsNullOrWhiteSpace($unin)) { continue }
+                $found += [pscustomobject]@{
+                    DisplayName          = $disp
+                    UninstallString      = $unin
+                    QuietUninstallString = $(if ($p.PSObject.Properties['QuietUninstallString']) { $p.QuietUninstallString } else { $null })
+                    InstallLocation      = $(if ($p.PSObject.Properties['InstallLocation']) { $p.InstallLocation } else { $null })
+                    Publisher            = $(if ($p.PSObject.Properties['Publisher']) { $p.Publisher } else { $null })
+                    Version              = $(if ($p.PSObject.Properties['DisplayVersion']) { $p.DisplayVersion } else { $null })
+                    RegistryKey          = $key
+                }
+            }
+        }
+        $seen = @{}
+        $out = @()
+        foreach ($f in $found) {
+            $k = ($f.DisplayName + '|' + $f.UninstallString)
+            if ($seen.ContainsKey($k)) { continue }
+            $seen[$k] = $true
+            $out += $f
+        }
+        return $out
+    }
+
+    function Open-SccAvUninstaller {
+        param($Product)
+        $start = [datetime]::UtcNow
+
+        $wingetId = $null
+        foreach ($k in $wingetUninstallIds.Keys) {
+            if ($Product.DisplayName -like ('*' + $k + '*')) { $wingetId = $wingetUninstallIds[$k]; break }
+        }
+
+        if ($wingetId) {
+            $winget = Get-Command -Name winget -ErrorAction SilentlyContinue
+            if (-not $winget) {
+                # fall through to the vendor uninstaller GUI
+            } else {
+                $psi = [System.Diagnostics.ProcessStartInfo]::new()
+                $psi.UseShellExecute = $true
+                $psi.FileName = $winget.Source
+                $psi.Arguments = ('uninstall -e --id ' + $wingetId)
+                $proc = $null
+                try {
+                    $proc = [System.Diagnostics.Process]::Start($psi)
+                } catch {
+                    return [pscustomobject]@{
+                        DisplayName = $Product.DisplayName; UninstallString = ('winget uninstall -e --id ' + $wingetId)
+                        OpenedAt = $start.ToString('o'); ClosedAt = $null
+                        Status = 'LaunchFailed'; Error = $_.Exception.Message; Method = 'winget'
+                    }
+                }
+                $closed = $null
+                $exitCode = $null
+                $status = 'LaunchFailed'
+                if ($proc) {
+                    $exited = $proc.WaitForExit([int]($TimeoutMinutes * 60 * 1000))
+                    if ($exited) {
+                        $closed = [datetime]::UtcNow.ToString('o')
+                        $status = 'ClosedByUser'
+                        try { $exitCode = $proc.ExitCode } catch { }
+                    } else {
+                        $status = 'TimeoutLeftRunning'
+                    }
+                }
+                return [pscustomobject]@{
+                    DisplayName = $Product.DisplayName; UninstallString = ('winget uninstall -e --id ' + $wingetId)
+                    OpenedAt = $start.ToString('o'); ClosedAt = $closed
+                    Status = $status; Error = $null; Method = 'winget'; ExitCode = $exitCode
+                }
+            }
+        }
+
+        $us = $Product.UninstallString
+        $psi = [System.Diagnostics.ProcessStartInfo]::new()
+        $psi.UseShellExecute = $true
+        $psi.FileName = 'cmd.exe'
+        $psi.Arguments = ('/c ' + $us)
+        $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Normal
+        $proc = $null
+        try {
+            $proc = [System.Diagnostics.Process]::Start($psi)
+        } catch {
+            return [pscustomobject]@{
+                DisplayName = $Product.DisplayName; UninstallString = $us
+                OpenedAt = $start.ToString('o'); ClosedAt = $null
+                Status = 'LaunchFailed'; Error = $_.Exception.Message; Method = 'vendor'
+            }
+        }
+        $closed = $null
+        $status = 'LaunchFailed'
+        if ($proc) {
+            $exited = $proc.WaitForExit([int]($TimeoutMinutes * 60 * 1000))
+            if ($exited) {
+                $closed = [datetime]::UtcNow.ToString('o')
+                $status = 'ClosedByUser'
+            } else {
+                $status = 'TimeoutLeftRunning'
+            }
+        }
+        return [pscustomobject]@{
+            DisplayName = $Product.DisplayName; UninstallString = $us
+            OpenedAt = $start.ToString('o'); ClosedAt = $closed
+            Status = $status; Error = $null; Method = 'vendor'
+        }
+    }
+
+    function Clear-SccAvLeftovers {
+        param($Product, [string]$QuarantineRoot)
+        $moves = @()
+        $kw = $null
+        foreach ($k in $avKeywords) {
+            if ($Product.DisplayName -like ('*' + $k + '*')) { $kw = $k; break }
+        }
+        if (-not $kw) { return $moves }
+
+        $targets = New-Object System.Collections.ArrayList
+        $smRoots = @()
+        if ($env:ProgramData) { $smRoots += (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs') }
+        if ($env:APPDATA) { $smRoots += (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs') }
+        foreach ($sm in $smRoots) {
+            if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $sm)) { continue }
+            foreach ($item in (Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $sm -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like ('*' + $kw + '*') })) {
+                if (-not $targets.Contains($item.FullName)) { [void]$targets.Add($item.FullName) }
+            }
+        }
+
+        if ($Product.InstallLocation -and (Microsoft.PowerShell.Management\Test-Path -LiteralPath $Product.InstallLocation)) {
+            [void]$targets.Add($Product.InstallLocation)
+        } else {
+            $pfRoots = @()
+            if ($env:ProgramFiles) { $pfRoots += $env:ProgramFiles }
+            if (${env:ProgramFiles(x86)}) { $pfRoots += ${env:ProgramFiles(x86)} }
+            foreach ($pf in $pfRoots) {
+                if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $pf)) { continue }
+                foreach ($d in (Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $pf -Directory -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like ('*' + $kw + '*') })) {
+                    if (-not $targets.Contains($d.FullName)) { [void]$targets.Add($d.FullName) }
+                }
+            }
+        }
+
+        if ($env:TEMP -and (Microsoft.PowerShell.Management\Test-Path -LiteralPath $env:TEMP)) {
+            foreach ($d in (Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $env:TEMP -Directory -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like ('*' + $kw + '*') })) {
+                if (-not $targets.Contains($d.FullName)) { [void]$targets.Add($d.FullName) }
+            }
+        }
+
+        if ($targets.Count -eq 0) { return $moves }
+
+        $safeName = ($Product.DisplayName -replace '[^A-Za-z0-9 ._-]', '_').Trim()
+        $destRoot = Join-Path $QuarantineRoot ($safeName + '-' + [datetime]::UtcNow.ToString('yyyyMMdd_HHmmss'))
+        $null = Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $destRoot -Force -ErrorAction SilentlyContinue
+
+        foreach ($t in $targets) {
+            if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $t)) { continue }
+            if ($t.TrimEnd('\') -eq $QuarantineRoot.TrimEnd('\')) { continue }
+            $leaf = Split-Path -Leaf $t
+            $dest = Join-Path $destRoot $leaf
+            if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $dest) {
+                $dest = Join-Path $destRoot ($leaf + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+            }
+            try {
+                Microsoft.PowerShell.Management\Move-Item -LiteralPath $t -Destination $dest -Force -ErrorAction Stop
+                $moves += [pscustomobject]@{ Source = $t; Destination = $dest; Status = 'MovedToQuarantine'; Error = $null }
+            } catch {
+                $moves += [pscustomobject]@{ Source = $t; Destination = $dest; Status = 'MoveFailed'; Error = $_.Exception.Message }
+            }
+        }
+        return $moves
+    }
+
+    # Main
+    $logDir = ''
+    if ($Run -and $Run.RunDir) { $logDir = $Run.RunDir }
+    $quarantineRoot = ''
+    if ($logDir) { $quarantineRoot = Join-Path $logDir 'av-uninstall-quarantine' }
+    elseif ($env:TEMP) { $quarantineRoot = Join-Path $env:TEMP 'ScreenConnectCleaner\av-uninstall-quarantine' }
+
+    $results = @()
+    if ($ListOnly) {
+        $results = @(Get-SccInstalledAv)
+    } else {
+        $av = @(Get-SccInstalledAv)
+        if ($av.Count -eq 0) {
+            $results += [pscustomobject]@{ DisplayName = $null; UninstallString = $null; Status = 'NoneFound'; OpenedAt = $null; ClosedAt = $null; Error = $null; Method = $null }
+        } else {
+            foreach ($a in $av) {
+                $r = Open-SccAvUninstaller -Product $a
+                $moves = @(Clear-SccAvLeftovers -Product $a -QuarantineRoot $quarantineRoot)
+                if ($moves.Count -gt 0) {
+                    $r | Add-Member -NotePropertyName 'LeftoversMoved' -NotePropertyValue $moves.Count -Force
+                    $r | Add-Member -NotePropertyName 'Leftovers' -NotePropertyValue $moves -Force
+                }
+                $results += $r
+            }
+        }
+    }
+
+    $out = [pscustomobject]@{
+        Tool           = 'Scc.AVUninstaller'
+        GeneratedUtc   = [datetime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss')
+        QuarantineRoot = $quarantineRoot
+        Count          = $results.Count
+        Results        = $results
+    }
+    if ($logDir) {
+        try {
+            $null = Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $logDir -Force -ErrorAction Stop
+            ($out | ConvertTo-Json -Depth 5 -Compress) | Microsoft.PowerShell.Management\Set-Content -Path (Join-Path $logDir 'av-uninstall-results.json') -Encoding UTF8 -NoNewline
+        } catch { }
+    }
+    return $out
+}
+
+# ---------------------------------------------------------------------------
 # Module exports
 # ---------------------------------------------------------------------------
 Export-ModuleMember -Function @(
     'Get-SccScannerList',
     'Invoke-SccScanner',
-    'Invoke-SccGuiScanner'
+    'Invoke-SccGuiScanner',
+    'Invoke-SccAVUninstaller'
 )

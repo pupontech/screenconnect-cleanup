@@ -27,14 +27,17 @@ $script:SccConfig = $null
 # Computer info cache (per-process).
 $script:SccComputerInfo = $null
 
-# Stage name table (0 Preflight .. 8 Report).
+# Stage name table (0 ToolPack .. 11 Report) - mirrors the runbook 1:1.
 $script:SccStages = @(
+    'ToolPack',
     'Preflight',
     'SnapshotBefore',
     'Detection',
     'Review',
     'Remediate',
     'Scanners',
+    'Tikun',
+    'UninstallAV',
     'SnapshotAfter',
     'Compare',
     'Report'

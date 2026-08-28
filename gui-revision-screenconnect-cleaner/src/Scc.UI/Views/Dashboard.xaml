@@ -57,7 +57,7 @@
     <TextBlock Grid.Row="4" x:Name="TxtStatus" Margin="6,6,6,0" Text="Ready."
                FontWeight="Bold" Foreground="#0A6EBE" TextWrapping="Wrap"/>
 
-    <TabControl Grid.Row="5" Margin="0,8,0,0" Height="160">
+    <TabControl Grid.Row="5" Margin="0,8,0,0" Height="250">
       <TabItem Header="System">
         <Grid Margin="8">
           <Grid.ColumnDefinitions>
