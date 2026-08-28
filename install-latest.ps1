@@ -22,7 +22,9 @@
   Parameters (useful when running the script directly, not via iex):
     -Destination <path>   install base folder (default: Desktop\ScreenConnect-Cleanup)
     -NoLaunch             do not start START-HERE.bat after installing
-    -Force                overwrite an existing <version> subfolder
+    -Force                overwrite/re-extract an existing <version> subfolder
+                          (without it, a same-version re-run detects the
+                          existing install and just launches it)
 
   PS 5.1 compatible. Pure ASCII, no BOM.
 #>
@@ -55,17 +57,44 @@ $asset = @($release.assets | Where-Object { $_.name -like 'screenconnect-cleanup
 if (-not $asset) { throw ("No deploy zip asset found in release " + $release.tag_name) }
 Write-Host ("  release:    " + $release.tag_name + "  (" + $asset.size + " bytes)")
 
-# 2. Download the zip (to TEMP so the install folder stays clean).
+# 2. Same-version fast path: the release tag names the install folder, so an
+# existing complete folder means this exact version is already installed.
+# Skip the download and launch it - re-extracting would also delete any AV
+# scanners the technician already staged into tools\AV inside that folder.
+$runDir = Join-Path $Destination $release.tag_name
+if (-not $Force -and (Test-Path -LiteralPath $runDir)) {
+    $existingVer = $null
+    $existingVerFile = Join-Path $runDir 'VERSION'
+    $existingBat = Join-Path $runDir 'START-HERE.bat'
+    try {
+        if (Test-Path -LiteralPath $existingVerFile) {
+            $existingVer = (Get-Content -LiteralPath $existingVerFile -Raw -ErrorAction Stop).Trim()
+        }
+    } catch { $existingVer = $null }
+    if ($existingVer -eq $release.tag_name.TrimStart('v') -and (Test-Path -LiteralPath $existingBat)) {
+        Write-Host ("  already installed and up to date: " + $runDir) -ForegroundColor Green
+        Write-Host "  (pass -Force to re-extract a fresh copy)" -ForegroundColor DarkGray
+        if ($NoLaunch) {
+            Write-Host ("  -NoLaunch given; run START-HERE.bat from: " + $runDir)
+        } else {
+            Write-Host "  launching START-HERE.bat ..."
+            Start-Process -FilePath $existingBat -WorkingDirectory $runDir
+        }
+        Write-Host "== done ==" -ForegroundColor Cyan
+        exit 0
+    }
+    Write-Host ("  existing folder at " + $runDir + " is incomplete or does not match " + $release.tag_name + " - re-installing.") -ForegroundColor Yellow
+    Remove-Item -LiteralPath $runDir -Recurse -Force -ErrorAction Stop
+}
+
+# 3. Download the zip (to TEMP so the install folder stays clean).
 $zip = Join-Path $env:TEMP $asset.name
 Write-Host ("  downloading " + $asset.name + " ...")
 Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing -ErrorAction Stop
 
-# 3. Extract into a versioned subfolder under the destination.
-$runDir = Join-Path $Destination $release.tag_name
+# 4. Extract into the versioned subfolder.
 if (Test-Path -LiteralPath $runDir) {
-    if (-not $Force) {
-        throw ("Already installed at " + $runDir + " - pass -Force to overwrite, or delete that folder.")
-    }
+    # Only reachable with -Force (the fast path above handled the rest).
     Remove-Item -LiteralPath $runDir -Recurse -Force -ErrorAction Stop
 }
 $null = New-Item -ItemType Directory -Path $runDir -Force
@@ -79,7 +108,7 @@ if (Test-Path -LiteralPath $inner) {
     Remove-Item -LiteralPath $inner -Force
 }
 
-# 4. Sanity: the bundle must be self-identifying and complete.
+# 5. Sanity: the bundle must be self-identifying and complete.
 $verFile = Join-Path $runDir 'VERSION'
 if (-not (Test-Path -LiteralPath $verFile)) { throw ("Bundle missing VERSION - install incomplete at " + $runDir) }
 $ver = (Get-Content -LiteralPath $verFile -Raw).Trim()
@@ -90,7 +119,7 @@ Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
 
 Write-Host ("  installed:  v" + $ver + " -> " + $runDir) -ForegroundColor Green
 
-# 5. Launch the guided runner (unless told not to).
+# 6. Launch the guided runner (unless told not to).
 if ($NoLaunch) {
     Write-Host ("  -NoLaunch given; run START-HERE.bat from: " + $runDir)
 } else {

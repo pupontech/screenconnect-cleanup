@@ -58,7 +58,8 @@ What it does:
 
 When running `install-latest.ps1` directly (not via `iex`): `-Destination
 <path>` installs elsewhere, `-NoLaunch` skips starting the runner, `-Force`
-overwrites an existing version folder.
+overwrites an existing version folder. A same-version re-run (e.g. `irm | iex`
+twice) detects the existing install and launches it instead of erroring.
 
 ---
 

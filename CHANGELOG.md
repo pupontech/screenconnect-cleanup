@@ -3,6 +3,20 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.20] - 2026-08-28
+install-latest.ps1 same-version re-run no longer throws (owner report:
+"Already installed at ... - pass -Force" on a plain `irm | iex` re-run):
+- The release tag names the install folder, so an existing folder means this
+  exact version is already present. The installer now detects a complete
+  same-version install, skips the download, prints "already installed and up
+  to date", and launches the existing START-HERE.bat (or respects -NoLaunch).
+- Re-extracting blindly would have DELETED any AV scanners the technician
+  already staged into `tools\AV` inside that folder - avoided.
+- An existing folder that is incomplete or mismatched (missing VERSION /
+  START-HERE.bat) is still re-installed fresh; -Force still re-extracts.
+- Verified live against the real GitHub API: fresh install, same-version
+  fast path (no re-download), -Force re-extract, broken-folder repair.
+
 ## [1.7.19] - 2026-08-28
 KVRT "does not launch" (owner live report on v1.7.17) - third report on this
 failure mode. Root-cause check: the official KVRT URL serves a real 114 MB PE
