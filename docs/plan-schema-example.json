@@ -11,6 +11,7 @@
   "GeneratedUtc": "yyyy-MM-dd HH:mm:ss",
   "ComputerName": "HOSTNAME",
   "Decision": "ALL_REMOVE",
+  "RemovalConfirmed": true,
   "SourceFindings": "C:\\RIT-SCC\\<HOST>-<timestamp>\\detect\\findings.json",
   "ScreenConnectInstances": [
     {

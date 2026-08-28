@@ -51,7 +51,7 @@ Two corollaries that shape the whole design:
 ## Current state
 
 > **This table was written at an early checkpoint and is now out of date.** The
-> project has since been built through Stages 0–8, including Stage 4 removal.
+> project has since been built through Stages 0–9, including Stage 4 removal.
 > See `README.md` (Status section) and `08-work-log.md` for the current, accurate
 > state. The table is kept here for historical context only.
 
@@ -82,14 +82,14 @@ Removal is last, on top of machinery already proven in the field.
 
 ```text
 screenconnect-cleanup/
-  sc-cleanup.ps1                  Top-level staged runner (wires Stages 0-8). BUILT.
+  sc-cleanup.ps1                  Top-level staged runner (wires Stages 0-9). BUILT.
   preflight.ps1                   Stage 0 preflight. BUILT (Linux-verified).
-  collect-snapshot.ps1            Stage 1/7 snapshot collector. BUILT.
+  collect-snapshot.ps1            Stage 1/8 snapshot collector. BUILT.
   detect-remote-access.ps1        Stage 2 detector. BUILT, TESTED, read-only.
   Invoke-ReviewAndRemove.ps1      Stage 3 review gate -> Stage 4. BUILT. (-Yes = automatic remove + log, used by START-HERE Step 5.)
   remove-screenconnect.ps1        Stage 4 removal/containment. BUILT, dry-run default.
-  diff-snapshots.ps1              Stage 7 before/after diff. BUILT.
-  New-InvestigationReport.ps1     Stage 8 report. BUILT (XSS + empty-case verified).
+  diff-snapshots.ps1              Stage 8 before/after diff. BUILT.
+  New-InvestigationReport.ps1     Stage 9 report. BUILT (XSS + empty-case verified).
   scanners are staged by `tools/Get-AVTools.ps1` and launched through
   `Invoke-GUIScanner.ps1` (KVRT/ESET attended GUI; Malwarebytes via winget).
   targets.json                    What to look for. 15 products, toggleable.

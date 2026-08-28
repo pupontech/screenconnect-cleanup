@@ -5,7 +5,7 @@
   This is the removal entry point for the GUIDED runner (START-HERE.bat).
   sc-cleanup.ps1 has its own equivalent review gate as Stage 3; this script
   exists so the guided, step-by-step flow can remove too without re-running
-  the whole 9-stage pipeline (which would redo both snapshots).
+  the whole 10-stage pipeline (which would redo both snapshots).
 
   The actual removal is NOT reimplemented here - it delegates to
   remove-screenconnect.ps1, which stays the single removal engine

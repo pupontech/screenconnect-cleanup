@@ -7,7 +7,7 @@ Tron's shape, our scope. A staged orchestrator that drives existing tools.
 ## The stage pipeline
 
 ```text
-sc-cleanup.ps1  [flags]          <- top-level runner, BUILT (wires Stages 0-8)
+sc-cleanup.ps1  [flags]          <- top-level runner, BUILT (wires Stages 0-9)
 |
 +- STAGE 0  PREFLIGHT
 |    admin check . OS role check (refuse on Server unless -force)
@@ -40,26 +40,35 @@ sc-cleanup.ps1  [flags]          <- top-level runner, BUILT (wires Stages 0-8)
 |    persistence bound to removed agents: tasks, Run keys, WMI subs
 |    everything moved to \quarantine\ - NOTHING deleted
 |
-+- STAGE 5  SCANNERS                   [skip: -sa]   <- sequential, long
-|    KVRT               (approved, see D2)
-|    ESET               (approved, see D3)
-|    MSERT              (free Microsoft second opinion)
-|    each: timeout . exit code . log copied to \logs\<scanner>\
++- STAGE 5  SCANNERS                   [skip: -sa]   <- attended GUIs, long
+|    KVRT               (staged from Kaspersky's official URL, see docs/05)
+|    ESET Online Scanner (staged from ESET's official URL, see docs/05)
+|    Malwarebytes       (installed via winget, launched for the technician)
+|    each: launched as a visible attended GUI via Invoke-GUIScanner.ps1;
+|          session status recorded in scanner_results.json, surfaced in the
+|          report (docs/06 rules 9-10)
 |
-+- REBOOT BARRIER (if any stage flagged it)  -> RunOnce resume marker
++- STAGE 6  UNINSTALL INSTALLED AV     [skip: -avu]  <- attended GUIs
+|    Invoke-AVUninstaller.ps1: open each detected third-party AV's own
+|    uninstaller for the technician to drive; leftovers moved to quarantine,
+|    never deleted (Windows Defender excluded)
 |
-+- STAGE 6  PROCMON - TARGETED ONLY    [opt-in: -procmon]
-|    runs only if the Stage 7 diff shows a resurrection, or on demand
++- STAGE 7  PROCMON - TARGETED ONLY    [opt-in: -procmon]
+|    runs only if the Stage 8 diff shows a resurrection, or on demand
+|    (currently a stub - see docs/07 M6)
 |
-+- STAGE 7  SNAPSHOT (AFTER) + DIFF
++- STAGE 8  SNAPSHOT (AFTER) + DIFF
 |    collect-snapshot.ps1 -Label after, then diff against before
 |    what went, what came back, what is new
 |    ** resurrection detection lives here **
 |
-+- STAGE 8  REPORT
++- STAGE 9  REPORT
      New-InvestigationReport.ps1
      report.html (tech-facing) . results.json . master log
      + credential-reset checklist for the client
+
+Reboot-resume (e.g. vendor uninstaller exit 3010) is handled inside
+remove-screenconnect.ps1 via a RunOnce key, not by the orchestrator.
 ```
 
 ---
@@ -69,13 +78,13 @@ sc-cleanup.ps1  [flags]          <- top-level runner, BUILT (wires Stages 0-8)
 ```
 -sa           skip antivirus scanners (the multi-hour stage)
 -sr           skip removal (detect + report only - the "just tell me" mode)
+-avu          skip uninstalling installed AV
 -np           no restore point
 -offline      use the pre-staged tool pack, do not download
--procmon      force the Procmon stage
--incident <date>   incident window anchor
+-procmon      force the Procmon stage (currently a stub)
+-IncidentDate <date>   incident window anchor (defaults to today; never prompted)
 -force        override the server-OS refusal
--safemode     relaunch in safe mode with networking
--resume       internal, used by the reboot RunOnce
+-ExecuteRemoval  TEST MODE: pre-authorize removal (lab/VM only, no typed confirmation)
 ```
 
 `-sr` matters more than it looks: **detect-only is the mode you can hand any technician
@@ -99,42 +108,31 @@ machinery, opposite priorities.
 
 These were specified up front so components built in parallel compose correctly.
 
-### Scanner adapter contract (Stage 5)
+### Scanner operation (Stage 5) - attended GUI, no invented flags
 
-Every adapter in `scanners/` takes:
+Stage 5 no longer uses CLI scanner adapters (owner decisions 2026-08-26/27;
+see docs/05 and docs/07 Q4 - do not restore CLI adapters). It launches each
+scanner as a visible attended GUI through `Invoke-GUIScanner.ps1` and the
+technician drives the UI:
 
-```powershell
-param(
-    [string]$ScanPath,          # optional targeted path; omit for default scan
-    [int]$TimeoutMinutes = 120,
-    [string]$LogDir,            # where to copy the scanner's own log
-    [string]$ToolPath,          # optional explicit path to the executable
-    [switch]$WhatIf             # report availability + command line, run nothing
-)
-```
+- KVRT and ESET Online Scanner are staged from official vendor URLs by
+  `tools/Get-AVTools.ps1` (atomic `.part` staging + PE-header validation).
+- Malwarebytes is installed via winget (`winget install -e --id
+  Malwarebytes.Malwarebytes`) and launched for the technician.
+- One session result per scanner: `Tool`, `Scanner`, `Status` and `ExitCode`,
+  written to `scanner_results.json`. `Status` is one of: `Completed`,
+  `LaunchFailed`, `NotInstalled`, `Timeout`, `Failed`. The report renders the
+  table and an explicit "scanners skipped" block when `-sa` was used
+  (docs/06 rules 9-10 - a skipped or failed scanner is shown, never hidden).
+- Hard 240-minute cap per session: a hung scanner must not hang the run.
+- **Never invent silent scan/clean flags** without fresh vendor documentation
+  and a separate owner decision.
 
-and returns exactly one PSCustomObject:
-
-```
-ScannerName, ScannerVersion, Available (bool), StartTimeUtc, EndTimeUtc,
-DurationSeconds, Status, ExitCode, Detections (array), DetectionCount,
-LogPath, RebootRequired (bool), Errors (array), CommandLine (string)
-```
-
-`Status` is one of: `Completed`, `Timeout`, `Failed`, `Skipped`, `NotInstalled`,
-`Unlicensed`, `NotVerified`.
-
-Each `Detections` element: `@{ Path=''; ThreatName=''; Severity=''; Action='' }`
-
-Rules: **hard timeout per scanner** (a hung KVRT must not hang the run); **failure is
-never fatal** — record `Failed` and continue; **read the scanner's log file, never parse
-stdout**; `-WhatIf` must be genuinely safe.
-
-### Snapshot schema (Stages 1 and 7)
+### Snapshot schema (Stages 1 and 8)
 
 ```json
 {
-  "SchemaVersion": 1,
+  "SchemaVersion": 2,
   "Label": "before",
   "ComputerName": "...",
   "CollectedUtc": "yyyy-MM-dd HH:mm:ss",
@@ -147,7 +145,9 @@ stdout**; `-WhatIf` must be genuinely safe.
     "ScheduledTasks": [], "RegistryAutoruns": [], "StartupFolders": [],
     "Processes": [], "Connections": [], "InstalledPrograms": [],
     "LocalAccounts": [], "FirewallRules": [], "WmiPersistence": [],
-    "RecentFiles": [],
+    "RecentFiles": [], "RecentFilesCapHit": false,
+    "Prefetch": [], "ShimCache": [], "BamDam": [], "UserAssist": [],
+    "Srum": { "DatabasePresent": false, "...": "..." },
     "SystemSettings": { "RdpEnabled": false, "HostsFileLines": [] }
   }
 }

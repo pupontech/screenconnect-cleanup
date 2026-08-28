@@ -1,10 +1,11 @@
 @echo off
 rem ============================================================================
 rem  START-HERE.bat - one-by-one guided runner for the ScreenConnect Cleanup Tool
-rem  Walks the technician through each step in order, prompting before each one.
-rem  Steps 1-4 and 8-9 are read-only. Step 5 REMOVES ScreenConnect (asks first,
-rem  and requires a typed confirmation). Step 7 is an opt-in destructive tool.
-rem  Self-elevates. Pure ASCII, no BOM.
+rem  Walks the technician through each step in order, prompting before each one
+rem  that needs a decision. Steps 1-4 and 9-10 are read-only (steps 3, 4 and 9
+rem  run automatically). Step 5 REMOVES ScreenConnect automatically (owner
+rem  directive 2026-08-27: run + remove + log, no prompts). Step 7 is an
+rem  opt-in destructive tool. Self-elevates. Pure ASCII, no BOM.
 rem ============================================================================
 
 setlocal EnableDelayedExpansion
@@ -35,7 +36,7 @@ cd /d "%~dp0"
 echo.
 echo  ============================================================
 echo   SCREENCONNECT CLEANUP TOOL - guided run
-echo   You will be prompted before each step. Ctrl+C to abort.
+echo   You are prompted before each step that needs a decision. Ctrl+C to abort.
 echo.
 echo   1 toolpack     2 preflight    3 before-snapshot
 echo   4 detection    5 REMOVE       6 antivirus scans

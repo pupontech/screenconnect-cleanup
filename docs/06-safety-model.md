@@ -8,7 +8,7 @@ rules that prevent that.
 ## Safety rules
 
 ### 1. Stage 1 runs first and cannot be skipped
-Snapshot before you touch. It is also what makes the Stage 7 diff possible, so it pays
+Snapshot before you touch. It is also what makes the Stage 8 diff possible, so it pays
 for itself twice.
 
 ### 2. Stage 3 is a hard approval gate
@@ -22,6 +22,12 @@ the single rule that separates this tool from a destructive script.
 > manifest + report. The interactive gate remains in `sc-cleanup.ps1` and in direct
 > runs of `Invoke-ReviewAndRemove.ps1` without `-Yes`. Quarantine-never-delete,
 > ScreenConnect-only targeting and the prominent red pre-removal banner all still apply.
+>
+> **Lab-only exception:** `sc-cleanup.ps1 -ExecuteRemoval` is a second unattended
+> detect-and-remove mode: it pre-authorizes Stage 4 (every detected ScreenConnect
+> instance auto-marked REMOVE, typed confirmation waived) and prints a prominent red
+> banner. It is intended **only** for a disposable, snapshotted VM, still honors `-sr`,
+> and must never be used on a client machine (see README "Design notes").
 
 When Stage 4 is built, it must consume an **approved plan file** produced by Stage 3 —
 the destructive code should not be reachable without that artifact existing.

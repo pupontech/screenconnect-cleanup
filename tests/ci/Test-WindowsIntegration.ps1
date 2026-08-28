@@ -195,7 +195,7 @@ $whatIfArgs = @(
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
     '-File', $scCleanup,
     '-WhatIf', '-force', '-np', '-offline',
-    '-OutRoot', $tmp, '-TechName', 'CI', '-ClientName', 'CI'
+    '-OutRoot', $tmp
 )
 # Start-Process -Wait -PassThru drains inheritable streams itself (unlike a
 # manual ProcessStartInfo with RedirectStandardOutput/Error=true that deadlocks

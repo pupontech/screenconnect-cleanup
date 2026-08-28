@@ -30,8 +30,6 @@ param(
     [switch]$offline,     # use pre-staged tool pack, do not download
     [switch]$procmon,     # force Procmon stage
     [switch]$force,       # override server-OS refusal
-    [switch]$safemode,    # relaunch in safe mode with networking
-    [switch]$resume,      # internal: used by reboot RunOnce
     [switch]$ExecuteRemoval, # TEST MODE: pre-authorize removal (no typed confirmation)
 
     # Configuration
@@ -50,7 +48,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Constants & script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.7.0'
+$ScriptVersion = '1.7.18'
 $ScriptName = 'sc-cleanup.ps1'
 $PipelineStages = @(
     @{ Id = 0; Name = 'Preflight';            SkipFlag = '' },
@@ -60,7 +58,7 @@ $PipelineStages = @(
     @{ Id = 4; Name = 'Contain + Remove';     SkipFlag = 'sr' },
     @{ Id = 5; Name = 'Scanners';             SkipFlag = 'sa' },
     @{ Id = 6; Name = 'Uninstall installed AV'; SkipFlag = 'avu' },
-    @{ Id = 7; Name = 'Procmon';              SkipFlag = 'procmon' },
+    @{ Id = 7; Name = 'Procmon';              SkipFlag = '' },
     @{ Id = 8; Name = 'Snapshot (After)+Diff'; SkipFlag = '' },
     @{ Id = 9; Name = 'Report';               SkipFlag = '' }
 )
@@ -341,7 +339,7 @@ Write-StageLog "Master log: $MasterLogPath"
 Add-Content -Path $MasterLogPath -Value "sc-cleanup.ps1 v$ScriptVersion - Master Log" -Encoding UTF8
 Add-Content -Path $MasterLogPath -Value "Started: $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))" -Encoding UTF8
 Add-Content -Path $MasterLogPath -Value "Host: $hostName  OS: $osCaption  PS: $psVersion  Admin: $isAdmin  Server: $isServer" -Encoding UTF8
-Add-Content -Path $MasterLogPath -Value "Flags: sa=$sa sr=$sr np=$np offline=$offline procmon=$procmon force=$force safemode=$safemode resume=$resume ExecuteRemoval=$ExecuteRemoval" -Encoding UTF8
+Add-Content -Path $MasterLogPath -Value "Flags: sa=$sa sr=$sr np=$np offline=$offline procmon=$procmon force=$force ExecuteRemoval=$ExecuteRemoval" -Encoding UTF8
 Add-Content -Path $MasterLogPath -Value "IncidentDate: $IncidentDate" -Encoding UTF8
 
 # Resolve tool directory
@@ -373,11 +371,6 @@ if (-not $uacEnabled -and -not $force) {
     Write-StageLog "UAC is DISABLED on this machine (-force set, continuing). Record this as a finding." 'Warn'
 } else {
     Write-StageLog "UAC check: enabled."
-}
-
-if ($safemode) {
-    Write-StageLog "Safe mode requested - not implemented in this version" 'Warn'
-    # TODO: implement safe mode relaunch via bcdedit /set {current} safeboot network
 }
 
 # -----------------------------------------------------------------------------
@@ -781,7 +774,7 @@ $stage6Result = Invoke-Stage -StageId 6 -StageName 'Uninstall installed AV' -Ski
 # -----------------------------------------------------------------------------
 # Stage 7: Procmon (opt-in only via -procmon)
 # -----------------------------------------------------------------------------
-$stage7Result = Invoke-Stage -StageId 7 -StageName 'Procmon' -SkipFlag 'procmon' -StageBlock {
+$stage7Result = Invoke-Stage -StageId 7 -StageName 'Procmon' -SkipFlag '' -StageBlock {
     if (-not $procmon) {
         Write-StageLog "Stage 7 SKIPPED (not requested via -procmon)"
         return @{ Skipped = $true; Note = 'Opt-in only' }
@@ -789,7 +782,7 @@ $stage7Result = Invoke-Stage -StageId 7 -StageName 'Procmon' -SkipFlag 'procmon'
 
     Write-StageLog "STUB: Procmon stage"
     Write-StageLog "In a full implementation, this stage would:"
-    Write-StageLog "  - Run Procmon with a targeted filter (based on Stage 7 diff resurrection)"
+    Write-StageLog "  - Run Procmon with a targeted filter (based on Stage 8 diff resurrection)"
     Write-StageLog "  - Capture for a bounded window"
     Write-StageLog "  - Save .pml to logs/Procmon/"
     Write-StageLog ""
@@ -918,6 +911,12 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
     $repArgs = @('-FindingsJson', $findingsJson, '-OutputPath', $reportHtml)
     $avUninstallResults = if ($stage6Result -and $stage6Result.Result -and $stage6Result.Result.ResultsPath) { $stage6Result.Result.ResultsPath } else { $null }
     if ($avUninstallResults -and (Test-Path -LiteralPath $avUninstallResults)) { $repArgs += @('-AVUninstall', $avUninstallResults) }
+    # Scanner status into the report (docs/06 rules 9-10): pass the results
+    # file when Stage 5 ran; pass -ScannersSkipped when -sa suppressed it so
+    # the report never silently implies a clean malware verdict.
+    $scannerSummary = if ($stage5Result -and $stage5Result.Result -and $stage5Result.Result.SummaryPath) { $stage5Result.Result.SummaryPath } else { $null }
+    if ($scannerSummary -and (Test-Path -LiteralPath $scannerSummary)) { $repArgs += @('-ScannerSummary', $scannerSummary) }
+    elseif ($stage5Result -and $stage5Result.Skipped) { $repArgs += '-ScannersSkipped' }
     $rc = Invoke-ChildScript -ScriptPath $reportScript -ArgumentList $repArgs -LogTag 'Report'
     if ($rc -ne 0) { throw ("New-InvestigationReport.ps1 exited with code " + $rc) }
     Write-StageLog ("Report generated: " + $reportHtml)
@@ -941,9 +940,9 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
     $findings = Get-Content $findingsJson -Raw | ConvertFrom-Json
     # Safe nested access - stages may have been skipped (Result = $null).
     $beforeSnap = if ($stage1Result -and $stage1Result.Result) { $stage1Result.Result.SnapshotPath } else { $null }
-    $afterSnap = if ($stage7Result -and $stage7Result.Result) { $stage7Result.Result.AfterSnapshot } else { $null }
-    $diffPath = if ($stage7Result -and $stage7Result.Result) { $stage7Result.Result.DiffPath } else { $null }
-    $removalManifest = if ($stage7Result -and $stage7Result.Result) { $stage7Result.Result.RemovalManifest } else { $null }
+    $afterSnap = if ($stage8Result -and $stage8Result.Result) { $stage8Result.Result.AfterSnapshot } else { $null }
+    $diffPath = if ($stage8Result -and $stage8Result.Result) { $stage8Result.Result.DiffPath } else { $null }
+    $removalManifest = if ($stage8Result -and $stage8Result.Result) { $stage8Result.Result.RemovalManifest } else { $null }
     $scannerSummary = if ($stage5Result -and $stage5Result.Result) { $stage5Result.Result.SummaryPath } else { $null }
     $planJson = if ($stage3Result -and $stage3Result.Result) { $stage3Result.Result.PlanJson } else { $null }
     $scCount = 0

@@ -3,6 +3,44 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.18] - 2026-08-28
+SPEC-axis review fixes (findings from the 2026-08-28 code review, items 1-9):
+- **FIX - results.json was always null on the verification fields.** Stage 9 read
+  `AfterSnapshot` / `DiffPath` / `RemovalManifest` from `$stage7Result` (Procmon,
+  opt-in) instead of `$stage8Result` (after-snapshot + diff), so a normal run
+  wrote `null` for all three. Now reads the correct stage result.
+- **FIX - `-procmon` flag was inverted.** Stage 7's skip flag was named `procmon`,
+  so passing `-procmon` logged "Stage 7 (Procmon) SKIPPED via -procmon" - the
+  opposite of the documented "force the Procmon stage". The stage now gates on
+  the flag itself: absence skips ("not requested via -procmon"), presence
+  reaches the (still stub) run path.
+- **NEW - scanner status in the report (docs/06 rules 9-10).**
+  `New-InvestigationReport.ps1` gains `-ScannerSummary` and `-ScannersSkipped`;
+  `sc-cleanup.ps1` Stage 9 passes the results file when Stage 5 ran, or the
+  skipped marker when `-sa` was used. The HTML report now renders each
+  scanner's Tool/Status/ExitCode and an explicit "Scanners were SKIPPED" block,
+  so a skipped or failed scanner can never read as a clean malware verdict.
+  Regression test: `tests/test_report_scanner_section.ps1` (portable).
+- **REMOVED - dead flags `-safemode` and `-resume`** from `sc-cleanup.ps1`.
+  Safe-mode relaunch was an unimplemented stub; reboot-resume lives inside
+  `remove-screenconnect.ps1` (RunOnce key invoking the remover directly), so
+  the orchestrator flags did nothing and were removed. Flags docs updated.
+- **Docs aligned to the real 10-stage pipeline (0-9).** README ("9-stage
+  (Stages 0-8)" -> 10 stages), `docs/02` (added the Stage 6 "Uninstall installed
+  AV" stage, renumbered Procmon/after+diff/report to 7/8/9, replaced the stale
+  CLI scanner-adapter contract with the attended-GUI operation, dropped MSERT,
+  snapshot schema block updated to SchemaVersion 2 with the retro sections),
+  `docs/06` (rule 2 now documents the `-ExecuteRemoval` lab-only exception),
+  `docs/07` (Q1 un-blocked from M5, M3/M6 stage numbers, Amcache formally kept
+  open, incident window now consumed by Stages 1+8), `docs/01` (D1 status),
+  `docs/00`, `docs/09`, `plan-schema-example.json` (added `RemovalConfirmed`),
+  `START-HERE.bat` header (Step 5 is automatic, not "asks first"), and the
+  `Invoke-ReviewAndRemove.ps1` header.
+- **TEST FIX - `Test-WindowsIntegration.ps1`** no longer passes the removed
+  `-TechName` / `-ClientName` args to `sc-cleanup.ps1` (pre-existing breakage
+  after the no-prompt directive removed those params).
+- `$ScriptVersion` banner in `sc-cleanup.ps1` aligned to the VERSION file.
+
 ## [1.7.17] - 2026-08-27
 KVRT still "does not launch" (owner live report on v1.7.14) - root cause
 nailed: the staging "usable copy" check was SIZE-ONLY, so a broken-but-big

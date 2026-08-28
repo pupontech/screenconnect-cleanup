@@ -17,7 +17,7 @@ drives existing tools rather than reimplementing them. Roughly **90% orchestrati
 10% original code** — the original code being the ScreenConnect module, because no
 existing tool answers the question that actually matters.
 
-> **Status: full 9-stage pipeline built** (Stages 0–8), including a Stage 4 removal
+> **Status: full 10-stage pipeline built** (Stages 0–9), including a Stage 4 removal
 > module (`remove-screenconnect.ps1`). Removal is **not read-only**: given an approved
 > plan and `-Execute`, it stops services, runs vendor uninstallers, moves files to
 > quarantine, and removes service/persistence registrations. It is dry-run by default

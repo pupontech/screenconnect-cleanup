@@ -14,6 +14,8 @@ param(
     [string]$OutputPath,
     [string]$RemovalManifest,
     [string]$AVUninstall,
+    [string]$ScannerSummary,
+    [switch]$ScannersSkipped,
     [switch]$PassThru
 )
 
@@ -576,6 +578,51 @@ if ($AVUninstall) {
 }
 
 # ---------------------------------------------------------------------------
+# Scanner status (Stage 5) - attended GUI scans. docs/06 rules 9-10: a skipped
+# or failed scanner must appear as such in the report, and a skipped scanner
+# run must never look like a clean malware verdict.
+# ---------------------------------------------------------------------------
+$scannerSectionHtml = ''
+if ($ScannerSummary -or $ScannersSkipped) {
+    if ($ScannersSkipped -and -not $ScannerSummary) {
+        $scannerSectionHtml = @"
+<section id="scanners">
+  <h2>Antivirus / malware scanners</h2>
+  <p class="warn-line">Scanners were SKIPPED for this run (no scanner output exists). This report makes no malware finding of any kind - neither "malware found" nor "clean".</p>
+</section>
+"@
+    } else {
+        $scannerData = $null
+        $scannerError = $null
+        if (Test-Path -LiteralPath $ScannerSummary) {
+            try { $scannerData = (Get-Content -LiteralPath $ScannerSummary -Raw) | ConvertFrom-Json }
+            catch { $scannerError = $_.Exception.Message }
+        } else { $scannerError = "results file not found: $ScannerSummary" }
+
+        $rows = ''
+        foreach ($s in @($scannerData)) {
+            if ($null -eq $s) { continue }
+            $rows += "<tr><td>$(Fmt (Get-Prop $s 'Scanner'))</td><td>$(Fmt (Get-Prop $s 'Tool'))</td><td>$(Fmt (Get-Prop $s 'Status'))</td><td>$(Fmt (Get-Prop $s 'ExitCode'))</td></tr>`n"
+        }
+        if (-not $rows) {
+            if ($scannerError) {
+                $rows = "<tr><td colspan='4'>Could not load scanner results: $(Fmt $scannerError)</td></tr>"
+            } else {
+                $rows = '<tr><td colspan="4">No scanner sessions were recorded.</td></tr>'
+            }
+        }
+        $scannerNote = if ($scannerError) { "<p class='warn-line'>$scannerError</p>" } else { "<p class='muted'>Each scanner ran as a visible attended GUI driven by the technician. Any status other than Completed means the scan did not finish or was unavailable - treat the scan as NOT done. Source: $(Fmt $ScannerSummary)</p>" }
+        $scannerSectionHtml = @"
+<section id="scanners">
+  <h2>Antivirus / malware scanners</h2>
+  $scannerNote
+  <div class="table-scroll"><table class="data-table"><thead><tr><th>Scanner</th><th>Tool</th><th>Status</th><th>Exit code</th></tr></thead><tbody>$rows</tbody></table></div>
+</section>
+"@
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Removal manifest and credential-reset reminder
 # ---------------------------------------------------------------------------
 $removalSectionHtml = ''
@@ -842,6 +889,7 @@ $summaryHtml
 $scSectionHtml
 $otherSectionHtml
 $avUninstallSectionHtml
+$scannerSectionHtml
 $removalSectionHtml
 $histSectionHtml
 $parseSectionHtml

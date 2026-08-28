@@ -21,10 +21,10 @@ box" tool has value on day one.
 | **M0** | **Live lab validation.** Install ScreenConnect from a test cloud instance in a VM. Confirm the relay-identity extraction. Uninstall, document remnants. | Corrected key map | **PARTIAL (field, 2026-08-26):** real removal on INPIRON4SANITY2 confirmed instance identity via DisplayName + install-dir match and the no-UninstallString surgery fallback end-to-end. Relay-key extraction (Q1/Q2) still needs a test-cloud install lab run |
 | **M1** | Stages 0, 1, 8 — snapshot + report, read-only | Usable immediately, cannot hurt anything | **Built & Linux-verified** (Windows content paths still unverified — see below) |
 | **M2** | Stage 2 — ScreenConnect + RAT detection | `-sr` detect-only mode | **PoC DONE** (verified on a real machine) |
-| **M3** | Stage 7 — after-snapshot + diff | Catches resurrections | **Built & Linux-verified** |
+| **M3** | Stage 8 — after-snapshot + diff | Catches resurrections | **Built & Linux-verified** |
 | **M4** | Stage 5 — scanners (KVRT/ESET/Malwarebytes) | Optional, skippable | **Built** — `Get-AVTools.ps1` stages KVRT/ESET from official URLs, `Invoke-GUIScanner.ps1` launches them attended (GUI launch-and-wait); Malwarebytes install/uninstall via winget (v1.7.3+). AdwCleaner + Defender remain removed from scope. |
 | **M5** | Stages 3, 4 — approval gate + removal + quarantine + reboot resume | **Only after heavy VM-snapshot testing** | **LIVE-VALIDATED (field, 2026-08-26):** full removal executed with ExecuteMode=true on INPIRON4SANITY2 via the manual-surgery path (quarantine + service delete + uninstall-key cleanup), manifest truthful after the UninstallFallback fix. 3010 reboot-resume path still needs a lab run |
-| **M6** | Stage 6 — targeted Procmon | Respawn investigation | **Not started** (opt-in stub only) |
+| **M6** | Stage 7 — targeted Procmon | Respawn investigation | **Not started** (opt-in stub only) |
 | **M7** | Top-level `sc-cleanup.ps1` stage runner tying it together | The actual product | **Built & Linux end-to-end verified** (detect-remote-access stubbed on Linux) |
 
 ### Recommended before M5
@@ -64,10 +64,12 @@ until a real install corrects it.
 
 ## Open questions
 
-### Q1 — Is the server key stable per server? [BLOCKING M5]
+### Q1 — Is the server key stable per server? [OPEN — no longer blocks M5]
 The whole "which server is this" model leans on it. If the encoded server key is not
 stable across reinstalls from the same server, the fallback is relay host + custom
-properties, which is weaker. **Answer this in the M0 lab before building removal logic.**
+properties, which is weaker. The 2026-08-26 field removal ran on instance identity
+(DisplayName + install-dir match) rather than the key map, so removal no longer blocks
+on this; the relay-key extraction itself still needs the M0 test-cloud lab.
 
 ### Q2 — Where does the parameter blob actually live on current builds?
 Service ImagePath, process command line, or `.config` file? The detector tries all three
@@ -108,7 +110,8 @@ From the independent module review (t_f2f5e295), carried to the integration pass
    2026-08-26:** the Defender adapter was removed from the line-up by owner decision.
 2. **HIGH / scope — Amcache missing.** The Stage 1 retrospective expansion implements
    Prefetch, ShimCache, BAM/DAM, UserAssist, SRUM but **no Amcache** collector, schema
-   field, or diff class. Either implement Amcache or formally revise scope. **Open.**
+   field, or diff class. Either implement Amcache or formally revise scope. **Open**
+   (formally kept in scope 2026-08-28; revisit after M0).
 3. **MEDIUM / semantics — Defender historical detections (moot).** `Get-ThreatDetections`
    read all of `Get-MpThreatDetection` history and reported it as this run's
    `Detections`; a pre-existing detection could be mis-attributed. Also copied Support
@@ -124,7 +127,7 @@ From the independent module review (t_f2f5e295), carried to the integration pass
 
 ### Q6 — Procmon boot logging non-interactively
 It is set via the GUI Options menu. Whether a CLI equivalent exists is unconfirmed.
-Affects Stage 6's design.
+Affects Stage 7's design.
 
 ### Q7 — Client confidentiality on reputation lookups
 `sigcheck`'s VirusTotal switches upload data. Submitting a client's file hashes — let
@@ -149,5 +152,6 @@ highest-value addition after the live test.
 
 **Incident window as a first-class input.** Asking the client "when did the call happen?"
 and weighting everything created or first-executed inside that window is the cheapest,
-strongest signal available. `collect-snapshot.ps1` already accepts `-IncidentWindowDays`;
-nothing consumes it yet.
+strongest signal available. `collect-snapshot.ps1` accepts `-IncidentWindowDays`, and
+the orchestrator now passes it through from `-IncidentDate` in Stages 1 and 8
+(defaults to today, never prompted).

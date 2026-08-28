@@ -61,7 +61,7 @@ hold", "Scanner-process contracts OK", removal runtime contracts OK, integration
 3.1 Clean read-only run: `-sr` (snapshot only) must finish "All stages executed
     successfully" and exit 0.
 3.2 Forced nonzero Stage 4 exit (e.g. failed restore point with confirmed removal,
-    no -np): expect Stage 4 BLOCKED log, Stages 5-8 still run and produce
+    no -np): expect Stage 4 BLOCKED log, Stages 5-9 still run and produce
     manifest/diff/report evidence, console banner "PIPELINE COMPLETED WITH ERRORS",
     `echo %ERRORLEVEL%` -> 1 (not 0).
 3.3 Restore-point gate: with -ExecuteRemoval and confirmed plan but restore point

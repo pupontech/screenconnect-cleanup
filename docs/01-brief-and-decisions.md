@@ -40,8 +40,10 @@ options.**
 > "creat proof of concept with what you currently think and then we will test"
 
 Build the PoC on current best assumptions, then test against a real install.
-**Status: PoC built and unit-tested. Live test against a real ScreenConnect install is
-still outstanding and is the top open item.**
+**Status: PoC built and unit-tested. Field validation (2026-08-26) confirmed instance
+identity via DisplayName + install-dir match and the no-UninstallString surgery
+fallback end-to-end; the relay-key map itself still needs the M0 test-cloud lab
+(see docs/07, milestone M0).**
 
 ### D2 — KVRT licensing
 > "you are allowed to use it"
