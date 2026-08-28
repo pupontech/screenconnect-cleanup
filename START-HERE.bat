@@ -72,15 +72,13 @@ set GO=
 
 rem ---- Step 3: BEFORE snapshot -----------------------------------------------
 echo.
-echo  STEP 3 of 10: BEFORE snapshot (baseline; step 8 diffs against this)
-set /p GO="    Run now? [Y/n] "
-if /i not "%GO%"=="n" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect-snapshot.ps1" -Label before -OutFile "%~dp0snapshot_before.json" -Quiet
-    if exist "%~dp0snapshot_before.json" (
-        echo     [i] Baseline saved.
-    ) else (
-        echo     [WARN] Baseline was NOT written - step 8 will skip the diff.
-    )
+echo  STEP 3 of 10: BEFORE snapshot (automatic - baseline for the step 9 diff)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect-snapshot.ps1" -Label before -OutFile "%~dp0snapshot_before.json" -Quiet
+if errorlevel 1 echo     [WARN] Before-snapshot exited with errorlevel %errorlevel%
+if exist "%~dp0snapshot_before.json" (
+    echo     [i] Baseline saved.
+) else (
+    echo     [WARN] Baseline was NOT written - step 9 will skip the diff.
 )
 set GO=
 
@@ -218,29 +216,26 @@ set GO=
 
 rem ---- Step 9: AFTER snapshot + diff ------------------------------------------
 echo.
-echo  STEP 9 of 10: After-snapshot and diff vs the before-snapshot
-set /p GO="    Run now? [Y/n] "
-if /i not "%GO%"=="n" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect-snapshot.ps1" -Label after -OutFile "%~dp0snapshot_after.json" -Quiet
-    if errorlevel 1 echo     [WARN] After-snapshot exited with errorlevel !errorlevel!
-    rem Only diff when the baseline from step 3 actually exists - otherwise
-    rem diff-snapshots.ps1 dumps a raw PowerShell error at the technician.
-    if not exist "%~dp0snapshot_before.json" (
-        echo     [WARN] No snapshot_before.json - step 3 was skipped, so there is
-        echo         nothing to diff against. Skipping the diff.
+echo  STEP 9 of 10: After-snapshot and diff vs the before-snapshot (automatic)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect-snapshot.ps1" -Label after -OutFile "%~dp0snapshot_after.json" -Quiet
+if errorlevel 1 echo     [WARN] After-snapshot exited with errorlevel %errorlevel%
+rem Only diff when the baseline from step 3 actually exists - otherwise
+rem diff-snapshots.ps1 dumps a raw PowerShell error at the technician.
+if not exist "%~dp0snapshot_before.json" (
+    echo     [WARN] No snapshot_before.json - step 3 was skipped, so there is
+    echo         nothing to diff against. Skipping the diff.
+) else (
+    if not exist "%~dp0snapshot_after.json" (
+        echo     [WARN] After-snapshot was not written - skipping the diff.
     ) else (
-        if not exist "%~dp0snapshot_after.json" (
-            echo     [WARN] After-snapshot was not written - skipping the diff.
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0diff-snapshots.ps1" -BeforeFile "%~dp0snapshot_before.json" -AfterFile "%~dp0snapshot_after.json" -OutFile "%~dp0snapshot_diff.json"
+        rem exit 1 from diff = RESURRECTION detected, a finding not a failure
+        if errorlevel 2 (
+            echo     [WARN] Diff failed to run.
+        ) else if errorlevel 1 (
+            echo     [WARN] RESURRECTION DETECTED - removed items came back. See snapshot_diff.json
         ) else (
-            powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0diff-snapshots.ps1" -BeforeFile "%~dp0snapshot_before.json" -AfterFile "%~dp0snapshot_after.json" -OutFile "%~dp0snapshot_diff.json"
-            rem exit 1 from diff = RESURRECTION detected, a finding not a failure
-            if errorlevel 2 (
-                echo     [WARN] Diff failed to run.
-            ) else if errorlevel 1 (
-                echo     [WARN] RESURRECTION DETECTED - removed items came back. See snapshot_diff.json
-            ) else (
-                echo     [i] Diff clean - nothing resurrected.
-            )
+            echo     [i] Diff clean - nothing resurrected.
         )
     )
 )

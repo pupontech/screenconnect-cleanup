@@ -1,4 +1,13 @@
 ----
+13. v1.7.11 - snapshots automatic in the guided runner (owner directive:
+    "keep them both but do it automatically withouth yes no toggles it
+    should just be done")
+- START-HERE.bat Steps 3 + 9: prompts removed, both collect-snapshot runs
+  unconditional; Step 3 gained an errorlevel WARN; stale "step 8" text fixed.
+- sc-cleanup.ps1 was already promptless for snapshots.
+Verified: no set /p in either step block, both -Label lines unconditional,
+all-CRLF (275 lines), full CI suite green.
+----
 12. v1.7.10 - Step 1 skips already-downloaded AV scanners (owner directive:
     "check first of the tools are already downloaded if they are dont
     download them again")

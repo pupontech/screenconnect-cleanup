@@ -3,6 +3,21 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.11] - 2026-08-27
+Before/after snapshots run AUTOMATICALLY in the guided runner - no more [Y/n]
+toggle (owner directive: "keep them both but do it automatically withouth yes
+no toggles it should just be done"):
+- **`START-HERE.bat` Step 3** (BEFORE snapshot) and **Step 9** (after-snapshot
+  + diff) no longer prompt; both run unconditionally. sc-cleanup.ps1 already
+  ran them unconditionally - the bat was the only prompting path.
+- Step 3 gains the same `[WARN] ... errorlevel N` diagnostic as steps 6a/6b so
+  a failed collector is loud instead of silent; the stale "step 8 will skip
+  the diff" text is corrected to step 9. The baseline-missing and
+  resurrection WARN paths are unchanged.
+- Verified: Steps 3/9 contain zero `set /p` prompts, both
+  `collect-snapshot.ps1 -Label before/after` lines are unconditional, bat
+  stays all-CRLF (275 lines), full CI suite green.
+
 ## [1.7.10] - 2026-08-27
 Step 1 no longer re-downloads scanners that are already on disk (owner
 directive: "check if the tools are already downloaded - if they are, dont
