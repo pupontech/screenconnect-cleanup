@@ -1,4 +1,18 @@
 ----
+14. v1.7.12 - snapshot collection in parallel waves (owner directive: "can it
+    be refactored to speed up faster")
+- New: waves B (services/processes/accounts/WMI), C (autoruns/installed
+  programs/BAM/DAM/UserAssist), D (prefetch/ShimCache/startup folders) on top
+  of wave A (scheduled tasks/connections/firewall, since v1.7.6). Bounded at
+  4 concurrent jobs per wave; every job = one -Section process with one-line
+  JSON envelope; sequential fallback on any failure; -NoParallel unchanged.
+- -Section mode extended from 3 to 14 sections (window args passed to jobs).
+- RecentFiles kept serial (cap-flag semantics); SRUM kept serial (needs the
+  snapshot dir); RDP/hosts serial (instant).
+Verified: Linux end-to-end rc=0 with all 18 sections, -Section smoke for
+Services/RegistryAutoruns/Prefetch/StartupFolders, wave overlap proof
+(4x3s = 4.6s vs 12s), full CI green. Real gain on Windows = live test.
+----
 13. v1.7.11 - snapshots automatic in the guided runner (owner directive:
     "keep them both but do it automatically withouth yes no toggles it
     should just be done")

@@ -3,6 +3,31 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.12] - 2026-08-27
+Snapshot collection refactored to run in parallel WAVES (owner directive:
+"can it be refactored to speed up faster"). Previously only 3 of 18 sections
+(scheduled tasks, firewall rules, network connections) ran in background
+jobs; the other ~11 slow sections - CIM queries, registry walks, file
+parsing - ran strictly one after another, so wall-clock was the SUM of every
+section. Now:
+- **Wave A** (unchanged, since v1.7.6): scheduled tasks, connections, firewall.
+- **Wave B** (new): services, processes, local accounts, WMI persistence.
+- **Wave C** (new): registry autoruns, installed programs, BAM/DAM, UserAssist.
+- **Wave D** (new): Prefetch, ShimCache, startup folders.
+  Wall-clock drops from sum-of-sections to ~sum-of-waves: each wave is capped
+  at 4 concurrent background jobs so a weak client never spawns a
+  powershell.exe per section (~4 x 150 MB peak, not 15 x).
+- Every job keeps the v1.7.6 guarantees: collect one section via -Section
+  mode, one-line JSON envelope, silent sequential fallback on ANY failure
+  (spawn/timeout/bad payload), and -NoParallel still forces fully serial
+  collection. RecentFiles stays serial (it owns the cap flag) and is skipped
+  instantly at the default 0-day window.
+- The -Section single-section mode now covers all 14 job-able sections (was 3).
+- Verified: 18 sections end-to-end on Linux (rc=0, graceful per-section
+  errors), -Section smoke tests for the new sections, wave-overlap proof
+  (4 x 3s jobs = 4.6s vs ~12s serial), full CI suite green. Real Windows
+  timing still needs the owner's live test (matrix item 3.1).
+
 ## [1.7.11] - 2026-08-27
 Before/after snapshots run AUTOMATICALLY in the guided runner - no more [Y/n]
 toggle (owner directive: "keep them both but do it automatically withouth yes
