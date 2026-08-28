@@ -28,6 +28,40 @@ existing tool answers the question that actually matters.
 
 ---
 
+## Quick start — one-liner
+
+Install (or update to) the latest release and launch the guided runner from a
+**single PowerShell command** (Windows PowerShell 5.1+, no admin needed to
+install):
+
+```powershell
+irm https://raw.githubusercontent.com/pupontech/screenconnect-cleanup/main/install-latest.ps1 | iex
+```
+
+What it does:
+1. Asks GitHub for the latest release and downloads its
+   `screenconnect-cleanup-vX.Y.Z.zip`.
+2. Extracts it to `Desktop\ScreenConnect-Cleanup\<version>\` (versions coexist;
+   re-run to get the newest).
+3. Sanity-checks the bundle (VERSION + START-HERE.bat must be present) and
+   launches `START-HERE.bat` — the guided runner, which elevates itself via
+   UAC only when a step actually needs it.
+
+> **Security note.** `irm | iex` downloads and runs code. Review
+> [`install-latest.ps1`](install-latest.ps1) first — it only downloads the
+> release zip from this repo, extracts it, and launches the same
+> `START-HERE.bat` you would double-click after a manual download. The zip
+> itself is not hash-verified; compare the sha256 in the release notes if you
+> want certainty. Manual alternative: grab the zip from
+> [Releases](https://github.com/pupontech/screenconnect-cleanup/releases) and
+> run `START-HERE.bat` from the extracted folder.
+
+When running `install-latest.ps1` directly (not via `iex`): `-Destination
+<path>` installs elsewhere, `-NoLaunch` skips starting the runner, `-Force`
+overwrites an existing version folder.
+
+---
+
 ## The problem this solves
 
 Finding ScreenConnect on a PC is trivial — it installs a named service in a named

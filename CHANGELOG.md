@@ -3,6 +3,26 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.15] - 2026-08-27
+One-liner install via irm | iex (owner directive: "can you create a irm/iex
+cmd line version of this tool and add to readme"):
+- **`install-latest.ps1`** (repo root + shipped in the zip): resolves the
+  latest GitHub release via the API, downloads the deploy zip, extracts it to
+  `Desktop\ScreenConnect-Cleanup\<version>\` (versions coexist, -Force
+  overwrites), sanity-checks VERSION + START-HERE.bat, then launches the
+  guided runner. No admin needed to install; the runner self-elevates only
+  when a step needs it. Refuses to clobber an existing version folder without
+  -Force; -NoLaunch skips the launch; -Destination overrides the folder.
+- **README**: new "Quick start — one-liner" section at the top:
+  `irm https://raw.githubusercontent.com/pupontech/screenconnect-cleanup/main/install-latest.ps1 | iex`
+  with a security note (review the script first; zip not hash-verified;
+  manual download alternative).
+- `make-deploy-bundle.sh` now ships install-latest.ps1 inside the zip too.
+- Verified live: fresh install against the real GitHub API resolved v1.7.14,
+  downloaded the real asset, extracted + lifted the inner folder, refused a
+  no-Force re-install, -Force re-installed; full CI suite green (19 scripts
+  parse, 44 files house-rules-clean).
+
 ## [1.7.14] - 2026-08-27
 AV scanners were STILL re-downloading on the owner's machine even though the
 v1.7.10 skip logic is correct in isolation. Root cause found: **the download

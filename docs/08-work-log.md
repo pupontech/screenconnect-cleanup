@@ -1,4 +1,13 @@
 ----
+17. v1.7.15 - irm/iex one-liner bootstrap (owner directive: "can you create a
+    irm/iex cmd line version of this tool and add to readme")
+- install-latest.ps1: latest-release API -> zip -> Desktop\ScreenConnect-
+  Cleanup\<version>\ -> sanity VERSION+START-HERE.bat -> launch. -Force /
+  -NoLaunch / -Destination. Ships in the zip as well.
+- README quick-start section with the one-liner + security note.
+Verified live: real API fetch of v1.7.14, extract/lift, no-Force refusal,
+-Force reinstall; suite green (19 scripts).
+----
 16. v1.7.14 - atomic AV downloads stop the re-download loop (owner live
     report: "its still redownloading the avs but the tools check for
     downloads is working correctly")
