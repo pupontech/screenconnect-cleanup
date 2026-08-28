@@ -1,4 +1,17 @@
 ----
+16. v1.7.14 - atomic AV downloads stop the re-download loop (owner live
+    report: "its still redownloading the avs but the tools check for
+    downloads is working correctly")
+- Root cause: IWR -OutFile wrote to the FINAL path; an interrupted download
+  left a partial KVRT.exe there, so the skip check failed forever -> delete +
+  re-download every Step 1. Also the corrupt file was deleted BEFORE the
+  fetch, so a failed download left nothing.
+- Fix: download to .part, verify >= 1 MB, Move-Item into place; failed fetch
+  keeps the old file (loud FAILED); new "not staged yet" diagnostic.
+Verified with local HTTP server harness (hits counted): skip = 0 requests,
+missing = 2 + clean swap, truncation = FAILED + nothing staged + .part gone,
+corrupt+failed = old preserved, corrupt+good = swapped. Suite green.
+----
 15. v1.7.13 - last step opens the report folder + report (owner directive:
     "on the last step the folder with the report should be opened and the
     report itself should be opened as well")

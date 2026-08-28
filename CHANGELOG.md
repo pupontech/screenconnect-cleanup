@@ -3,6 +3,34 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.14] - 2026-08-27
+AV scanners were STILL re-downloading on the owner's machine even though the
+v1.7.10 skip logic is correct in isolation. Root cause found: **the download
+itself was never atomic** - `Invoke-WebRequest -OutFile` wrote straight to
+`KVRT.exe`, so an interrupted download left a partial file AT THE FINAL PATH.
+Every Step 1 run then saw a sub-1-MB file, treated it as corrupt, deleted it
+and re-downloaded - the exact loop reported. The old code also deleted the
+corrupt file BEFORE fetching, so a failed download left nothing staged.
+Fixed with atomic staging in `tools/Get-AVTools.ps1`:
+- **Download to `<name>.part`, verify (>= 1 MB), then `Move-Item` into
+  place.** An interrupted/partial download can never leave a broken file at
+  the final path again - the previous copy (or its absence) stays untouched
+  until a verified replacement exists, so the skip check stays honest.
+- **A failed fetch no longer deletes the old file.** The corrupt copy is kept
+  until the fresh download actually succeeds (then swapped), so a flaky
+  network degrades to a loud FAILED + the previous state, never to nothing.
+- New diagnostics: `not staged in <dir> yet - downloading` vs `existing copy
+  is corrupt/partial ... fetching a fresh copy` - Step 1 now SAYS why it is
+  downloading instead of just doing it.
+- CI: new scanner-contract assertions for the .part staging file, the atomic
+  Move-Item swap, and a guard that the destination is never deleted before
+  the download.
+- Verified with a local HTTP server (request-counted): valid copies present =
+  ZERO requests; missing = exactly 2 requests + clean swap, no .part left;
+  truncated download = loud FAILED, nothing staged, .part cleaned; corrupt
+  old file + failed fetch = old file PRESERVED; corrupt old file + good
+  fetch = swapped. Full CI suite green.
+
 ## [1.7.13] - 2026-08-27
 The last step now OPENS the report folder and the report itself (owner
 directive: "on the last step the folder with the report should be opened and

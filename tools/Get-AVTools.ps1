@@ -99,12 +99,22 @@ if ($Verify) {
 }
 
 function Get-DownloadFile {
+    # Download to <name>.part and swap it into place ONLY after the size
+    # sanity check passes. An interrupted/partial download can therefore
+    # never leave a broken KVRT.exe / esetonlinescanner.exe at the final
+    # path - the previous copy (or its absence) stays untouched until a
+    # verified replacement exists. Before this, a partial file AT the real
+    # path made the skip check fail forever: every Step 1 run saw a
+    # sub-1-MB file, deleted it and re-downloaded (the "still redownloading
+    # the AVs" loop). A leftover .part from a killed run is simply
+    # overwritten on the next attempt.
     param([string]$Url, [string]$Dest, [string]$Label)
+    $part = $Dest + '.part'
     Say ("Downloading " + $Label + "...")
     try {
-        Invoke-WebRequest -Uri $Url -OutFile $Dest -UseBasicParsing -ErrorAction Stop
+        Invoke-WebRequest -Uri $Url -OutFile $part -UseBasicParsing -ErrorAction Stop
         try {
-            $item = Get-Item -LiteralPath $Dest
+            $item = Get-Item -LiteralPath $part -ErrorAction Stop
             $ver = $item.VersionInfo.FileVersion
             if ($ver) { Say ("       version: " + $ver + "  size: " + $item.Length) 'DarkGray' }
             # A real KVRT/EOS download is tens of MB. A tiny file means an HTML
@@ -112,14 +122,18 @@ function Get-DownloadFile {
             # then 'launch' silently and fail. Reject it so staging fails loudly
             # (observed: "KVRT no longer launches" = 0-byte/partial KVRT.exe).
             if ($item.Length -lt 1048576) {
-                Remove-Item -LiteralPath $Dest -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
                 Say ("  FAILED: " + $Label + " looks incomplete (" + $item.Length + " bytes < 1 MB) - removed, re-run staging.") 'Yellow'
                 return $false
             }
         } catch { }
+        # Swap into place only after the sanity check passed. -Force also
+        # replaces a corrupt copy from an older run.
+        Move-Item -LiteralPath $part -Destination $Dest -Force -ErrorAction Stop
         Say ("  OK: " + $Dest) 'Green'
         return $true
     } catch {
+        Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
         Say ("  FAILED: " + $_.Exception.Message) 'Yellow'
         return $false
     }
@@ -127,9 +141,9 @@ function Get-DownloadFile {
 
 # Ensure-Tool: download only when needed. A valid existing copy (>= 1 MB) is
 # kept and skipped - Step 1 runs every session, and re-fetching ~150 MB of
-# scanners each time is pointless. A corrupt/partial copy is removed and
-# re-downloaded (heals the v1.7.8 "0-byte KVRT.exe" failure by itself).
-# -Force bypasses the skip entirely.
+# scanners each time is pointless. A corrupt/partial copy is NOT deleted up
+# front: Get-DownloadFile swaps atomically, so a failed fetch keeps whatever
+# was already there instead of leaving nothing. -Force bypasses the skip.
 function Ensure-Tool {
     param([string]$Url, [string]$Dest, [string]$Label)
     if (-not $Force) {
@@ -139,8 +153,9 @@ function Ensure-Tool {
             return $true
         }
         if (Test-Path -LiteralPath $Dest) {
-            Say ("  existing copy is corrupt/partial (under 1 MB) - re-downloading") 'Yellow'
-            Remove-Item -LiteralPath $Dest -Force -ErrorAction SilentlyContinue
+            Say ("  existing copy is corrupt/partial (under 1 MB) - fetching a fresh copy") 'Yellow'
+        } else {
+            Say ("  not staged in " + $ToolDir + " yet - downloading") 'DarkGray'
         }
     }
     return (Get-DownloadFile -Url $Url -Dest $Dest -Label $Label)

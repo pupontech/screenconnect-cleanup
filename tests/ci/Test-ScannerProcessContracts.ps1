@@ -53,6 +53,9 @@ else {
     if ($text -notmatch 'corrupt/partial') { Add-Failure 'Get-AVTools.ps1 does not re-download corrupt/partial (under 1 MB) copies.' }
     if ($text -notmatch '1048576') { Add-Failure 'Get-AVTools.ps1 missing the 1 MB sanity threshold constant.' }
     if ($text -notmatch 'CORRUPT \(under 1 MB') { Add-Failure 'Get-AVTools.ps1 -Verify does not flag under-1-MB copies as corrupt.' }
+    if ($text -notmatch '\$part = \$Dest \+ ''\.part''') { Add-Failure 'Get-AVTools.ps1 does not download to a .part staging file (atomic swap needed so a partial download cannot poison the staged exe).' }
+    if ($text -notmatch 'Move-Item -LiteralPath \$part -Destination \$Dest') { Add-Failure 'Get-AVTools.ps1 does not atomically swap the .part file into place after the size check.' }
+    if ($text -match 'Remove-Item -LiteralPath \$Dest') { Add-Failure 'Get-AVTools.ps1 deletes the destination BEFORE the download - a failed fetch leaves nothing staged (must keep the old file until a verified replacement exists).' }
     if ($script:failures.Count -eq 0) { Write-Host '  OK Get-AVTools.ps1: KVRT/ESET official downloads, Malwarebytes winget-only, skip-existing staging.' }
 }
 
