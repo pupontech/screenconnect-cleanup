@@ -89,11 +89,15 @@ via winget in the AV-uninstall step. The technician drives the
 scanner UI. **Do not restore CLI adapters or invent scan/clean flags without
 fresh vendor documentation and a separate owner decision.**
 
-> **Status (2026-08-27):** KVRT/ESET downloads + attended GUI launches and the
-> Malwarebytes winget install/uninstall path are built. MSERT is still not
-> built, and AdwCleaner + Microsoft Defender remain removed from the scanner
-> line-up by owner decisions. A real-box run is still required to confirm each
-> vendor GUI behaves correctly in the field.
+> **Status (2026-08-28):** KVRT/ESET downloads + attended GUI launches and the
+> Malwarebytes winget install/uninstall path are built. **KVRT attended-GUI
+> launch confirmed in the field on v1.7.19** (owner live report 2026-08-28 -
+> the 60s launch-grace probe closes the "launches to nothing" failure mode;
+> a process that dies within 60s without a surviving child is reported
+> ExitedEarly, never as a completed scan). ESET GUI and the Malwarebytes
+> winget path still need a real-box confirmation run, and MSERT is still not
+> built; AdwCleaner + Microsoft Defender remain removed from the scanner
+> line-up by owner decisions.
 
 ### Q5 — Sysinternals download URL pattern
 Believed to be `https://download.sysinternals.com/files/<Name>.zip`. Unconfirmed. Never
