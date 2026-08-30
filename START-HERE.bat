@@ -62,13 +62,10 @@ if /i not "%GO%"=="n" (
 )
 set GO=
 
-rem ---- Step 2: preflight -----------------------------------------------------
+rem ---- Step 2: preflight (ALWAYS runs - owner directive 2026-08-28) ---------
 echo.
 echo  STEP 2 of 10: Preflight checks (admin, UAC, disk, working dir; restore point)
-set /p GO="    Run now? [Y/n] "
-if /i not "%GO%"=="n" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0preflight.ps1"
-)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0preflight.ps1"
 set GO=
 
 rem ---- Step 3: BEFORE snapshot -----------------------------------------------
@@ -161,7 +158,7 @@ if errorlevel 1 (
     goto :skip_6c
 )
 echo        Installing Malwarebytes via winget - id Malwarebytes.Malwarebytes
-winget install -e --id Malwarebytes.Malwarebytes
+winget install -e --id Malwarebytes.Malwarebytes --accept-package-agreements --accept-source-agreements
 if errorlevel 1 echo        [WARN] winget install exited with errorlevel %errorlevel%
 if errorlevel 1 goto :skip_6c
 echo        Launching Malwarebytes UI...
@@ -203,7 +200,8 @@ rem ---- Step 8: Uninstall installed AV (attended) -----------------------------
 echo.
 echo  STEP 8 of 10: Uninstall installed third-party antivirus (attended)
 echo    Malwarebytes is uninstalled via winget (uninstall -e --id
-echo    Malwarebytes.Malwarebytes). Every other detected AV product opens its
+echo    Malwarebytes.Malwarebytes --accept-package-agreements
+echo    --accept-source-agreements). Every other detected AV product opens its
 echo    uninstaller for YOU to drive. Never silent-uninstalls vendor
 echo    uninstallers. Windows Defender is excluded (it is the OS, not
 echo    installed AV). Skips if none is detected. Type y to run it.

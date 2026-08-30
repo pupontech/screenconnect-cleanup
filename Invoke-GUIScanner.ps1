@@ -165,7 +165,11 @@ if ($ToolPath) {
             exit 3
         }
         $target   = $wingetCmd.Source
-        $toolArgs = @('install', '-e', '--id', $wingetScanners[$Scanner])
+        # --accept-package-agreements / --accept-source-agreements: never let
+        # the install stall on an interactive agreement prompt (owner directive
+        # 2026-08-28 - accept the msstore/source agreements by default).
+        $toolArgs = @('install', '-e', '--id', $wingetScanners[$Scanner],
+                      '--accept-package-agreements', '--accept-source-agreements')
         $toolLabel = $wingetScanners[$Scanner] + ' (winget install)'
         # winget on Windows 10/11 is an App Execution Alias: a 0-byte reparse
         # stub under WindowsApps. Start-Process -FilePath on the stub is

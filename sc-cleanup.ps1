@@ -49,7 +49,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Constants & script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.7.23'
+$ScriptVersion = '1.7.24'
 $ScriptName = 'sc-cleanup.ps1'
 $PipelineStages = @(
     @{ Id = 0; Name = 'Preflight';            SkipFlag = '' },
@@ -367,7 +367,32 @@ if ($isServer -and -not $force) {
 
 $uacEnabled = Test-UacEnabled
 if (-not $uacEnabled -and -not $force) {
-    throw "UAC (User Account Control) is DISABLED on this machine. This is itself a security finding worth investigating before touching anything else. Use -force to proceed anyway."
+    # Owner directive 2026-08-28: preflight always runs - do not hard-fail on a
+    # disabled UAC. Prompt the user to enable it and WAIT, then re-check and
+    # continue. (F force-continues with UAC disabled, like -force.)
+    Write-Host ""
+    Write-Host "  *** UAC (User Account Control) is DISABLED on this machine." -ForegroundColor Red
+    Write-Host "  *** This is itself a security finding, and the pipeline needs UAC for safe" -ForegroundColor Red
+    Write-Host "  *** elevation of the removal and scanner stages." -ForegroundColor Red
+    Write-Host "  *** Enable it now (as administrator):" -ForegroundColor Yellow
+    Write-Host '  ***   reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 1 /f' -ForegroundColor Yellow
+    Write-Host "  ***   (a reboot is required for the change to fully apply)" -ForegroundColor Yellow
+    Write-Host ""
+    $uacAnswer = ''
+    do {
+        $uacInput = Read-Host 'Type Y once UAC is enabled, or F to force-continue with UAC disabled'
+        if ([string]::IsNullOrWhiteSpace($uacInput)) { $uacInput = 'Y' }
+        $uacAnswer = $uacInput.Trim().Substring(0,1).ToUpperInvariant()
+    } while ($uacAnswer -ne 'Y' -and $uacAnswer -ne 'F')
+    if ($uacAnswer -eq 'F') {
+        Write-StageLog "UAC still disabled (force-continued at the prompt) - record this as a finding." 'Warn'
+    } else {
+        if (Test-UacEnabled) {
+            Write-StageLog "UAC check: enabled (confirmed after user action)."
+        } else {
+            Write-StageLog "UAC reported enabled but EnableLUA still reads disabled (reboot pending?) - continuing on the user confirmation." 'Warn'
+        }
+    }
 } elseif (-not $uacEnabled) {
     Write-StageLog "UAC is DISABLED on this machine (-force set, continuing). Record this as a finding." 'Warn'
 } else {

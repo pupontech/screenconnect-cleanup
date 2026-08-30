@@ -335,7 +335,33 @@ if ($env:OS -eq 'Windows_NT') {
         if ($Force) {
             Write-StageWarn 'UAC (User Account Control) is DISABLED. Continuing because -Force was passed - record this as a finding.'
         } else {
-            Write-StageFail 'UAC (User Account Control) is DISABLED on this machine. Pass -Force to proceed anyway.'
+            # Owner directive 2026-08-28: preflight always runs - do not
+            # hard-fail on a disabled UAC. Prompt the user to enable it and
+            # WAIT, then re-check and continue the preflight. (F force-
+            # continues with UAC disabled, like -Force.)
+            Write-Host ''
+            Write-Host '  *** UAC (User Account Control) is DISABLED on this machine.' -ForegroundColor Red
+            Write-Host '  *** This is itself a security finding, and the tool needs UAC for safe' -ForegroundColor Red
+            Write-Host '  *** elevation of the removal and scanner steps.' -ForegroundColor Red
+            Write-Host '  *** Enable it now (as administrator):' -ForegroundColor Yellow
+            Write-Host '  ***   reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 1 /f' -ForegroundColor Yellow
+            Write-Host '  ***   (a reboot is required for the change to fully apply)' -ForegroundColor Yellow
+            Write-Host ''
+            $uacAnswer = ''
+            do {
+                $uacInput = Read-Host 'Type Y once UAC is enabled, or F to force-continue with UAC disabled'
+                if ([string]::IsNullOrWhiteSpace($uacInput)) { $uacInput = 'Y' }
+                $uacAnswer = $uacInput.Trim().Substring(0,1).ToUpperInvariant()
+            } while ($uacAnswer -ne 'Y' -and $uacAnswer -ne 'F')
+            if ($uacAnswer -eq 'F') {
+                Write-StageWarn 'UAC still disabled (force-continued at the prompt) - record this as a finding.'
+            } else {
+                if (Test-UacEnabled) {
+                    Write-Stage 'UAC check: enabled (confirmed after user action).'
+                } else {
+                    Write-StageWarn 'UAC reported enabled but EnableLUA still reads disabled (reboot pending?) - continuing on the user confirmation.'
+                }
+            }
         }
     } else {
         Write-Stage 'UAC check: enabled.'

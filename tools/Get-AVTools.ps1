@@ -20,9 +20,12 @@
                            technician use.
 
     (Malwarebytes is no longer staged here: since v1.7.3 it is installed and
-    uninstalled via winget - `winget install -e --id Malwarebytes.Malwarebytes`
-    / `winget uninstall -e --id Malwarebytes.Malwarebytes` (owner directive
-    2026-08-27). No MBSetup.exe download happens anymore.)
+    uninstalled via winget - `winget install -e --id Malwarebytes.Malwarebytes
+    --accept-package-agreements --accept-source-agreements` / `winget uninstall
+    -e --id Malwarebytes.Malwarebytes --accept-package-agreements
+    --accept-source-agreements` (owner directive 2026-08-27; agreements are
+    accepted by default since v1.7.24). No MBSetup.exe download happens
+    anymore.)
 
     (AdwCleaner remains removed from staging by owner decision.)
 
@@ -210,10 +213,11 @@ if (-not (Ensure-Tool -Url 'https://download.eset.com/com/eset/tools/online_scan
 }
 
 # --- Malwarebytes: NOT staged here (v1.7.3+). Installed/uninstalled via winget:
-#   winget install -e --id Malwarebytes.Malwarebytes
-#   winget uninstall -e --id Malwarebytes.Malwarebytes
+#   winget install -e --id Malwarebytes.Malwarebytes --accept-package-agreements --accept-source-agreements
+#   winget uninstall -e --id Malwarebytes.Malwarebytes --accept-package-agreements --accept-source-agreements
 # Owner directive 2026-08-27: replace the MBSetup.exe download + GUI launch
-# with winget for both install and uninstall.
+# with winget for both install and uninstall. Agreements accepted by default
+# (owner directive 2026-08-28).
 
 # NOTE (v1.7.22): there is NO internal-share/NAS fallback. Tools are staged
 # exclusively from the official vendor URLs above; a failed download is a
@@ -224,7 +228,7 @@ Say ''
 Say ('Done. GUI scanners staged in ' + $ToolDir + ':') 'Cyan'
 Say '  KVRT.exe, esetonlinescanner.exe' 'Cyan'
 Say 'Malwarebytes is NOT staged here - install via winget:' 'Cyan'
-Say '  winget install -e --id Malwarebytes.Malwarebytes' 'Cyan'
+Say '  winget install -e --id Malwarebytes.Malwarebytes --accept-package-agreements --accept-source-agreements' 'Cyan'
 Say 'Run the staged scanners attended:' 'Cyan'
 Say '  .\Invoke-GUIScanner.ps1 -Scanner KVRT' 'Cyan'
 Say '  .\Invoke-GUIScanner.ps1 -Scanner ESET' 'Cyan'

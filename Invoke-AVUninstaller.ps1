@@ -137,12 +137,12 @@ function Open-Uninstaller {
         if (-not $winget) {
             Say ("  winget not found - falling back to the vendor uninstaller GUI for " + $Product.DisplayName) 'Yellow'
         } else {
-            $us = 'winget uninstall -e --id ' + $wingetId
+            $us = 'winget uninstall -e --id ' + $wingetId + ' --accept-package-agreements --accept-source-agreements'
             Say ("  Uninstalling via winget: " + $us) 'Cyan'
             $psi = New-Object System.Diagnostics.ProcessStartInfo
             $psi.UseShellExecute = $true
             $psi.FileName = $winget.Source
-            $psi.Arguments = 'uninstall -e --id ' + $wingetId
+            $psi.Arguments = 'uninstall -e --id ' + $wingetId + ' --accept-package-agreements --accept-source-agreements'
             $proc = $null
             try {
                 $proc = [System.Diagnostics.Process]::Start($psi)

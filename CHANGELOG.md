@@ -3,6 +3,29 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.24] - 2026-08-28
+Owner directives: winget agreements accepted by default; preflight always
+runs; UAC-disabled becomes prompt-and-wait instead of a hard abort.
+- **Malwarebytes winget install/uninstall now passes
+  `--accept-package-agreements --accept-source-agreements`** (accept msstore/
+  source agreements by default - the install can no longer stall on an
+  interactive agreement prompt). Applied everywhere winget runs:
+  `Invoke-GUIScanner.ps1` (install), `Invoke-AVUninstaller.ps1` (uninstall),
+  `START-HERE.bat` Step 6c. Docs + CI contract assertions updated.
+- **Preflight always runs.** `START-HERE.bat` Step 2 no longer asks - it runs
+  `preflight.ps1` unconditionally.
+- **UAC-disabled machines are no longer hard-aborted.** Both `sc-cleanup.ps1`
+  and `preflight.ps1` now, when UAC is disabled (and no -force/-Force): print
+  a prominent banner with the exact `reg add ... EnableLUA /d 1` command,
+  prompt the user to enable UAC, WAIT for confirmation, re-check, and continue
+  the preflight/pipeline. `F` at the prompt force-continues with UAC disabled
+  (equivalent to -force) and logs the finding. The re-check honors a pending
+  reboot ("reported enabled but EnableLUA still reads disabled").
+- Verified: parse/ASCII clean; scanner contract suite green (new agreement-flag
+  assertions); UAC prompt flow exercised against the real extracted code with
+  a mocked UAC state (Y path re-checks and continues, F path force-continues
+  with the finding logged).
+
 ## [1.7.23] - 2026-08-28
 Two staging fixes found by the Windows VM scanner-launch probe:
 - **Download failures are now loud.** `Get-AVTools.ps1` used to `exit 0`

@@ -79,6 +79,7 @@ else {
     if ($text -match "'Malwarebytes'\s*=\s*'MBSetup\.exe'") { Add-Failure 'Invoke-GUIScanner.ps1 still maps Malwarebytes to MBSetup.exe - winget-only since v1.7.3.' }
     if ($text -notmatch "'Malwarebytes'\s*=\s*'Malwarebytes\.Malwarebytes'") { Add-Failure 'Invoke-GUIScanner.ps1 missing Malwarebytes winget package id.' }
     if ($text -notmatch "'install', '-e', '--id'") { Add-Failure 'Invoke-GUIScanner.ps1 does not run winget install -e --id for Malwarebytes.' }
+    if ($text -notmatch 'accept-package-agreements') { Add-Failure 'Invoke-GUIScanner.ps1 does not pass --accept-package-agreements to winget - the Malwarebytes install would stall on an agreement prompt.' }
     if ($text -notmatch 'wingetViaCmd') { Add-Failure 'Invoke-GUIScanner.ps1 missing the winget alias-via-cmd launch (WindowsApps stub crashes Start-Process).' }
     if ($text -notmatch 'Start-Process returned no process handle') { Add-Failure 'Invoke-GUIScanner.ps1 missing the null-process guard after Start-Process.' }
     if ($text -notmatch "'Malwarebytes\\Anti-Malware\\mbam\.exe'") { Add-Failure 'Invoke-GUIScanner.ps1 does not launch the Malwarebytes GUI (mbam.exe) after a successful winget install.' }
@@ -106,6 +107,7 @@ else {
     if ($codeOnly -match '/quiet|/silent|/passive|/S\s|/S"') { Add-Failure 'Invoke-AVUninstaller.ps1 appears to pass silent uninstall flags - must be attended only.' }
     if ($text -match 'Windows Defender' -and $text -notmatch 'osExclude') { Add-Failure 'Invoke-AVUninstaller.ps1 does not exclude Windows Defender from removal.' }
     if ($text -notmatch 'winget uninstall -e --id ') { Add-Failure 'Invoke-AVUninstaller.ps1 does not run winget uninstall -e --id for winget-managed products.' }
+    if ($text -notmatch 'accept-package-agreements') { Add-Failure 'Invoke-AVUninstaller.ps1 does not pass --accept-package-agreements to winget uninstall - the uninstall would stall on an agreement prompt.' }
     if ($text -notmatch "'Malwarebytes'\s*=\s*'Malwarebytes\.Malwarebytes'") { Add-Failure 'Invoke-AVUninstaller.ps1 missing the Malwarebytes winget package id.' }
     if ($text -notmatch 'function Clear-ProductLeftovers') { Add-Failure 'Invoke-AVUninstaller.ps1 missing the leftover sweep (Clear-ProductLeftovers).' }
     if ($text -notmatch 'av-uninstall-quarantine') { Add-Failure 'Invoke-AVUninstaller.ps1 missing the av-uninstall-quarantine destination.' }
@@ -121,6 +123,7 @@ if (-not (Test-Path -LiteralPath $startHere)) { Add-Failure 'START-HERE.bat miss
 else {
     $text = [System.IO.File]::ReadAllText($startHere)
     if ($text -notmatch 'winget install -e --id Malwarebytes\.Malwarebytes') { Add-Failure 'START-HERE.bat Step 6c does not run winget install for Malwarebytes.' }
+    if ($text -notmatch 'accept-package-agreements') { Add-Failure 'START-HERE.bat Step 6c winget install does not pass --accept-package-agreements - the install would stall on an agreement prompt.' }
     if ($text -notmatch 'start "" "%MBAMEXE%"') { Add-Failure 'START-HERE.bat Step 6c does not launch Malwarebytes (start "" "%MBAMEXE%") after install.' }
     if ($text -notmatch ':mbam_found') { Add-Failure 'START-HERE.bat Step 6c missing the :mbam_found launch label.' }
     if ($text -notmatch '%ProgramFiles\(x86\)%\\Malwarebytes') { Add-Failure 'START-HERE.bat Step 6c missing the Program Files (x86) mbam.exe fallback path.' }

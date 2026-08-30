@@ -92,7 +92,7 @@ hold", "Scanner-process contracts OK", removal runtime contracts OK, integration
     until the technician closes it; no scan/clean flags are passed.
 5.3 `Invoke-GUIScanner.ps1 -Scanner ESET`: launches a visible GUI and waits
     until the technician closes it; no scan/clean flags are passed.
-5.4 `Invoke-GUIScanner.ps1 -Scanner Malwarebytes`: runs `winget install -e --id Malwarebytes.Malwarebytes` (visible console) and waits;
+5.4 `Invoke-GUIScanner.ps1 -Scanner Malwarebytes`: runs `winget install -e --id Malwarebytes.Malwarebytes --accept-package-agreements --accept-source-agreements` (visible console, no agreement prompts) and waits;
     if the bootstrapper exits before the scan finishes, the guided `START-HERE`
     runner still tells the technician to wait manually before continuing.
 5.5 Missing-tool paths: each scanner exits 3 with the clear "stage it first"

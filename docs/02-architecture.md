@@ -119,7 +119,8 @@ technician drives the UI:
 - KVRT and ESET Online Scanner are staged from official vendor URLs by
   `tools/Get-AVTools.ps1` (atomic `.part` staging + PE-header validation).
 - Malwarebytes is installed via winget (`winget install -e --id
-  Malwarebytes.Malwarebytes`) and launched for the technician.
+  Malwarebytes.Malwarebytes --accept-package-agreements
+  --accept-source-agreements`) and launched for the technician.
 - One session result per scanner: `Tool`, `Scanner`, `Status` and `ExitCode`,
   written to `scanner_results.json`. `Status` is one of: `Completed`,
   `LaunchFailed`, `NotInstalled`, `Timeout`, `Failed`. The report renders the
