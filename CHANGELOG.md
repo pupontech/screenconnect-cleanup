@@ -3,6 +3,21 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.28] - 2026-08-28
+BITS downloads now show a live progress line (owner report: "bits is not
+showing a download progress bar"):
+- `Get-AVTools.ps1` runs the BITS transfer ASYNCHRONOUSLY and polls
+  `Get-BitsTransfer` every second, rendering an in-place progress line:
+  `KVRT.exe: 47% (53.7 / 114.1 MB)` (updates only when the percent changes;
+  no console spam). Completion via `Complete-BitsTransfer`; BITS Error state
+  reports `ErrorDescription`; a 20-minute watchdog bounds a stalled job
+  (then the existing IWR fallback takes over). The IWR fallback path is
+  unchanged.
+- Verified: parse/ASCII clean; contract suites green; the async poll loop
+  exercised against the REAL extracted function with mocked BITS cmdlets
+  (Transferring 50MB/100MB -> Transferred): progress line "50% (50 / 100 MB)"
+  rendered, Complete-BitsTransfer called.
+
 ## [1.7.27] - 2026-08-28
 KVRT on UAC-disabled machines (owner report: "kvrt still seems bugged on no
 uac on .24"):

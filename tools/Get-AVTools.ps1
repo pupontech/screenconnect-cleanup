@@ -140,8 +140,10 @@ function Start-DownloadFast {
     # Download helper for the big scanner files (KVRT is ~114 MB):
     # 1. BITS (Start-BitsTransfer, every Windows 10/11) - the OS transfer
     #    engine. Far faster than Invoke-WebRequest for 100MB+ files and
-    #    network-aware. If it fails (403/UA rejection, BITS disabled by
-    #    policy, service stopped) fall through to Invoke-WebRequest.
+    #    network-aware. Run ASYNCHRONOUSLY and poll for a live progress line
+    #    (the synchronous form shows nothing for the whole transfer).
+    #    If it fails (403/UA rejection, BITS disabled by policy, service
+    #    stopped) fall through to Invoke-WebRequest.
     # 2. Invoke-WebRequest with the browser-like UA and the progress bar
     #    suppressed (see $ProgressPreference above). Also the path used by
     #    pwsh on Linux, which keeps CI functional tests meaningful.
@@ -150,7 +152,31 @@ function Start-DownloadFast {
     if ($bits -and $env:OS -eq 'Windows_NT') {
         try {
             Say ("  (BITS) " + $Label) 'DarkGray'
-            Start-BitsTransfer -Source $Url -Destination $OutFile -DisplayName ('ScreenConnect-Cleanup: ' + $Label) -ErrorAction Stop
+            $job = Start-BitsTransfer -Source $Url -Destination $OutFile -DisplayName ('ScreenConnect-Cleanup: ' + $Label) -Asynchronous -ErrorAction Stop
+            $deadline = (Get-Date).AddMinutes(20)
+            $lastPct = -1
+            do {
+                Start-Sleep -Seconds 1
+                $job = Get-BitsTransfer -JobId $job.JobId -ErrorAction SilentlyContinue
+                if (-not $job) { break }
+                $pct = 0
+                if ($job.TotalBytes -gt 0) { $pct = [math]::Round(($job.BytesTransferred / $job.TotalBytes) * 100) }
+                if ($pct -ne $lastPct) {
+                    $lastPct = $pct
+                    $mb = [math]::Round($job.BytesTransferred / 1MB, 1)
+                    $tmb = [math]::Round($job.TotalBytes / 1MB, 1)
+                    Write-Host ("`r  " + $Label + ": " + $pct + "% (" + $mb + " / " + $tmb + " MB)   ") -NoNewline
+                }
+            } while ($job -and $job.JobState -in @('Queued', 'Connecting', 'Transferring', 'TransientError') -and (Get-Date) -lt $deadline)
+            Write-Host ""
+            if (-not $job) { throw 'BITS job disappeared' }
+            if ($job.JobState -eq 'Transferred') {
+                Complete-BitsTransfer -BitsJob $job -ErrorAction Stop
+            } elseif ($job.JobState -eq 'Error') {
+                throw ('BITS error: ' + $job.ErrorDescription)
+            } else {
+                throw ('BITS did not finish: state=' + $job.JobState)
+            }
             return
         } catch {
             Say ("  BITS failed (" + $_.Exception.Message + ") - falling back to Invoke-WebRequest.") 'Yellow'
