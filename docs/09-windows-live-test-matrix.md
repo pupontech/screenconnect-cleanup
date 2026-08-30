@@ -1,23 +1,26 @@
-# Windows Live-Test Matrix (crash-path + destructive-safety remediation)
+# Windows Live-Test Matrix (validation checklist, current for v1.7.25)
 
-This document is the exact validation checklist for the 2026-08-26 remediation of
-the PowerShell 5.1 crash paths and destructive-safety defects. All items below run
-on a dedicated, disposable Windows lab VM under Windows PowerShell 5.1 unless noted.
-NEVER run the destructive scenarios on a production machine. No ScreenConnect
-software or vendor scanner executable is required for the synthetic checks; only
-the final full-removal scenario involves a real (lab) installation.
+This document is the exact validation checklist for the ScreenConnect Cleanup
+Tool. All items run on a dedicated, disposable Windows lab VM under Windows
+PowerShell 5.1 unless noted. NEVER run the destructive scenarios on a
+production machine. No ScreenConnect software or vendor scanner executable is
+required for the synthetic checks; only the final full-removal scenario
+involves a real (lab) installation.
+
+Sections marked **[NEW v1.7.x]** cover behavior added since the 2026-08-26
+remediation matrix and are the priority for the current validation pass.
 
 ## 0. Prerequisites
 
-- Windows 10/11 or Server 2019/2022 lab VM, Windows PowerShell 5.1
+- Windows 10/11 lab VM, Windows PowerShell 5.1
   (`powershell.exe -NoProfile -Command "$PSVersionTable.PSVersion"` -> 5.1.x)
-- Clean copy of the repository (deployment bundle from a released zip or git clone)
-- If testing real removal: a disposable ScreenConnect installation inside the lab VM
+- Deployment bundle from the release zip (v1.7.25) or a git clone at HEAD
+- If testing real removal: a disposable ScreenConnect installation in the lab VM
 
 ## 1. Parse + contract suites (must pass on 5.1 BEFORE any scenario)
 
-Run each of these from the repository root. Every one must print its OK/PASS line
-and exit 0. Any parse error here is a release blocker.
+Run each from the repository root. Every one must print its OK/PASS line and
+exit 0. Any parse error here is a release blocker.
 
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Test-Parse.ps1
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Test-RemovalRuntimeContracts.ps1
@@ -26,8 +29,9 @@ and exit 0. Any parse error here is a release blocker.
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Test-WindowsIntegration.ps1
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Test-HouseRules.ps1
 
-Expected: "Parser check ... 0 with errors", "PASS: all pipeline-launcher contracts
-hold", "Scanner-process contracts OK", removal runtime contracts OK, integration OK,
+Expected: "Parser check ... 0 with errors", "PASS: all pipeline-launcher
+contracts hold", scanner contracts OK (incl. the new agreement-flag and
+no-NAS assertions), removal runtime contracts OK, integration OK,
 "House rules OK".
 
 ## 2. Stage 4 uninstaller execution (remove-screenconnect.ps1)
@@ -35,8 +39,8 @@ hold", "Scanner-process contracts OK", removal runtime contracts OK, integration
 2.1 Bounded concurrent drain (synthetic, no vendor software)
     - Create a temporary console exe/script that floods BOTH stdout and stderr
       (each > 64 KiB), faster than the parent reads, then exits 0.
-    - Confirm Run-BoundedProcess returns ExitCode 0 with complete StdOut/StdErr and
-      does NOT hang.
+    - Confirm Run-BoundedProcess returns ExitCode 0 with complete StdOut/StdErr
+      and does NOT hang.
 2.2 Timeout termination (synthetic)
     - Create a temporary console exe that floods stderr and sleeps 10 minutes.
     - Call Run-BoundedProcess with TimeoutMs 3000. Expected: returns within ~5s,
@@ -53,8 +57,7 @@ hold", "Scanner-process contracts OK", removal runtime contracts OK, integration
       status can never become Completed when any required action failed.
 2.5 PS 5.1 parse gate
     - `powershell.exe -NoProfile -Command "[System.Management.Automation.Language.Parser]::ParseFile('...\remove-screenconnect.ps1',[ref]$null,[ref]$e); $e.Count"`
-      must print 0 (no parse errors) - this specifically guards the former
-      inline-if-expression regression.
+      must print 0 (no parse errors).
 
 ## 3. Pipeline truthfulness (sc-cleanup.ps1)
 
@@ -70,6 +73,29 @@ hold", "Scanner-process contracts OK", removal runtime contracts OK, integration
 3.4 Non-admin console run: preflight must NOT log "Admin check: PASSED" when the
     shell is not elevated.
 
+**[NEW v1.7.18]**
+3.5 results.json truth: after a run, `results.json` must carry non-null
+    `AfterSnapshot`, `DiffPath` and `RemovalManifest` (these were read from the
+    wrong stage before v1.7.18 and were always null on a normal run).
+
+**[NEW v1.7.19]**
+3.6 Launch-grace probe: launch a scanner that dies within 60s (e.g. point
+    `-ToolPath` at a bogus-but-PE-valid exe). Expected: exit code 5,
+    "SUSPICIOUS: ... exited Ns after launch with no surviving GUI process",
+    and the report shows `ExitedEarly` - NEVER a completed scan.
+
+**[NEW v1.7.21]**
+3.7 Procmon stage (opt-in): run `sc-cleanup.ps1 -procmon -ProcmonRuntime 30 ...`.
+    Expected: "Reproduce the resurrection now" guidance, a `.pml` written to
+    `<WorkDir>\logs\Procmon\procmon-<stamp>.pml`, Stage 7 reports a successful
+    capture; when the Stage 8 diff finds a resurrection, the log names the
+    capture path and the resurrected paths to filter on. Without `-procmon`
+    Stage 7 logs "SKIPPED (not requested via -procmon)".
+3.8 Amcache: the snapshot's `Sections.Amcache` is present (progress ticks to
+    18/18); on a non-admin run the section is empty with a `CollectionError`
+    entry and the snapshot still completes. `diff-snapshots.ps1` treats Amcache
+    as a stable section.
+
 ## 4. Batch launchers (START-HERE.bat, RUN-REMOVAL-TEST.bat, Run-DetectRemoteAccess.bat)
 
 4.1 Apostrophe path: copy the tool tree to `C:\temp\it's the cleanup\` and launch
@@ -79,24 +105,56 @@ hold", "Scanner-process contracts OK", removal runtime contracts OK, integration
     (never a silent exit 0).
 4.3 Run-DetectRemoteAccess.bat argument forwarding: pass a target argument; confirm
     it reaches detect-remote-access.ps1 after elevation (SCC_ARGS env forwarding).
-4.4 Confirm fltmc privilege probe works and that START-HERE.bat Steps 4+5 run
-    automatically (no prompts; Step 5 auto-removes + logs) per owner directive
-    2026-08-27.
 
-## 5. Scanner downloads and attended GUI launches (Stage 5, KVRT/ESET; Malwarebytes via winget)
+**[NEW v1.7.24]**
+4.4 Preflight always runs: START-HERE.bat Step 2 runs preflight.ps1 with NO
+    prompt. Steps 4+5 also run automatically (owner directive 2026-08-27).
+4.5 UAC-disabled prompt-and-wait: on a machine with EnableLUA=0 (or a test that
+    fakes it), run sc-cleanup.ps1 and preflight.ps1. Expected: prominent red
+    banner with the `reg add ... EnableLUA ... /d 1` command, then a WAIT for
+    "Type Y once UAC is enabled, or F to force-continue". Y re-checks and
+    continues (log: "UAC check: enabled (confirmed after user action)"; a
+    pending-reboot machine logs the "still reads disabled" warning and
+    continues on your confirmation). F force-continues and logs the finding.
+    -force/-Force still bypasses the prompt entirely.
 
+## 5. Scanner downloads and attended GUI launches (Stage 5)
+
+**[NEW v1.7.22/23/25]**
 5.1 `tools\Get-AVTools.ps1` on a lab network: downloads/stages KVRT.exe and
-    esetonlinescanner.exe from the official vendor URLs; confirms MBSetup.exe is
-    no longer staged (Malwarebytes install/uninstall via winget since v1.7.3).
-5.2 `Invoke-GUIScanner.ps1 -Scanner KVRT`: launches a visible GUI and waits
-    until the technician closes it; no scan/clean flags are passed.
-5.3 `Invoke-GUIScanner.ps1 -Scanner ESET`: launches a visible GUI and waits
-    until the technician closes it; no scan/clean flags are passed.
-5.4 `Invoke-GUIScanner.ps1 -Scanner Malwarebytes`: runs `winget install -e --id Malwarebytes.Malwarebytes --accept-package-agreements --accept-source-agreements` (visible console, no agreement prompts) and waits;
-    if the bootstrapper exits before the scan finishes, the guided `START-HERE`
-    runner still tells the technician to wait manually before continuing.
+    esetonlinescanner.exe from the official vendor URLs only. Expected log lines:
+    `(BITS) KVRT.exe` and `(BITS) esetonlinescanner.exe` (BITS engine, v1.7.25;
+    a machine with BITS disabled falls back to Invoke-WebRequest - both are
+    fast - no progress bar is rendered). KVRT (~114 MB) should stage in
+    seconds-to-a-minute on a normal link, not many minutes.
+    - NO NAS/share fallback exists (v1.7.22): there is no InternalShare
+      parameter and nothing ever copies from a network share.
+    - A failed download prints `FAILED to stage: <tools>` and exits 1 (v1.7.23) -
+      never a silent green exit with nothing staged.
+5.2 `Invoke-GUIScanner.ps1 -Scanner KVRT`: launches a visible GUI and waits.
+    KVRT is a SELF-EXTRACTOR (proven on Windows VMs 2026-08-30): the parent
+    KVRT.exe exits ~7-8s after launch and hands off to a random-named child
+    process. The tool logs "launcher exited after Ns but child <name>.exe is
+    still running - waiting on the child GUI" and keeps waiting. A child that
+    dies instantly is reported as ExitedEarly (exit 5), never Completed - the
+    usual cause on a real machine is the machine's own AV killing the extracted
+    child or a dismissed UAC prompt for it.
+5.3 `Invoke-GUIScanner.ps1 -Scanner ESET`: launches a visible GUI and waits;
+    no scan/clean flags are passed.
+5.4 `Invoke-GUIScanner.ps1 -Scanner Malwarebytes`: runs
+    `winget install -e --id Malwarebytes.Malwarebytes --accept-package-agreements
+    --accept-source-agreements` (v1.7.24 - no agreement prompts, msstore/source
+    accepted by default), visible console, and waits; then launches the
+    Malwarebytes GUI. If the bootstrapper exits before the scan finishes, the
+    guided START-HERE runner still tells the technician to wait manually.
 5.5 Missing-tool paths: each scanner exits 3 with the clear "stage it first"
     message; the top-level Stage 5 records NotInstalled and continues.
+
+**[NEW v1.7.18]**
+5.6 Report scanner status: after a Stage 5 run, report.html contains a
+    "Antivirus / malware scanners" section with each scanner's Tool/Status/
+    Exit code. With `-sa`, the report says "Scanners were SKIPPED for this run"
+    - it never implies a clean malware verdict when nothing ran.
 
 ## 6. Windows-integration strict-mode checks (Test-WindowsIntegration.ps1)
 
@@ -106,7 +164,7 @@ hold", "Scanner-process contracts OK", removal runtime contracts OK, integration
     records a non-destructive Failed/Skipped manifest result and no ProcessInstance
     failure.
 
-## 6b. FIELD VALIDATION (2026-08-26, machine INPIRON4SANITY2, real install)
+## 6b. FIELD VALIDATION (2026-08-26, machine INPIRON4SANITY2, real install) - historical record
 
 A real removal ran on live Windows with ExecuteMode=true (manifest 2026-08-26
 15:39 UTC). Evidence-backed results:
@@ -121,29 +179,19 @@ A real removal ran on live Windows with ExecuteMode=true (manifest 2026-08-26
   quarantine-hashes-763257a7941a63ef.csv), DeleteService Success,
   DeleteUninstallKey Success (exported to .reg first), CleanPersistence
   Skipped (no artifacts). No reboot needed.
-
-Defect found from this run and fixed (see commit that adds this note): the
-main loop recorded a SECOND 'Uninstall' entry with Result=Failed and an EMPTY
-Target on the no-uninstall-string path, so a successful surgery-run showed a
-failed Uninstall. Fixed: Run-VendorUninstaller returns $null when nothing was
-attempted (truthful Skipped entry already written); the main loop records the
-decision as Action=UninstallFallback, Result=Planned, Target=DisplayName.
-CI test updated to assert the new truth.
-6.3 HKCU cleanup: after the test, the created GUID leaf is removed and the
-    RIT-SCC-CI parent is removed only when empty.
+- KVRT attended-GUI launch confirmed in the field on v1.7.19 (2026-08-28);
+  ESET/Malwarebytes confirmation is the outstanding item (docs/10).
 
 ## 6c. AV-uninstall leftover sweep (v1.7.5, owner directive 2026-08-27)
 
-The ESET vendor uninstaller "doesn't seem to work" on a live machine and leaves
-Start Menu shortcuts + the install folder behind. `Invoke-AVUninstaller.ps1`
-now sweeps leftovers after every uninstall attempt and MOVES them (never
-deletes) to `<LogDir>\av-uninstall-quarantine`.
+`Invoke-AVUninstaller.ps1` sweeps leftovers after every uninstall attempt and
+MOVES them (never deletes) to `<LogDir>\av-uninstall-quarantine`.
 
-6c.1 On a machine with ESET (or ESET Online Scanner) installed, run Step 8
-      (uninstall installed AV). After the vendor uninstaller window closes,
-      confirm the script reports the leftover sweep with N item(s) moved.
-6c.2 Confirm the ESET Start Menu folder, Program Files\ESET (or the EOS temp
-      folder) are GONE from their original locations and present under
+6c.1 On a machine with ESET installed, run Step 8. After the vendor uninstaller
+      window closes, confirm the script reports the leftover sweep with N
+      item(s) moved.
+6c.2 Confirm the ESET Start Menu folder and Program Files\ESET are GONE from
+      their original locations and present under
       av-uninstall-quarantine\<product>-<stamp>\.
 6c.3 Confirm non-ESET folders (e.g. a decoy other-vendor folder) were NOT
       touched, and av-uninstall-results.json carries LeftoversMoved + the
@@ -161,9 +209,24 @@ deletes) to `<LogDir>\av-uninstall-quarantine`.
     scheduled resume must complete persistence cleanup WITHOUT re-running the
     vendor uninstaller on a RebootPending instance.
 
+## 7b. Installer (install-latest.ps1) **[NEW v1.7.20]**
+
+7b.1 Run the one-liner twice: `irm https://raw.githubusercontent.com/
+    pupontech/screenconnect-cleanup/main/install-latest.ps1 | iex`.
+    First run installs the version folder and launches START-HERE.bat. Second
+    run prints "already installed and up to date", does NOT re-download, and
+    launches the existing folder (no hard error).
+7b.2 `-Force` re-extracts; a folder missing VERSION or START-HERE.bat is
+    auto-repaired (re-installed fresh).
+
 ## 8. Release gate summary
 
 A release is blocked if ANY of the following fails on Windows PowerShell 5.1:
-parse errors in any .ps1; any contract suite non-zero; a synthetic flood causing a
-hang; a hung process surviving TimeoutMinutes; a failed/cancelled UAC producing
-silent success; a failed Stage 4 producing exit 0 or a Completed resume marker.
+parse errors in any .ps1; any contract suite non-zero; a synthetic flood causing
+a hang; a hung process surviving TimeoutMinutes; a failed/cancelled UAC
+producing silent success; a failed Stage 4 producing exit 0 or a Completed
+resume marker; results.json showing null AfterSnapshot/DiffPath/RemovalManifest
+after a normal run; a scanner that dies at launch being reported as Completed;
+a failed scanner download exiting 0; the report omitting scanner status (or
+implying clean when -sa was used); the UAC-disabled prompt not appearing (or
+not waiting); the installer hard-erroring on a same-version re-run.

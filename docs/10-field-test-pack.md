@@ -85,7 +85,9 @@ KVRT is confirmed. The same attended flow needs one live pass each:
 
 ## 4. Full live-test matrix walk
 
-Run docs/09-windows-live-test-matrix.md sections 1-7 in order on a lab VM
+Run docs/09-windows-live-test-matrix.md sections 1-8 in order on a lab VM
+(sections 1-6 + 7b are non-destructive; section 7 is destructive - dedicated
+lab VM only).
 with Windows PowerShell 5.1. The release gate summary (section 8) is the
 acceptance criterion. The highest-value items for THIS release (v1.7.21):
 
