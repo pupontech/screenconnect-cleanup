@@ -3,6 +3,37 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.21] - 2026-08-28
+Two remaining builds landed (roadmap items M6 + Q4b#2):
+- **M6 - Procmon stage is now real.** `sc-cleanup.ps1 -procmon` runs a bounded
+  live capture: resolves Procmon64.exe from the tool pack (missing -> skipped
+  non-fatally), captures for `-ProcmonRuntime` seconds (default 180) with
+  `/AcceptEula /Quiet /Minimized /BackingFile <pml> /Runtime <sec>`, saves the
+  .pml under `<WorkDir>\logs\Procmon\`, and logs what the technician should do
+  (reproduce the resurrection during the window). The Stage 8 diff, when it
+  detects a resurrection and a capture exists, points the technician at the
+  .pml and the resurrected paths. Boot-logging and pre-built PMF path filters
+  still need a GUI-set config (docs/07 Q6) - capture is intentionally
+  full-scope for the bounded window.
+- **Q4b#2 - Amcache collector implemented.** `collect-snapshot.ps1` now
+  collects `C:\Windows\AppCompat\Programs\Amcache.hve` (reg.exe mount under
+  HKLM\Amcache, InventoryApplicationFile + InventoryApplication, then
+  unmount; admin-only, loud CollectionError on failure, never aborts). Keys
+  are `AF:<FileId>` / `AP:<AppId>` so the before/after diff matches them
+  stably. `diff-snapshots.ps1` treats Amcache as a stable section. Snapshot
+  progress now runs to 18/18. Windows content path still needs the real-box
+  cross-check called out in docs/07 Q4b#4 and docs/10.
+- **NEW docs/10-field-test-pack.md** - owner-run checklists for the
+  remaining field items: M0 relay-key capture (with belt-and-braces manual
+  dump), 3010 reboot-resume, ESET/Malwarebytes confirmation, and the
+  v1.7.21-specific live checks (Procmon .pml, Amcache section in snapshots).
+- Status lines updated (README, docs/02, docs/07) for both builds.
+- Verified: parse/ASCII clean; snapshot e2e on Linux (Amcache section
+  present, empty + CollectionError as expected on non-Windows); diff suite
+  treats Amcache as a stable section; Stage 7 capture path exercised against
+  the real extracted code with a fake Procmon (arg construction, quoting,
+  bounded wait, .pml detection); full CI contract suites pass.
+
 ## [1.7.20] - 2026-08-28
 install-latest.ps1 same-version re-run no longer throws (owner report:
 "Already installed at ... - pass -Force" on a plain `irm | iex` re-run):

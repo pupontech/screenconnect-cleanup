@@ -55,7 +55,8 @@ sc-cleanup.ps1  [flags]          <- top-level runner, BUILT (wires Stages 0-9)
 |
 +- STAGE 7  PROCMON - TARGETED ONLY    [opt-in: -procmon]
 |    runs only if the Stage 8 diff shows a resurrection, or on demand
-|    (currently a stub - see docs/07 M6)
+|    (bounded live capture since v1.7.21; boot-logging and PMF path
+|    filters still need a GUI-set config - docs/07 Q6)
 |
 +- STAGE 8  SNAPSHOT (AFTER) + DIFF
 |    collect-snapshot.ps1 -Label after, then diff against before
@@ -147,6 +148,7 @@ technician drives the UI:
     "LocalAccounts": [], "FirewallRules": [], "WmiPersistence": [],
     "RecentFiles": [], "RecentFilesCapHit": false,
     "Prefetch": [], "ShimCache": [], "BamDam": [], "UserAssist": [],
+    "Amcache": [],
     "Srum": { "DatabasePresent": false, "...": "..." },
     "SystemSettings": { "RdpEnabled": false, "HostsFileLines": [] }
   }

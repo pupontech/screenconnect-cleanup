@@ -48,7 +48,7 @@ $VolatileSections = @('Processes', 'Connections', 'RecentFiles')
 $StableSections   = @('Services', 'ScheduledTasks', 'RegistryAutoruns',
                       'StartupFolders', 'InstalledPrograms', 'LocalAccounts',
                       'FirewallRules', 'WmiPersistence', 'Prefetch',
-                      'ShimCache', 'BamDam', 'UserAssist')
+                      'ShimCache', 'BamDam', 'UserAssist', 'Amcache')
 $ObjectSections   = @('Srum', 'SystemSettings')
 
 function Read-Snapshot {

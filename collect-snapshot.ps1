@@ -81,8 +81,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 # SchemaVersion 2: added Sections Prefetch, ShimCache, BamDam, UserAssist, Srum
-# (retrospective execution artifacts). Consumers diffing v1 files against v2
-# should treat missing sections in a v1 file as empty.
+# and Amcache (retrospective execution artifacts). Consumers diffing v1 files
+# against v2 should treat missing sections in a v1 file as empty.
 $SchemaVersion = 2
 
 # Resolve hostname in a cross-platform-safe way: Windows sets COMPUTERNAME;
@@ -1213,6 +1213,100 @@ function Get-SrumSection {
     }
 }
 
+function Get-AmcacheSection {
+    # Retro artifact: C:\Windows\AppCompat\Programs\Amcache.hve - the
+    # registry-adjacent inventory of every application and binary the
+    # AppCompat service has seen (the closest thing Windows keeps to an
+    # offline program-execution ledger after ShimCache/BAM). Read it by
+    # mounting the hive under HKLM:\Amcache with reg.exe, enumerating the
+    # inventory keys, then unmounting. Admin required; a non-admin or
+    # locked-hive run yields an empty section + a CollectionError (never
+    # aborts the snapshot). InstallDate is NOT used as a window filter: its
+    # format (YYYYMMDD) and reliability vary by Windows version, and every
+    # entry is worth keeping for an investigation.
+    $rows = New-Object System.Collections.Generic.List[object]
+    $windir = $env:WINDIR
+    if (-not $windir) { $windir = $env:SystemRoot }
+    if (-not $windir) {
+        Add-CollectionError -Section 'Amcache' -ErrorText '$env:WINDIR not set - cannot locate Amcache.hve'
+        return , @()
+    }
+    $amcachePath = Join-Path $windir 'AppCompat\Programs\Amcache.hve'
+    if (-not (Test-Path -LiteralPath $amcachePath)) {
+        Add-CollectionError -Section 'Amcache' -ErrorText "Amcache.hve not found at $amcachePath"
+        return , @()
+    }
+    $regExe = $null
+    try { $regExe = (Get-Command reg.exe -ErrorAction Stop).Source } catch { }
+    if (-not $regExe) {
+        Add-CollectionError -Section 'Amcache' -ErrorText 'reg.exe not available - cannot mount Amcache.hve'
+        return , @()
+    }
+    $mountKey = 'HKLM\Amcache'
+    $mounted = $false
+    try {
+        $null = & $regExe load $mountKey $amcachePath 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Add-CollectionError -Section 'Amcache' -ErrorText ("reg.exe load failed (exit " + $LASTEXITCODE + ") - hive in use, or not elevated")
+            return , @()
+        }
+        $mounted = $true
+
+        # InventoryApplicationFile: one subkey per binary file the service saw.
+        $rootFile = 'Registry::' + $mountKey + '\Root\InventoryApplicationFile'
+        if (Test-Path -LiteralPath $rootFile) {
+            foreach ($k in @(Get-ChildItem -LiteralPath $rootFile -ErrorAction SilentlyContinue)) {
+                try {
+                    $p = Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction Stop
+                    $fileId = [string]$p.FileId
+                    if (-not $fileId) { $fileId = $k.PSChildName }
+                    $rows.Add([PSCustomObject]@{
+                        Key       = 'AF:' + $fileId
+                        Kind      = 'file'
+                        Name      = ConvertTo-NullSafeString $p.Name
+                        Path      = ConvertTo-NullSafeString $p.Path
+                        Publisher = ConvertTo-NullSafeString $p.Publisher
+                        Version   = ConvertTo-NullSafeString $p.Version
+                        Hash      = ConvertTo-NullSafeString $p.Hash
+                    })
+                } catch {
+                    Add-CollectionError -Section 'Amcache' -ErrorText ("File entry " + $k.PSChildName + ": " + $_.Exception.Message)
+                }
+            }
+        }
+
+        # InventoryApplication: installed / executed application records.
+        $rootApp = 'Registry::' + $mountKey + '\Root\InventoryApplication'
+        if (Test-Path -LiteralPath $rootApp) {
+            foreach ($k in @(Get-ChildItem -LiteralPath $rootApp -ErrorAction SilentlyContinue)) {
+                try {
+                    $p = Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction Stop
+                    $appId = [string]$p.AppId
+                    if (-not $appId) { $appId = $k.PSChildName }
+                    $rows.Add([PSCustomObject]@{
+                        Key         = 'AP:' + $appId
+                        Kind        = 'application'
+                        Name        = ConvertTo-NullSafeString $p.Name
+                        Publisher   = ConvertTo-NullSafeString $p.Publisher
+                        Version     = ConvertTo-NullSafeString $p.Version
+                        InstallDate = ConvertTo-NullSafeString $p.InstallDate
+                        Path        = ConvertTo-NullSafeString $p.FolderPath
+                    })
+                } catch {
+                    Add-CollectionError -Section 'Amcache' -ErrorText ("App entry " + $k.PSChildName + ": " + $_.Exception.Message)
+                }
+            }
+        }
+    } catch {
+        Add-CollectionError -Section 'Amcache' -ErrorText $_.Exception.Message
+    } finally {
+        if ($mounted) {
+            $null = & $regExe unload $mountKey 2>$null
+        }
+    }
+    return , @($rows.ToArray())
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -1475,9 +1569,9 @@ $startupFolders    = $script:waveData['StartupFolders']
 $prefetch          = $script:waveData['Prefetch']
 $shimCache         = $script:waveData['ShimCache']
 
-# Serial tail: 3 more sections (system settings, recent files, SRUM) so the
-# progress counter runs to 17/17.
-$script:groupTotal = 17
+# Serial tail: 4 more sections (system settings, recent files, SRUM, Amcache)
+# so the progress counter runs to 18/18.
+$script:groupTotal = 18
 
 $rdpEnabled = $null
 try {
@@ -1537,6 +1631,16 @@ try {
     }
 }
 $script:doneSections = 17
+Write-Tick
+
+Write-Info '  - Amcache inventory'
+try {
+    $amcache = Sort-ByKey (Get-AmcacheSection)
+} catch {
+    Add-CollectionError -Section 'Amcache' -ErrorText $_.Exception.Message
+    $amcache = @()
+}
+$script:doneSections = 18
 Write-Tick -ForceNewLine
 
 $result = [ordered]@{
@@ -1566,6 +1670,7 @@ $result = [ordered]@{
         BamDam           = @($bamDam)
         UserAssist       = @($userAssist)
         Srum             = $srum
+        Amcache          = @($amcache)
         SystemSettings   = [ordered]@{
             RdpEnabled     = $rdpEnabled
             HostsFileLines = @($hostsLines)

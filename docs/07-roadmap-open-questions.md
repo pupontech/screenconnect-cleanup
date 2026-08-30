@@ -24,7 +24,7 @@ box" tool has value on day one.
 | **M3** | Stage 8 — after-snapshot + diff | Catches resurrections | **Built & Linux-verified** |
 | **M4** | Stage 5 — scanners (KVRT/ESET/Malwarebytes) | Optional, skippable | **Built** — `Get-AVTools.ps1` stages KVRT/ESET from official URLs, `Invoke-GUIScanner.ps1` launches them attended (GUI launch-and-wait); Malwarebytes install/uninstall via winget (v1.7.3+). AdwCleaner + Defender remain removed from scope. |
 | **M5** | Stages 3, 4 — approval gate + removal + quarantine + reboot resume | **Only after heavy VM-snapshot testing** | **LIVE-VALIDATED (field, 2026-08-26):** full removal executed with ExecuteMode=true on INPIRON4SANITY2 via the manual-surgery path (quarantine + service delete + uninstall-key cleanup), manifest truthful after the UninstallFallback fix. 3010 reboot-resume path still needs a lab run |
-| **M6** | Stage 7 — targeted Procmon | Respawn investigation | **Not started** (opt-in stub only) |
+| **M6** | Stage 7 — targeted Procmon | Respawn investigation | **BUILT (v1.7.21)** — bounded live capture via `-procmon` (default 180s, `-ProcmonRuntime` to change; `.pml` to `logs\Procmon\`); the Stage 8 diff names the paths to focus on. Boot-logging and pre-built PMF path filters still need a GUI-set config (Q6) |
 | **M7** | Top-level `sc-cleanup.ps1` stage runner tying it together | The actual product | **Built & Linux end-to-end verified** (detect-remote-access stubbed on Linux) |
 
 ### Recommended before M5
@@ -116,8 +116,10 @@ From the independent module review (t_f2f5e295), carried to the integration pass
    2026-08-26:** the Defender adapter was removed from the line-up by owner decision.
 2. **HIGH / scope — Amcache missing.** The Stage 1 retrospective expansion implements
    Prefetch, ShimCache, BAM/DAM, UserAssist, SRUM but **no Amcache** collector, schema
-   field, or diff class. Either implement Amcache or formally revise scope. **Open**
-   (formally kept in scope 2026-08-28; revisit after M0).
+   field, or diff class. Either implement Amcache or formally revise scope. **IMPLEMENTED
+   (v1.7.21)** — hive-mount collector (reg.exe load/unload of Amcache.hve, admin-only,
+   loud error path) + schema field + diff class added. A real-box cross-check against
+   known-good forensic tooling is still required (same caveat as Q4b#4).
 3. **MEDIUM / semantics — Defender historical detections (moot).** `Get-ThreatDetections`
    read all of `Get-MpThreatDetection` history and reported it as this run's
    `Detections`; a pre-existing detection could be mis-attributed. Also copied Support
@@ -133,7 +135,8 @@ From the independent module review (t_f2f5e295), carried to the integration pass
 
 ### Q6 — Procmon boot logging non-interactively
 It is set via the GUI Options menu. Whether a CLI equivalent exists is unconfirmed.
-Affects Stage 7's design.
+Stage 7 (v1.7.21) does a bounded live capture (`/Runtime`); boot-logging and
+pre-built path filters would need a GUI-created PMF config.
 
 ### Q7 — Client confidentiality on reputation lookups
 `sigcheck`'s VirusTotal switches upload data. Submitting a client's file hashes — let
@@ -150,11 +153,10 @@ now.
 
 ## Not yet built but worth considering later
 
-**Retrospective execution artifacts.** Prefetch, Amcache, ShimCache, BAM/DAM, UserAssist,
-and especially **SRUM** (which records per-application bytes sent/received, quantifying
-how much data actually moved). These are far more valuable than live monitoring, because
-a technician always arrives after the fact. Natural Stage 1 expansion, and the single
-highest-value addition after the live test.
+**Retrospective execution artifacts.** Prefetch, ShimCache, BAM/DAM, UserAssist,
+SRUM and (since v1.7.21) Amcache are built; they are far more valuable than live
+monitoring, because a technician always arrives after the fact. Natural Stage 1
+expansion, and the single highest-value addition after the live test.
 
 **Incident window as a first-class input.** Asking the client "when did the call happen?"
 and weighting everything created or first-executed inside that window is the cheapest,

@@ -104,13 +104,13 @@ Two further consequences worth stating plainly:
 | Stage | What it does | State |
 |---|---|---|
 | 0 — Preflight | admin check, restore point, working dir, tool pack | **built** (Linux-verified; Win-only paths unverified) |
-| 1 — Snapshot (before) | services, tasks, autoruns, processes, connections, + retro artifacts | **built** (Linux-verified; Win-only content unverified) |
+| 1 — Snapshot (before) | services, tasks, autoruns, processes, connections, + retro artifacts (Prefetch/ShimCache/BAM-DAM/UserAssist/SRUM/Amcache) | **built** (Linux-verified; Win-only content unverified) |
 | **2 — Detection** | **ScreenConnect instance identity + other RAT presence** | **PoC works** (verified on a real machine) |
 | 3 — Technician review | approval gate — nothing is removed without it | **built** (interactive y/n prompt in `sc-cleanup.ps1`; the guided runner skips it — Step 5 auto-removes + logs per owner directive 2026-08-27) |
 | 4 — Remove / quarantine | stop, uninstall, quarantine, clean persistence | **built, dry-run default** (never run on live Windows; skipped by default via `-sr`) |
 | 5 — Scanners | KVRT, ESET Online Scanner (GUI, attended); Malwarebytes installed via winget (`winget install -e --id Malwarebytes.Malwarebytes`) | **built** (`Get-AVTools.ps1` downloads KVRT + ESET from official vendor URLs; `Invoke-GUIScanner` launches visible attended GUIs and runs the Malwarebytes winget install; AdwCleaner/Defender remain removed; real exec unverified) |
 | 6 — Uninstall installed AV | open each detected third-party AV uninstaller (attended GUI) + sweep leftovers into quarantine | **built** (Invoke-AVUninstaller; Windows Defender excluded; leftover sweep v1.7.5 moves remaining shortcuts/folders to av-uninstall-quarantine, never deletes; results in report) |
-| 7 — Procmon (targeted) | "something reinstalled it — what?" | **not started** (opt-in stub only) |
+| 7 — Procmon (targeted) | "something reinstalled it — what?" | **built** (v1.7.21: bounded live capture via `-procmon`, `.pml` to `logs\Procmon\`; boot-logging/PMF filters open) |
 | 8 — Snapshot (after) + diff | prove it is gone, catch resurrections | **built** (Linux-verified) |
 | 9 — Report | HTML + JSON + tech summary | **built** (XSS + empty-case verified; now includes AV-uninstall section) |
 | — Top-level runner | `sc-cleanup.ps1` ties all 10 stages together | **built** (Linux end-to-end, detect stubbed) |

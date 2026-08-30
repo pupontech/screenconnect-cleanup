@@ -28,11 +28,12 @@ param(
     [switch]$avu,         # skip uninstalling installed AV (Stage 6)
     [switch]$np,          # no restore point
     [switch]$offline,     # use pre-staged tool pack, do not download
-    [switch]$procmon,     # force Procmon stage
+    [switch]$procmon,     # force Procmon stage (bounded live capture)
     [switch]$force,       # override server-OS refusal
     [switch]$ExecuteRemoval, # TEST MODE: pre-authorize removal (no typed confirmation)
 
     # Configuration
+    [int]$ProcmonRuntime = 180,  # Stage 7 capture window in seconds (default 3 min)
     [string]$IncidentDate,   # incident window anchor (yyyy-MM-dd; never prompted - defaults to today)
     [string]$OutRoot,        # working directory root (default: C:\RIT-SCC)
     [string]$ToolDir,        # tool pack directory (default: <script dir>\tools)
@@ -48,7 +49,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Constants & script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.7.20'
+$ScriptVersion = '1.7.21'
 $ScriptName = 'sc-cleanup.ps1'
 $PipelineStages = @(
     @{ Id = 0; Name = 'Preflight';            SkipFlag = '' },
@@ -773,7 +774,7 @@ $stage6Result = Invoke-Stage -StageId 6 -StageName 'Uninstall installed AV' -Ski
 }
 
 # -----------------------------------------------------------------------------
-# Stage 7: Procmon (opt-in only via -procmon)
+# Stage 7: Procmon (opt-in only via -procmon) - bounded live capture
 # -----------------------------------------------------------------------------
 $stage7Result = Invoke-Stage -StageId 7 -StageName 'Procmon' -SkipFlag '' -StageBlock {
     if (-not $procmon) {
@@ -781,15 +782,74 @@ $stage7Result = Invoke-Stage -StageId 7 -StageName 'Procmon' -SkipFlag '' -Stage
         return @{ Skipped = $true; Note = 'Opt-in only' }
     }
 
-    Write-StageLog "STUB: Procmon stage"
-    Write-StageLog "In a full implementation, this stage would:"
-    Write-StageLog "  - Run Procmon with a targeted filter (based on Stage 8 diff resurrection)"
-    Write-StageLog "  - Capture for a bounded window"
-    Write-StageLog "  - Save .pml to logs/Procmon/"
-    Write-StageLog ""
-    Write-StageLog "Current implementation: NOT IMPLEMENTED"
+    # Targeted live capture, bounded by design. Procmon boot-logging and
+    # pre-built path filters require GUI configuration (PMF) - there is no
+    # reliable CLI equivalent (docs/07 Q6) - so this stage captures everything
+    # for a bounded window while the technician reproduces the resurrection;
+    # the Stage 8 diff then names the paths to focus on inside the saved .pml.
+    $procmonExe = $null
+    foreach ($candidate in @(
+        (Join-Path $ToolDir 'ProcessMonitor\Procmon64.exe'),
+        (Join-Path $ToolDir 'Procmon64.exe'),
+        (Join-Path $ToolDir 'ProcessMonitor\Procmon.exe'),
+        (Join-Path $ToolDir 'Procmon.exe')
+    )) {
+        if (Test-Path -LiteralPath $candidate) { $procmonExe = $candidate; break }
+    }
+    if (-not $procmonExe) {
+        Write-StageLog ("Procmon not found in tool pack (" + $ToolDir + ") - run Step 1 / Stage 0 to fetch it. Stage 7 skipped (non-fatal).") 'Warn'
+        return @{ Skipped = $true; Note = 'Procmon not staged'; PmlPath = $null }
+    }
 
-    return @{ Skipped = $true; Note = 'Not implemented in v1' }
+    $procmonDir = Join-Path $WorkDir 'logs\Procmon'
+    $null = New-Item -ItemType Directory -Path $procmonDir -Force
+    $stamp = (Get-Date).ToString('yyyyMMdd_HHmmss')
+    $pmlPath = Join-Path $procmonDir ("procmon-" + $stamp + ".pml")
+    $runtimeSec = 180
+    if ($ProcmonRuntime -gt 0) { $runtimeSec = $ProcmonRuntime }
+
+    Write-StageLog ("Procmon capture: " + $procmonExe)
+    Write-StageLog ("  capturing for " + $runtimeSec + "s -> " + $pmlPath)
+    Write-StageLog "  REPRODUCE the resurrection now (watch Task Manager, re-run whatever reinstalls the agent)."
+    Write-StageLog "  Capture is bounded; after the run, open the .pml and focus on the paths the Stage 8 diff flags."
+
+    # /BackingFile path is quoted because the work dir can contain spaces.
+    $argStr = '/AcceptEula /Quiet /Minimized /BackingFile "' + $pmlPath + '" /Runtime ' + $runtimeSec
+    $proc = $null
+    try {
+        $proc = Start-Process -FilePath $procmonExe -ArgumentList $argStr -PassThru -ErrorAction Stop
+    } catch {
+        Write-StageLog ("Procmon failed to start: " + $_.Exception.Message) 'Error'
+        return @{ Skipped = $false; Error = $_.Exception.Message; PmlPath = $null }
+    }
+
+    $timedOut = $false
+    $exitCode = $null
+    # Hard cap = runtime + 120s grace; Procmon /Runtime self-exits, this only
+    # guards against a hung instance.
+    if (-not $proc.WaitForExit(($runtimeSec + 120) * 1000)) {
+        $timedOut = $true
+        try { $proc.Kill() } catch { }
+        Write-StageLog "Procmon capture exceeded its hard cap - killed (capture likely incomplete)." 'Warn'
+    } else {
+        try { $exitCode = $proc.ExitCode } catch { }
+        Write-StageLog ("Procmon exited with code " + $exitCode + " after its capture window.")
+    }
+
+    if (Test-Path -LiteralPath $pmlPath) {
+        Write-StageLog ("Procmon capture saved: " + $pmlPath) 'Cyan'
+    } else {
+        Write-StageLog "Procmon did not produce a .pml - capture failed." 'Warn'
+    }
+
+    return @{
+        Skipped = $false
+        Note = 'Bounded live capture (v1.7.21)'
+        PmlPath = $pmlPath
+        TimedOut = $timedOut
+        ExitCode = $exitCode
+        RuntimeSeconds = $runtimeSec
+    }
 }
 
 # -----------------------------------------------------------------------------
@@ -881,6 +941,18 @@ $stage8Result = Invoke-Stage -StageId 8 -StageName 'Snapshot (After)+Diff' -Skip
     }
     if ($resurrected) { Write-StageLog ("Resurrection match(es): " + ($resurrectionMatches -join ', ')) 'Warn' }
     else { Write-StageLog "No manifest-correlated resurrection found." }
+
+    # Point the technician at the Procmon capture if one was made (Stage 7
+    # with -procmon): the .pml is the evidence that answers "what reinstalled
+    # it?" for the paths the diff just flagged.
+    $procmonPml = $null
+    if ($stage7Result -and $stage7Result.Result -and $stage7Result.Result.PmlPath -and (Test-Path -LiteralPath $stage7Result.Result.PmlPath)) {
+        $procmonPml = $stage7Result.Result.PmlPath
+    }
+    if ($resurrected -and $procmonPml) {
+        Write-StageLog ("Procmon capture available: " + $procmonPml) 'Cyan'
+        Write-StageLog "  Open it in Procmon and filter on the resurrected path(s) above to find what re-created them."
+    }
 
     Write-StageLog "Diff complete. Resurrected items detected: $resurrected"
 
