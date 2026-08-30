@@ -3,7 +3,21 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
-## [1.7.28] - 2026-08-28
+## [1.7.30] - 2026-08-28
+KVRT "skipped totally when UAC is disabled" (owner report) - root cause was
+NOT UAC: the guided runner's scanner prompts defaulted to NO.
+- START-HERE.bat Steps 6a/6b/6c (KVRT, ESET, Malwarebytes) were
+  `Launch ...? [y/N]` - pressing Enter SKIPPED the scanner entirely. On a
+  no-UAC machine the chain was: UAC prompt -> F (force-continue) -> Step 6a
+  default-NO -> KVRT never launched. All three now default to YES
+  (`[Y/n]`, run unless you type `n`), matching the run-scanners-by-default
+  intent. Step 1 was already `[Y/n]`.
+- Steps 8/9 (Tikun + installed-AV uninstall) remain explicit opt-in - they
+  are removal actions and stay decision-gated.
+- Verified: CRLF + ASCII house rules pass; bat contracts pass; diff shows
+  only the prompt lines changed.
+
+## [1.7.29] - 2026-08-28
 BITS downloads now show a live progress line (owner report: "bits is not
 showing a download progress bar"):
 - `Get-AVTools.ps1` runs the BITS transfer ASYNCHRONOUSLY and polls

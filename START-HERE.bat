@@ -123,8 +123,8 @@ echo    Each scanner is a visible attended GUI. Drive the UI, then return here.
 
 echo.
 echo    -- 6a: KVRT (interactive GUI) --
-set /p GO="    Launch KVRT? [y/N] "
-if /i "%GO%"=="y" (
+set /p GO="    Launch KVRT? [Y/n] "
+if /i not "%GO%"=="n" (
     if exist "%~dp0tools\AV\KVRT.exe" (
         powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-GUIScanner.ps1" -Scanner KVRT
         if errorlevel 1 echo        [WARN] KVRT launch failed with errorlevel !errorlevel! - see the message above
@@ -136,8 +136,8 @@ set GO=
 
 echo.
 echo    -- 6b: ESET Online Scanner (interactive GUI) --
-set /p GO="    Launch ESET Online Scanner? [y/N] "
-if /i "%GO%"=="y" (
+set /p GO="    Launch ESET Online Scanner? [Y/n] "
+if /i not "%GO%"=="n" (
     if exist "%~dp0tools\AV\esetonlinescanner.exe" (
         powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-GUIScanner.ps1" -Scanner ESET
         if errorlevel 1 echo        [WARN] ESET launch failed with errorlevel !errorlevel! - see the message above
@@ -149,8 +149,8 @@ set GO=
 
 echo.
 echo    -- 6c: Malwarebytes (install via winget) --
-set /p GO="    Install Malwarebytes via winget now? [y/N] "
-if /i not "%GO%"=="y" goto :skip_6c
+set /p GO="    Install Malwarebytes via winget now? [Y/n] "
+if /i "%GO%"=="n" goto :skip_6c
 where winget >nul 2>&1
 if errorlevel 1 (
     echo        [WARN] winget not found on this machine - install the App
