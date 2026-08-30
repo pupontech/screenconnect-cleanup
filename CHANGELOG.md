@@ -3,6 +3,24 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.23] - 2026-08-28
+Two staging fixes found by the Windows VM scanner-launch probe:
+- **Download failures are now loud.** `Get-AVTools.ps1` used to `exit 0`
+  even when a download failed (`$null = Ensure-Tool ...`) - a 403 or network
+  error silently produced "nothing staged" with a green exit. It now tracks
+  per-tool failures and exits 1 with "FAILED to stage: <tools>" so callers
+  and CI see the truth. sc-cleanup Stage 0 already treats a nonzero exit as
+  "some tools unavailable".
+- **Browser-like User-Agent on downloads.** The default PowerShell client UA
+  gets `403 Forbidden` from Kaspersky's CDN on some egress IPs (observed
+  live on GitHub Windows runners). Downloads now send a standard Chrome UA
+  header. ESET unaffected but gets the same header for consistency.
+- The scanner-launch probe workflow (windows-2022/2025) found these: KVRT
+  launched correctly on Windows (parent exits ~7s, hands off to a child
+  process - the v1.7.19 hand-off check waits on it; child still alive at the
+  1-min cap), ESET staged OK. Verified: parse/ASCII clean, contract suites
+  green.
+
 ## [1.7.22] - 2026-08-28
 NAS/internal-share fallback removed from scanner staging (owner directive:
 "remove all logic for nas just do fresh downloads ... keep it clean"):

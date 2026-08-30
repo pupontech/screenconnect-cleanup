@@ -141,7 +141,11 @@ function Get-DownloadFile {
     $part = $Dest + '.part'
     Say ("Downloading " + $Label + "...")
     try {
-        Invoke-WebRequest -Uri $Url -OutFile $part -UseBasicParsing -ErrorAction Stop
+        # Browser-like User-Agent: vendor CDNs (Kaspersky in particular)
+        # 403 the default PowerShell client UA on some egress IPs. This was
+        # observed live on GitHub Windows runners (v1.7.23).
+        $headers = @{ 'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36' }
+        Invoke-WebRequest -Uri $Url -OutFile $part -UseBasicParsing -Headers $headers -ErrorAction Stop
         try {
             $item = Get-Item -LiteralPath $part -ErrorAction Stop
             $ver = $item.VersionInfo.FileVersion
@@ -193,12 +197,17 @@ function Ensure-Tool {
 
 # --- KVRT: fetch from Kaspersky's official URL when missing/corrupt --------
 # Endpoint previously verified live as the official current KVRT distribution.
-$null = Ensure-Tool -Url 'https://devbuilds.s.kaspersky-labs.com/kvrt/latest/full/KVRT.exe' -Dest $kvrtPath -Label 'KVRT.exe (Kaspersky Virus Removal Tool)'
+$failures = @()
+if (-not (Ensure-Tool -Url 'https://devbuilds.s.kaspersky-labs.com/kvrt/latest/full/KVRT.exe' -Dest $kvrtPath -Label 'KVRT.exe (Kaspersky Virus Removal Tool)')) {
+    $failures += 'KVRT.exe'
+}
 
 # --- ESET Online Scanner: fetch from ESET's official download host ---------
 # The bootstrapper downloads current detection-engine modules on first run.
 # GUI-only tool staged for attended technician use.
-$null = Ensure-Tool -Url 'https://download.eset.com/com/eset/tools/online_scanner/latest/esetonlinescanner.exe' -Dest $eosPath -Label 'esetonlinescanner.exe (ESET Online Scanner, GUI-only)'
+if (-not (Ensure-Tool -Url 'https://download.eset.com/com/eset/tools/online_scanner/latest/esetonlinescanner.exe' -Dest $eosPath -Label 'esetonlinescanner.exe (ESET Online Scanner, GUI-only)')) {
+    $failures += 'esetonlinescanner.exe'
+}
 
 # --- Malwarebytes: NOT staged here (v1.7.3+). Installed/uninstalled via winget:
 #   winget install -e --id Malwarebytes.Malwarebytes
@@ -220,4 +229,8 @@ Say 'Run the staged scanners attended:' 'Cyan'
 Say '  .\Invoke-GUIScanner.ps1 -Scanner KVRT' 'Cyan'
 Say '  .\Invoke-GUIScanner.ps1 -Scanner ESET' 'Cyan'
 Say 'The pipeline never invents silent-scan flags (owner decision 2026-08-26).' 'Cyan'
+if ($failures.Count -gt 0) {
+    Say ("FAILED to stage: " + ($failures -join ', ') + " - re-run Step 1 to retry. A failed download is never reported as success (v1.7.23).") 'Yellow'
+    exit 1
+}
 exit 0
