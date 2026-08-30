@@ -349,6 +349,7 @@ if ($env:OS -eq 'Windows_NT') {
             Write-Host '  *** Enable it now (as administrator):' -ForegroundColor Yellow
             Write-Host '  ***   reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 1 /f' -ForegroundColor Yellow
             Write-Host '  ***   (a reboot is required for the change to fully apply)' -ForegroundColor Yellow
+            Write-Host '  ***   KVRT and ESET scanners will likely fail to launch until UAC is enabled.' -ForegroundColor Yellow
             Write-Host ''
             $uacAnswer = ''
             do {

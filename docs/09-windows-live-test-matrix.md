@@ -124,7 +124,10 @@ no-NAS assertions), removal runtime contracts OK, integration OK,
     continues (log: "UAC check: enabled (confirmed after user action)"; a
     pending-reboot machine logs the "still reads disabled" warning and
     continues on your confirmation). F force-continues and logs the finding.
-    -force/-Force still bypasses the prompt entirely.
+    -force/-Force still bypasses the prompt entirely. NOTE: KVRT/ESET will
+    typically NOT launch with UAC disabled - expect the scanner stage's own
+    "[WARN] UAC is DISABLED" message and ExitedEarly (exit 5) if launched
+    anyway (v1.7.27 makes this explicit before launch).
 
 ## 5. Scanner downloads and attended GUI launches (Stage 5)
 
@@ -146,7 +149,9 @@ no-NAS assertions), removal runtime contracts OK, integration OK,
     still running - waiting on the child GUI" and keeps waiting. A child that
     dies instantly is reported as ExitedEarly (exit 5), never Completed - the
     usual cause on a real machine is the machine's own AV killing the extracted
-    child or a dismissed UAC prompt for it.
+    child or a dismissed UAC prompt for it. With UAC disabled (EnableLUA=0) the
+    tool warns before launching that KVRT/ESET commonly exit immediately and
+    records `UacDisabled: true` in the result JSON (v1.7.27).
 5.3 `Invoke-GUIScanner.ps1 -Scanner ESET`: launches a visible GUI and waits;
     no scan/clean flags are passed.
 5.4 `Invoke-GUIScanner.ps1 -Scanner Malwarebytes`: runs

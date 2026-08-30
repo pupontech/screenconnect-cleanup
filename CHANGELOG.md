@@ -3,6 +3,30 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.27] - 2026-08-28
+KVRT on UAC-disabled machines (owner report: "kvrt still seems bugged on no
+uac on .24"):
+- **Pre-launch UAC warning.** `Invoke-GUIScanner.ps1` now checks EnableLUA
+  before launching KVRT/ESET; when UAC is disabled it warns prominently that
+  these scanners typically exit immediately without UAC elevation semantics,
+  prints the reg add EnableLUA command, and records `UacDisabled: true` in
+  the result JSON. The ExitedEarly message (exit 5) now names UAC-disabled as
+  a likely cause when applicable.
+- **Reparenting-race fix in the hand-off check.** The KVRT self-extractor
+  parent exits ~7-8s after launch; its extracted child can already have been
+  reparented by the time Win32_Process is queried, so the old
+  ParentProcessId-only lookup could miss it and report a FALSE ExitedEarly
+  ("bugged") on a machine where KVRT actually launched. The check now falls
+  back to scanner-family name + start-time evidence (kvrt|kaspersky|kav,
+  eos|eset) before declaring an early exit.
+- Both UAC prompt banners (sc-cleanup.ps1, preflight.ps1) now state that KVRT
+  and ESET will likely fail to launch until UAC is enabled.
+- CI: scanner contracts assert the UAC warning and the reparent fallback.
+- Verified: parse/ASCII clean; contract suites green; the reparenting
+  fallback logic exercised against the real extracted code with a mocked
+  CIM query (parent lookup empty -> family/start-time fallback finds the
+  child -> waits on it instead of ExitedEarly).
+
 ## [1.7.26] - 2026-08-28
 Debug logger added (owner request: "add in a logger to help with debugging"):
 - **`-Debug` on `sc-cleanup.ps1` and `preflight.ps1`** starts a full console

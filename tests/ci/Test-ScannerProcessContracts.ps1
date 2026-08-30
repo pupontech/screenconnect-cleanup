@@ -79,6 +79,8 @@ else {
     if ($text -match "'Malwarebytes'\s*=\s*'MBSetup\.exe'") { Add-Failure 'Invoke-GUIScanner.ps1 still maps Malwarebytes to MBSetup.exe - winget-only since v1.7.3.' }
     if ($text -notmatch "'Malwarebytes'\s*=\s*'Malwarebytes\.Malwarebytes'") { Add-Failure 'Invoke-GUIScanner.ps1 missing Malwarebytes winget package id.' }
     if ($text -notmatch "'install', '-e', '--id'") { Add-Failure 'Invoke-GUIScanner.ps1 does not run winget install -e --id for Malwarebytes.' }
+    if ($text -notmatch 'UAC is DISABLED on this machine') { Add-Failure 'Invoke-GUIScanner.ps1 does not warn when UAC is disabled - KVRT/ESET commonly exit immediately without UAC elevation semantics.' }
+    if ($text -notmatch 'reparent') { Add-Failure 'Invoke-GUIScanner.ps1 missing the reparenting fallback in the launcher hand-off check - the extracted child of a dead launcher can be missed, causing a false ExitedEarly.' }
     if ($text -notmatch 'accept-package-agreements') { Add-Failure 'Invoke-GUIScanner.ps1 does not pass --accept-package-agreements to winget - the Malwarebytes install would stall on an agreement prompt.' }
     if ($text -notmatch 'wingetViaCmd') { Add-Failure 'Invoke-GUIScanner.ps1 missing the winget alias-via-cmd launch (WindowsApps stub crashes Start-Process).' }
     if ($text -notmatch 'Start-Process returned no process handle') { Add-Failure 'Invoke-GUIScanner.ps1 missing the null-process guard after Start-Process.' }

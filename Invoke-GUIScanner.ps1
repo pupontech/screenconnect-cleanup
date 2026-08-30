@@ -214,6 +214,23 @@ if ($toolArgs.Count -gt 0) {
 Write-Host ("Hard cap: " + $TimeoutMinutes + " min (on timeout the process is LEFT running).") -ForegroundColor DarkGray
 
 # ---------------------------------------------------------------------------
+# UAC-disabled machines: KVRT/ESET typically exit immediately because they
+# need UAC-enabled elevation semantics. Warn BEFORE launching so the failure
+# mode is known; the launch-grace probe still decides. (v1.7.27)
+# ---------------------------------------------------------------------------
+$uacDisabled = $false
+try {
+    $uacValue = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name EnableLUA -ErrorAction SilentlyContinue).EnableLUA
+    if ($uacValue -eq 0) { $uacDisabled = $true }
+} catch { $uacDisabled = $false }
+if ($uacDisabled -and $toolArgs.Count -eq 0) {
+    Write-Host "  [WARN] UAC is DISABLED on this machine (EnableLUA=0)." -ForegroundColor Yellow
+    Write-Host "  KVRT and ESET typically exit immediately without UAC - they need elevation semantics." -ForegroundColor Yellow
+    Write-Host '  Enable UAC: reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 1 /f  (reboot required)' -ForegroundColor Yellow
+    Write-Host "  Launching anyway - if it exits within 60s this run records ExitedEarly, never a completed scan." -ForegroundColor Yellow
+}
+
+# ---------------------------------------------------------------------------
 # Launch VISIBLE (no CreateNoWindow, no redirects) and wait
 # ---------------------------------------------------------------------------
 try {
@@ -286,6 +303,21 @@ if ($toolArgs.Count -eq 0) {
             $handoff = Get-CimInstance -ClassName Win32_Process -Filter "ParentProcessId = $($proc.Id)" -ErrorAction SilentlyContinue |
                        Where-Object { $_.ProcessId -ne $proc.Id } | Select-Object -First 1
         } catch { $handoff = $null }
+        if (-not $handoff) {
+            # Reparenting race: the extracted child of a dead launcher may
+            # already have been reparented, so ParentProcessId no longer
+            # points at the launched PID. Fall back to family-name +
+            # start-time evidence (v1.7.27).
+            $childPattern = 'kvrt|kaspersky|kav'
+            if ($toolLabel -match 'ESET') { $childPattern = 'eos|eset' }
+            try {
+                $handoff = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue |
+                           Where-Object { $_.ProcessId -ne $proc.Id -and
+                                          $_.Name -match $childPattern -and
+                                          [datetime]$_.CreationDate -ge $start.AddSeconds(-10) } |
+                           Sort-Object CreationDate | Select-Object -First 1
+            } catch { $handoff = $null }
+        }
         if ($handoff) {
             Write-Host ("  [i] " + $toolLabel + " launcher exited after " + $elapsedNow + "s but child " + $handoff.Name + " (PID " + $handoff.ProcessId + ") is still running - waiting on the child GUI.") -ForegroundColor Yellow
             try {
@@ -371,6 +403,7 @@ $result = @{
     FileSizeBytes   = $fileSizeBytes
     PeValid         = $peValid
     EarlyExit       = $earlyExit
+    UacDisabled     = $uacDisabled
 }
 $result | ConvertTo-Json -Compress | Write-Output
 
@@ -381,6 +414,10 @@ if ($timedOut) {
 if ($earlyExit) {
     Write-Host ("SUSPICIOUS: " + $toolLabel + " exited " + $duration + "s after launch (exit code " + $earlyExitCode + ") with no surviving GUI process. This is NOT counted as a completed scan.") -ForegroundColor Yellow
     Write-Host "  Likely causes: the client's own antivirus blocked the tool, a stale/corrupt staged copy, or SmartScreen interference." -ForegroundColor Yellow
+    if ($uacDisabled) {
+        Write-Host "  ** UAC IS DISABLED on this machine - KVRT/ESET commonly exit immediately for exactly this reason." -ForegroundColor Yellow
+        Write-Host "  ** Enable UAC (reg add ... EnableLUA /d 1 /f) and REBOOT, then retry." -ForegroundColor Yellow
+    }
     Write-Host "  Check Task Manager for kvrt*/kaspersky* processes and re-stage with Get-AVTools.ps1 -Force before retrying." -ForegroundColor Yellow
     exit 5
 }

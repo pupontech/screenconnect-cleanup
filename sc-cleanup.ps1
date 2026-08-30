@@ -51,7 +51,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Constants & script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.7.26'
+$ScriptVersion = '1.7.27'
 $ScriptName = 'sc-cleanup.ps1'
 $PipelineStages = @(
     @{ Id = 0; Name = 'Preflight';            SkipFlag = '' },
@@ -418,6 +418,7 @@ if (-not $uacEnabled -and -not $force) {
     Write-Host "  *** Enable it now (as administrator):" -ForegroundColor Yellow
     Write-Host '  ***   reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 1 /f' -ForegroundColor Yellow
     Write-Host "  ***   (a reboot is required for the change to fully apply)" -ForegroundColor Yellow
+    Write-Host "  ***   KVRT and ESET scanners will likely fail to launch until UAC is enabled." -ForegroundColor Yellow
     Write-Host ""
     $uacAnswer = ''
     do {
