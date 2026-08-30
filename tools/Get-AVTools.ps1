@@ -155,17 +155,23 @@ function Start-DownloadFast {
             $job = Start-BitsTransfer -Source $Url -Destination $OutFile -DisplayName ('ScreenConnect-Cleanup: ' + $Label) -Asynchronous -ErrorAction Stop
             $deadline = (Get-Date).AddMinutes(20)
             $lastPct = -1
+            $sizeUnknown = $true
             do {
                 Start-Sleep -Seconds 1
                 $job = Get-BitsTransfer -JobId $job.JobId -ErrorAction SilentlyContinue
                 if (-not $job) { break }
                 $pct = 0
-                if ($job.TotalBytes -gt 0) { $pct = [math]::Round(($job.BytesTransferred / $job.TotalBytes) * 100) }
-                if ($pct -ne $lastPct) {
-                    $lastPct = $pct
-                    $mb = [math]::Round($job.BytesTransferred / 1MB, 1)
-                    $tmb = [math]::Round($job.TotalBytes / 1MB, 1)
-                    Write-Host ("`r  " + $Label + ": " + $pct + "% (" + $mb + " / " + $tmb + " MB)   ") -NoNewline
+                if ($job.TotalBytes -gt 0) {
+                    $pct = [math]::Round(($job.BytesTransferred / $job.TotalBytes) * 100)
+                    if ($pct -ne $lastPct) {
+                        $lastPct = $pct
+                        $mb = [math]::Round($job.BytesTransferred / 1MB, 1)
+                        $tmb = [math]::Round($job.TotalBytes / 1MB, 1)
+                        Write-Host ("`r  " + $Label + ": " + $pct + "% (" + $mb + " / " + $tmb + " MB)   ") -NoNewline
+                    }
+                    $sizeUnknown = $false
+                } elseif ($sizeUnknown) {
+                    Write-Host ("`r  " + $Label + ": waiting for BITS size info...   ") -NoNewline
                 }
             } while ($job -and $job.JobState -in @('Queued', 'Connecting', 'Transferring', 'TransientError') -and (Get-Date) -lt $deadline)
             Write-Host ""
