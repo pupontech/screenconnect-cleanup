@@ -5,6 +5,18 @@ Each item says exactly what to do and what to send back. Run on a disposable
 lab VM (or a test machine) - never a production client box for the removal
 parts.
 
+## Owner status update (2026-08-30)
+
+- M0 relay-key validation: owner reports fine.
+- KVRT: owner confirms it works with UAC disabled.
+- ESET and Malwarebytes attended flows: owner reports fine.
+- Full Windows live-test matrix: owner reports fine.
+- 3010 reboot-resume: not yet confirmed.
+- GUI branch review: intentionally deferred while the owner continues GUI work.
+
+The status above is an owner field report; detailed run artifacts were not
+captured in this chat.
+
 ---
 
 ## 1. M0 - relay-key map validation (the last detection unknown)

@@ -1,4 +1,4 @@
-# Agent Handoff — ScreenConnect Cleanup Tool (2026-08-30, state at v1.7.30)
+# Agent Handoff — ScreenConnect Cleanup Tool (2026-08-30, state at v1.7.31)
 
 Handoff for a NEW agent taking over this project. Read this first, then the
 docs listed. Absolute paths, no assumptions. **PROVEN vs WRITTEN-BUT-UNVERIFIED
@@ -10,9 +10,9 @@ is distinguished throughout — trust only what the notes say was executed.**
 - Local checkout (NOTE: **path contains spaces** — always quote shell paths):
   `/root/screenconnect cleanup tool/repo/screenconnect-cleanup`
 - `gh` authenticated as **pupontech** (verified). Releases published from here.
-- Latest release: **v1.7.30** (sha256 `aba008f4…`, byte-verified, Windows CI
-  green on win-2022 + win-2025). HEAD on main: `bd319a6`.
-- Deploy bundle: `/root/screenconnect cleanup tool/repo/screenconnect-cleanup-v1.7.30.zip`
+- Latest release: **v1.7.31** (sha256 `2a3b7d48…`, byte-verified, Windows CI
+  green on win-2022 + win-2025). HEAD on main: `a9a4ced`.
+- Deploy bundle: `/root/screenconnect cleanup tool/repo/screenconnect-cleanup-v1.7.31.zip`
 
 ## What this tool is
 
@@ -40,7 +40,7 @@ Linux e2e of sc-cleanup.ps1 dies at Stage 2 (no CIM on Linux) — documented
 limitation, NOT a regression. Bundle: `bash make-deploy-bundle.sh` → reads
 `VERSION`; release convention: byte-verified zip + GitHub Release + CI.
 
-## What shipped in this session (v1.7.18 → v1.7.30, all CI green)
+## What shipped in this session (v1.7.18 → v1.7.31, all CI green)
 
 1.7.18 SPEC-review fixes (results.json stage bug; `-procmon` inversion;
 scanner-status section in report w/ `-ScannerSummary`/`-ScannersSkipped`;
@@ -63,7 +63,9 @@ hand-off check (family-name/start-time fallback). 1.7.28 BITS **async +
 poll live progress line**; 1.7.29 size-info polish (both field-confirmed
 FASTER than old IWR method in owner's VMs). 1.7.30 **scanner prompts
 [Y/n] default-YES** (KVRT "skipped when UAC disabled" was the bat's
-default-NO prompt, NOT UAC logic).
+default-NO prompt, NOT UAC logic). 1.7.31 fixed the duplicate preflight
+`-Debug` parameter; owner field confirmation also established that KVRT works
+with UAC disabled.
 
 ## Windows VM probe (scanner-launch-probe.yml — reusable diagnostic)
 
@@ -79,13 +81,13 @@ default-NO prompt, NOT UAC logic).
 
 ## Owner field items remaining (agents MUST NOT do live Windows/VM/ScreenConnect work)
 
-1. M0 relay-key map lab validation — docs/10 §1 (also answers Q2/Q3).
-2. 3010 reboot-resume lab run — docs/09 §7.2.
-3. ESET GUI + Malwarebytes winget live confirmation — docs/10 §3 (ESET
-   launch already VM-proven).
-4. Full docs/09 matrix walk (sections 1-8; 1-6+7b non-destructive, 7 lab-only).
-5. Decisions: Q7 VirusTotal policy (hash-only vs submission); GUI-revision
-   PR review/merge.
+1. 3010 reboot-resume lab run — docs/09 §7.2; still unconfirmed.
+2. Windows forensic decoder cross-check — docs/07 Q4b#4; targeted comparison
+   against known-good forensic output is recommended, but no parser rewrite is
+   currently proposed.
+3. Decision: Q7 VirusTotal policy is deferred as a future idea.
+4. GUI-revision branch PR review/merge is deferred while the owner continues
+   GUI work.
 
 ## Open / known issues to be aware of
 
@@ -119,5 +121,5 @@ lane policy, Ghost/Echo setup, weekly backups (unrelated projects).
 docs/01 brief+decisions · docs/02 architecture (flags, stages, schema) ·
 docs/05 scanners/Tron · docs/06 safety model (rules 9-10: skipped/failed
 scanners must appear in report) · docs/07 roadmap+open questions (Q1-Q7) ·
-docs/09 Windows live-test matrix (current for v1.7.25) · docs/10 field-test
-pack (owner items) · CHANGELOG.md (1.7.18-1.7.30 entries).
+docs/09 Windows live-test matrix (current for v1.7.31) · docs/10 field-test
+pack (owner items) · CHANGELOG.md (1.7.18-1.7.31 entries).

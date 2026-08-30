@@ -18,12 +18,12 @@ box" tool has value on day one.
 
 | | Milestone | Deliverable | State |
 |---|---|---|---|
-| **M0** | **Live lab validation.** Install ScreenConnect from a test cloud instance in a VM. Confirm the relay-identity extraction. Uninstall, document remnants. | Corrected key map | **PARTIAL (field, 2026-08-26):** real removal on INPIRON4SANITY2 confirmed instance identity via DisplayName + install-dir match and the no-UninstallString surgery fallback end-to-end. Relay-key extraction (Q1/Q2) still needs a test-cloud install lab run |
+| **M0** | **Live lab validation.** Install ScreenConnect from a test cloud instance in a VM. Confirm the relay-identity extraction. Uninstall, document remnants. | Corrected key map | **OWNER-CONFIRMED OK (2026-08-30):** owner reports the relay-key validation is fine. Detailed evidence is not captured in this chat. |
 | **M1** | Stages 0, 1, 8 — snapshot + report, read-only | Usable immediately, cannot hurt anything | **Built & Linux-verified** (Windows content paths still unverified — see below) |
 | **M2** | Stage 2 — ScreenConnect + RAT detection | `-sr` detect-only mode | **PoC DONE** (verified on a real machine) |
 | **M3** | Stage 8 — after-snapshot + diff | Catches resurrections | **Built & Linux-verified** |
-| **M4** | Stage 5 — scanners (KVRT/ESET/Malwarebytes) | Optional, skippable | **Built** — `Get-AVTools.ps1` stages KVRT/ESET from official URLs, `Invoke-GUIScanner.ps1` launches them attended (GUI launch-and-wait); Malwarebytes install/uninstall via winget (v1.7.3+). AdwCleaner + Defender remain removed from scope. |
-| **M5** | Stages 3, 4 — approval gate + removal + quarantine + reboot resume | **Only after heavy VM-snapshot testing** | **LIVE-VALIDATED (field, 2026-08-26):** full removal executed with ExecuteMode=true on INPIRON4SANITY2 via the manual-surgery path (quarantine + service delete + uninstall-key cleanup), manifest truthful after the UninstallFallback fix. 3010 reboot-resume path still needs a lab run |
+| **M4** | Stage 5 — scanners (KVRT/ESET/Malwarebytes) | Optional, skippable | **OWNER-CONFIRMED OK (2026-08-30):** KVRT works with UAC disabled; owner also reports the ESET and Malwarebytes attended flows are fine. The implementation remains GUI-attended with official staging/winget. AdwCleaner + Defender remain removed from scope. |
+| **M5** | Stages 3, 4 — approval gate + removal + quarantine + reboot resume | **Only after heavy VM-snapshot testing** | **LIVE-VALIDATED (field, 2026-08-26):** full removal executed with ExecuteMode=true on INPIRON4SANITY2 via the manual-surgery path (quarantine + service delete + uninstall-key cleanup), manifest truthful after the UninstallFallback fix. Owner reports the full matrix is fine; **3010 reboot-resume remains unconfirmed** |
 | **M6** | Stage 7 — targeted Procmon | Respawn investigation | **BUILT (v1.7.21)** — bounded live capture via `-procmon` (default 180s, `-ProcmonRuntime` to change; `.pml` to `logs\Procmon\`); the Stage 8 diff names the paths to focus on. Boot-logging and pre-built PMF path filters still need a GUI-set config (Q6) |
 | **M7** | Top-level `sc-cleanup.ps1` stage runner tying it together | The actual product | **Built & Linux end-to-end verified** (detect-remote-access stubbed on Linux) |
 
@@ -89,15 +89,12 @@ via winget in the AV-uninstall step. The technician drives the
 scanner UI. **Do not restore CLI adapters or invent scan/clean flags without
 fresh vendor documentation and a separate owner decision.**
 
-> **Status (2026-08-28):** KVRT/ESET downloads + attended GUI launches and the
-> Malwarebytes winget install/uninstall path are built. **KVRT attended-GUI
-> launch confirmed in the field on v1.7.19** (owner live report 2026-08-28 -
-> the 60s launch-grace probe closes the "launches to nothing" failure mode;
-> a process that dies within 60s without a surviving child is reported
-> ExitedEarly, never as a completed scan). ESET GUI and the Malwarebytes
-> winget path still need a real-box confirmation run, and MSERT is still not
-> built; AdwCleaner + Microsoft Defender remain removed from the scanner
-> line-up by owner decisions.
+> **Status (2026-08-30):** KVRT/ESET downloads + attended GUI launches and the
+> Malwarebytes winget install/uninstall path are built. KVRT is owner-confirmed
+> working with UAC disabled, and the owner reports ESET/Malwarebytes are fine.
+> The 60s launch-grace probe still prevents an early-exiting process from being
+> reported as a completed scan. MSERT is still not built; AdwCleaner + Microsoft
+> Defender remain removed from the scanner line-up by owner decisions.
 
 ### Q5 — Sysinternals download URL pattern
 Believed to be `https://download.sysinternals.com/files/<Name>.zip`. **Confirmed
@@ -138,11 +135,12 @@ It is set via the GUI Options menu. Whether a CLI equivalent exists is unconfirm
 Stage 7 (v1.7.21) does a bounded live capture (`/Runtime`); boot-logging and
 pre-built path filters would need a GUI-created PMF config.
 
-### Q7 — Client confidentiality on reputation lookups
+### Q7 — Client confidentiality on reputation lookups [DEFERRED / FUTURE IDEA]
 `sigcheck`'s VirusTotal switches upload data. Submitting a client's file hashes — let
 alone files — to a third party is a policy decision, not a technical one. Decide it
 deliberately rather than discovering it inside an adapter. Hash-only is the maximum
-defensible position; file submission should be a firm no.
+defensible position; file submission should be a firm no. **Deferred at the owner's
+direction on 2026-08-30; it is not part of the current tool scope or release gate.**
 
 ### Q8 — Repository placement long-term
 Currently loose scripts at `screenconnect-cleanup/`, matching `remote-diagnostics/`. If
@@ -152,6 +150,10 @@ now.
 ---
 
 ## Not yet built but worth considering later
+
+**VirusTotal/reputation lookup policy (Q7).** Revisit later whether the tool should
+perform hash-only reputation lookups. File submission should remain disabled unless
+the owner makes an explicit confidentiality decision.
 
 **Retrospective execution artifacts.** Prefetch, ShimCache, BAM/DAM, UserAssist,
 SRUM and (since v1.7.21) Amcache are built; they are far more valuable than live

@@ -1,4 +1,4 @@
-# Windows Live-Test Matrix (validation checklist, current for v1.7.25)
+# Windows Live-Test Matrix (validation checklist, current for v1.7.31)
 
 This document is the exact validation checklist for the ScreenConnect Cleanup
 Tool. All items run on a dedicated, disposable Windows lab VM under Windows
@@ -14,7 +14,7 @@ remediation matrix and are the priority for the current validation pass.
 
 - Windows 10/11 lab VM, Windows PowerShell 5.1
   (`powershell.exe -NoProfile -Command "$PSVersionTable.PSVersion"` -> 5.1.x)
-- Deployment bundle from the release zip (v1.7.25) or a git clone at HEAD
+- Deployment bundle from the release zip (v1.7.31) or a git clone at HEAD
 - If testing real removal: a disposable ScreenConnect installation in the lab VM
 
 ## 1. Parse + contract suites (must pass on 5.1 BEFORE any scenario)
@@ -124,10 +124,10 @@ no-NAS assertions), removal runtime contracts OK, integration OK,
     continues (log: "UAC check: enabled (confirmed after user action)"; a
     pending-reboot machine logs the "still reads disabled" warning and
     continues on your confirmation). F force-continues and logs the finding.
-    -force/-Force still bypasses the prompt entirely. NOTE: KVRT/ESET will
-    typically NOT launch with UAC disabled - expect the scanner stage's own
-    "[WARN] UAC is DISABLED" message and ExitedEarly (exit 5) if launched
-    anyway (v1.7.27 makes this explicit before launch).
+    -force/-Force still bypasses the prompt entirely. Owner field confirmation
+    (2026-08-30): KVRT launches and works with UAC disabled. The scanner still
+    emits the "[WARN] UAC is DISABLED" banner and records `UacDisabled: true`;
+    a genuine early exit remains `ExitedEarly` (exit 5).
 
 ## 5. Scanner downloads and attended GUI launches (Stage 5)
 
@@ -195,8 +195,10 @@ A real removal ran on live Windows with ExecuteMode=true (manifest 2026-08-26
   quarantine-hashes-763257a7941a63ef.csv), DeleteService Success,
   DeleteUninstallKey Success (exported to .reg first), CleanPersistence
   Skipped (no artifacts). No reboot needed.
-- KVRT attended-GUI launch confirmed in the field on v1.7.19 (2026-08-28);
-  ESET/Malwarebytes confirmation is the outstanding item (docs/10).
+- KVRT attended-GUI launch confirmed in the field on v1.7.19 (2026-08-28),
+  including owner confirmation that it works with UAC disabled on 2026-08-30;
+  owner also reports ESET/Malwarebytes are fine. The 3010 reboot-resume lab run
+  remains outstanding (docs/10).
 
 ## 6c. AV-uninstall leftover sweep (v1.7.5, owner directive 2026-08-27)
 
