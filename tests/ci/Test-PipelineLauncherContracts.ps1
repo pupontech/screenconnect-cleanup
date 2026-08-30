@@ -233,11 +233,32 @@ if ($cleanupDbg -notmatch 'UNHANDLED ERROR') {
     Add-Failure 'C7' "sc-cleanup.ps1 unhandled-error trap does not log the UNHANDLED ERROR marker."
 }
 $preflightDbg = Read-AsciiText (Join-Path $repoRoot 'preflight.ps1')
-if ($preflightDbg -notmatch '\[switch\]\$Debug') {
-    Add-Failure 'C7' "preflight.ps1 missing the -Debug switch."
+if ($preflightDbg -notmatch '\[CmdletBinding\(\)\]') {
+    Add-Failure 'C7' "preflight.ps1 must use CmdletBinding so the built-in -Debug common parameter is available."
+}
+if ($preflightDbg -match '(?m)^\s*\[switch\]\$Debug\s*,?\s*$') {
+    Add-Failure 'C7' "preflight.ps1 redeclares the built-in -Debug common parameter, causing ParameterNameAlreadyExistsForCommand."
 }
 if ($preflightDbg -notmatch 'Start-Transcript -Path \$debugLogPath') {
     Add-Failure 'C7' "preflight.ps1 -Debug does not start the console transcript (Start-Transcript debugLogPath)."
+}
+
+# --- C8: preflight invocation must bind and reach its self-test -------------
+# CmdletBinding automatically supplies the common -Debug switch. A duplicate
+# explicit declaration fails during parameter metadata construction, before any
+# UAC or self-test logic runs. Exercise the actual child invocation so this
+# contract catches that runtime-only failure rather than just checking text.
+$preflightPath = Join-Path $repoRoot 'preflight.ps1'
+$psHost = $null
+if ($PSVersionTable.PSEdition -eq 'Desktop') {
+    $psHost = Join-Path $PSHOME 'powershell.exe'
+} else {
+    $psHost = (Get-Command pwsh -ErrorAction Stop).Source
+}
+$preflightOutput = & $psHost -NoProfile -File $preflightPath -SelfTest 2>&1
+$preflightRc = $LASTEXITCODE
+if ($preflightRc -ne 0 -or ($preflightOutput -notmatch 'SELFTEST OK')) {
+    Add-Failure 'C8' ("preflight.ps1 -SelfTest did not execute successfully (exit {0}). Output: {1}" -f $preflightRc, ($preflightOutput -join ' | '))
 }
 
 if ($failures.Count -gt 0) {

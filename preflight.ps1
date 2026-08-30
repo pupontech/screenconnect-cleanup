@@ -29,8 +29,7 @@ param(
     # Override the server-OS refusal (docs/02-architecture.md flags)
     [switch]$Force,
 
-    # Full debug logger: console transcript + debug detail to <workDir>\logs\debug.log
-    [switch]$Debug,
+    # CmdletBinding supplies the common -Debug switch; do not redeclare it.
 
     # Minimum free space in GB on the system drive (default 10)
     [int]$MinFreeGB = 10,

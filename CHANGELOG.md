@@ -3,6 +3,19 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.31] - 2026-08-30
+Fixed a preflight startup failure introduced by the debug logger:
+- `preflight.ps1` uses `[CmdletBinding()]`, which already supplies PowerShell's
+  common `-Debug` parameter. Its explicit duplicate `[switch]$Debug` declaration
+  caused `ParameterNameAlreadyExistsForCommand` before any preflight or UAC
+  logic could run.
+- Removed the duplicate declaration while retaining the built-in `-Debug`
+  switch and transcript logger behavior.
+- Added a runtime preflight self-test contract so duplicate parameter metadata
+  failures are caught in CI.
+- Verified with PowerShell 7 locally; Windows PowerShell 5.1 remains covered by
+  the Windows CI matrix.
+
 ## [1.7.30] - 2026-08-28
 KVRT "skipped totally when UAC is disabled" (owner report) - root cause was
 NOT UAC: the guided runner's scanner prompts defaulted to NO.
