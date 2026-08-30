@@ -223,7 +223,7 @@ $cleanupDbg = Read-AsciiText (Join-Path $repoRoot 'sc-cleanup.ps1')
 if ($cleanupDbg -notmatch '\\[switch\\]\\$Debug') {
     Add-Failure 'C7' "sc-cleanup.ps1 missing the -Debug switch."
 }
-if ($cleanupDbg -notmatch 'Start-Transcript -Path \\$DebugLogPath') {
+if ($cleanupDbg -notmatch 'Start-Transcript -Path \$DebugLogPath') {
     Add-Failure 'C7' "sc-cleanup.ps1 -Debug does not start the console transcript (Start-Transcript DebugLogPath)."
 }
 if ($cleanupDbg -notmatch 'trap \\{') {
@@ -236,7 +236,7 @@ $preflightDbg = Read-AsciiText (Join-Path $repoRoot 'preflight.ps1')
 if ($preflightDbg -notmatch '\\[switch\\]\\$Debug') {
     Add-Failure 'C7' "preflight.ps1 missing the -Debug switch."
 }
-if ($preflightDbg -notmatch 'Start-Transcript -Path \\$debugLogPath') {
+if ($preflightDbg -notmatch 'Start-Transcript -Path \$debugLogPath') {
     Add-Failure 'C7' "preflight.ps1 -Debug does not start the console transcript (Start-Transcript debugLogPath)."
 }
 
