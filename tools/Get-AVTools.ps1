@@ -52,6 +52,12 @@ param(
     [switch]$Quiet
 )
 
+# The rendered progress bar is THE classic PowerShell large-download
+# slowdown: Invoke-WebRequest redraws it per buffer and can halve or worse
+# the throughput of a 100MB+ file on PS 5.1. Kill it script-wide; BITS and
+# the fallback both report nothing either way (v1.7.25).
+$ProgressPreference = 'SilentlyContinue'
+
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 if (-not $ToolDir) {
@@ -130,6 +136,31 @@ if ($Verify) {
     exit 0
 }
 
+function Start-DownloadFast {
+    # Download helper for the big scanner files (KVRT is ~114 MB):
+    # 1. BITS (Start-BitsTransfer, every Windows 10/11) - the OS transfer
+    #    engine. Far faster than Invoke-WebRequest for 100MB+ files and
+    #    network-aware. If it fails (403/UA rejection, BITS disabled by
+    #    policy, service stopped) fall through to Invoke-WebRequest.
+    # 2. Invoke-WebRequest with the browser-like UA and the progress bar
+    #    suppressed (see $ProgressPreference above). Also the path used by
+    #    pwsh on Linux, which keeps CI functional tests meaningful.
+    param([string]$Url, [string]$Dest, [string]$Label)
+    $bits = Get-Command Start-BitsTransfer -ErrorAction SilentlyContinue
+    if ($bits -and $env:OS -eq 'Windows_NT') {
+        try {
+            Say ("  (BITS) " + $Label) 'DarkGray'
+            Start-BitsTransfer -Source $Url -Destination $Dest -DisplayName ('ScreenConnect-Cleanup: ' + $Label) -ErrorAction Stop
+            return
+        } catch {
+            Say ("  BITS failed (" + $_.Exception.Message + ") - falling back to Invoke-WebRequest.") 'Yellow'
+            Remove-Item -LiteralPath $Dest -Force -ErrorAction SilentlyContinue
+        }
+    }
+    $headers = @{ 'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36' }
+    Invoke-WebRequest -Uri $Url -OutFile $Dest -UseBasicParsing -Headers $headers -TimeoutSec 900 -ErrorAction Stop
+}
+
 function Get-DownloadFile {
     # Download to <name>.part and swap it into place ONLY after the size
     # sanity check passes. An interrupted/partial download can therefore
@@ -144,11 +175,7 @@ function Get-DownloadFile {
     $part = $Dest + '.part'
     Say ("Downloading " + $Label + "...")
     try {
-        # Browser-like User-Agent: vendor CDNs (Kaspersky in particular)
-        # 403 the default PowerShell client UA on some egress IPs. This was
-        # observed live on GitHub Windows runners (v1.7.23).
-        $headers = @{ 'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36' }
-        Invoke-WebRequest -Uri $Url -OutFile $part -UseBasicParsing -Headers $headers -ErrorAction Stop
+        Start-DownloadFast -Url $Url -Dest $part -Label $Label
         try {
             $item = Get-Item -LiteralPath $part -ErrorAction Stop
             $ver = $item.VersionInfo.FileVersion

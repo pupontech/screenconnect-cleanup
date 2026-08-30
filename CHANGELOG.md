@@ -3,6 +3,22 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.25] - 2026-08-28
+Scanner downloads sped up (KVRT is ~114 MB):
+- **BITS first.** `Get-AVTools.ps1` now downloads through `Start-BitsTransfer`
+  (the OS transfer engine - markedly faster than Invoke-WebRequest for
+  100MB+ files) whenever BITS is available on Windows, with an automatic
+  fallback to Invoke-WebRequest if BITS fails (403/UA rejection, BITS
+  disabled by policy, service stopped).
+- **Progress bar suppressed.** `$ProgressPreference = 'SilentlyContinue'` -
+  IWR's rendered progress bar is a notorious large-download slowdown in
+  PS 5.1 (can halve or worse the throughput of a 100MB+ file).
+- Both CDNs verified to support HTTP ranges (206) - parallel chunking is a
+  documented future option if BITS is ever unavailable on a field network.
+- Verified: full live download of KVRT + ESET through the new path on Linux
+  (BITS absent -> IWR fallback): 122 MB total, PE-validated, staged; parse/
+  ASCII clean; contract suites green.
+
 ## [1.7.24] - 2026-08-28
 Owner directives: winget agreements accepted by default; preflight always
 runs; UAC-disabled becomes prompt-and-wait instead of a hard abort.
