@@ -100,8 +100,10 @@ fresh vendor documentation and a separate owner decision.**
 > line-up by owner decisions.
 
 ### Q5 — Sysinternals download URL pattern
-Believed to be `https://download.sysinternals.com/files/<Name>.zip`. Unconfirmed. Never
-use a third-party mirror.
+Believed to be `https://download.sysinternals.com/files/<Name>.zip`. **Confirmed
+2026-08-28:** all four URLs used by `Get-ToolPack.ps1` verified live (HTTP 200)
+- `Autoruns.zip`, `Sigcheck.zip`, `ProcessMonitor.zip`, `TCPView.zip`. Never use
+a third-party mirror.
 
 ### Q4b — Integration review findings (2026-08-23)
 From the independent module review (t_f2f5e295), carried to the integration pass:
