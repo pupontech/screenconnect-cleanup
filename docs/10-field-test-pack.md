@@ -89,7 +89,8 @@ Run docs/09-windows-live-test-matrix.md sections 1-8 in order on a lab VM
 (sections 1-6 + 7b are non-destructive; section 7 is destructive - dedicated
 lab VM only).
 with Windows PowerShell 5.1. The release gate summary (section 8) is the
-acceptance criterion. The highest-value items for THIS release (v1.7.21):
+acceptance criterion. The highest-value items for the current release
+(v1.7.25; NEW items marked):
 
 - Section 3.1: clean read-only run `-sr` exits 0
 - Section 5.2/5.3/5.4: the three scanners (KVRT/ESET/Malwarebytes)
@@ -101,6 +102,11 @@ acceptance criterion. The highest-value items for THIS release (v1.7.21):
 - NEW (v1.7.21): Amcache - after any snapshot, confirm snapshot JSON has an
   Amcache section (files + applications) and diff-snapshots.ps1 reports it
   as a stable section
+- NEW (v1.7.19): ExitedEarly - a scanner that dies at launch reports exit 5
+  and never Completed (Section 3.6)
+- NEW (v1.7.24): UAC-disabled prompt-and-wait (Section 4.5)
+- NEW (v1.7.25): BITS download speed - Step 1 should show "(BITS) KVRT.exe"
+  and stage ~114 MB in seconds-to-a-minute (Section 5.1)
 
 ## What to send back after any of these
 
