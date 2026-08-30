@@ -137,7 +137,10 @@ no-NAS assertions), removal runtime contracts OK, integration OK,
     `(BITS) KVRT.exe` and `(BITS) esetonlinescanner.exe` (BITS engine, v1.7.25;
     a machine with BITS disabled falls back to Invoke-WebRequest - both are
     fast - no progress bar is rendered). KVRT (~114 MB) should stage in
-    seconds-to-a-minute on a normal link, not many minutes.
+    seconds-to-a-minute on a normal link, not many minutes. **FIELD-CONFIRMED
+    2026-08-28 on VMs: the BITS + polling-progress path (v1.7.28+) is faster
+    than the old Invoke-WebRequest progress-bar download** - the live
+    `KVRT.exe: 47% (53.7 / 114.1 MB)` line updates in place while it runs.
     - NO NAS/share fallback exists (v1.7.22): there is no InternalShare
       parameter and nothing ever copies from a network share.
     - A failed download prints `FAILED to stage: <tools>` and exits 1 (v1.7.23) -
