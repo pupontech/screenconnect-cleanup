@@ -220,20 +220,20 @@ if ($snap -notmatch '\[snapshot " \+ \$Label') {
 # debugging is one file; an unhandled error must be named with its source
 # location and exit truthfully (never a silent death).
 $cleanupDbg = Read-AsciiText (Join-Path $repoRoot 'sc-cleanup.ps1')
-if ($cleanupDbg -notmatch '\\[switch\\]\\$Debug') {
+if ($cleanupDbg -notmatch '\[switch\]\$Debug') {
     Add-Failure 'C7' "sc-cleanup.ps1 missing the -Debug switch."
 }
 if ($cleanupDbg -notmatch 'Start-Transcript -Path \$DebugLogPath') {
     Add-Failure 'C7' "sc-cleanup.ps1 -Debug does not start the console transcript (Start-Transcript DebugLogPath)."
 }
-if ($cleanupDbg -notmatch 'trap \\{') {
+if ($cleanupDbg -notmatch 'trap \{') {
     Add-Failure 'C7' "sc-cleanup.ps1 missing the unhandled-error trap that names the failure with source location."
 }
 if ($cleanupDbg -notmatch 'UNHANDLED ERROR') {
     Add-Failure 'C7' "sc-cleanup.ps1 unhandled-error trap does not log the UNHANDLED ERROR marker."
 }
 $preflightDbg = Read-AsciiText (Join-Path $repoRoot 'preflight.ps1')
-if ($preflightDbg -notmatch '\\[switch\\]\\$Debug') {
+if ($preflightDbg -notmatch '\[switch\]\$Debug') {
     Add-Failure 'C7' "preflight.ps1 missing the -Debug switch."
 }
 if ($preflightDbg -notmatch 'Start-Transcript -Path \$debugLogPath') {
