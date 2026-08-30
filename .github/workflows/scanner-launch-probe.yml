@@ -7,6 +7,14 @@ name: scanner-launch-probe
 # is exactly the failure signal from the field ("KVRT did not run").
 # Also proves the v1.7.22 NAS-free staging path end-to-end (fresh official
 # downloads only).
+#
+# KNOWN (2026-08-30): Kaspersky's CDN (devbuilds.s.kaspersky-labs.com)
+# progressively 403s GitHub runner egress IPs - the KVRT leg SKIPs on many
+# runs with "FAILED to stage" from the staging step. That is vendor-side IP
+# blocking, not a tool bug (the tool reports it truthfully since v1.7.23).
+# Positive KVRT launch evidence was captured 2026-08-30 on windows-2022
+# (run 33303050262 + 33303382458): parent exits ~7s, child process alive at
+# the cap. ESET stages and launches reliably on both OSes.
 
 on:
   workflow_dispatch:
