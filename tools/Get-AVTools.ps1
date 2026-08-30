@@ -145,20 +145,22 @@ function Start-DownloadFast {
     # 2. Invoke-WebRequest with the browser-like UA and the progress bar
     #    suppressed (see $ProgressPreference above). Also the path used by
     #    pwsh on Linux, which keeps CI functional tests meaningful.
-    param([string]$Url, [string]$Dest, [string]$Label)
+    param([string]$Url, [string]$OutFile, [string]$Label)
     $bits = Get-Command Start-BitsTransfer -ErrorAction SilentlyContinue
     if ($bits -and $env:OS -eq 'Windows_NT') {
         try {
             Say ("  (BITS) " + $Label) 'DarkGray'
-            Start-BitsTransfer -Source $Url -Destination $Dest -DisplayName ('ScreenConnect-Cleanup: ' + $Label) -ErrorAction Stop
+            Start-BitsTransfer -Source $Url -Destination $OutFile -DisplayName ('ScreenConnect-Cleanup: ' + $Label) -ErrorAction Stop
             return
         } catch {
             Say ("  BITS failed (" + $_.Exception.Message + ") - falling back to Invoke-WebRequest.") 'Yellow'
-            Remove-Item -LiteralPath $Dest -Force -ErrorAction SilentlyContinue
+            # Remove only the partial transfer target (the .part staging file),
+            # never the final staged tool - the anti-clobber contract stands.
+            Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
         }
     }
     $headers = @{ 'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36' }
-    Invoke-WebRequest -Uri $Url -OutFile $Dest -UseBasicParsing -Headers $headers -TimeoutSec 900 -ErrorAction Stop
+    Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -Headers $headers -TimeoutSec 900 -ErrorAction Stop
 }
 
 function Get-DownloadFile {
@@ -175,7 +177,7 @@ function Get-DownloadFile {
     $part = $Dest + '.part'
     Say ("Downloading " + $Label + "...")
     try {
-        Start-DownloadFast -Url $Url -Dest $part -Label $Label
+        Start-DownloadFast -Url $Url -OutFile $part -Label $Label
         try {
             $item = Get-Item -LiteralPath $part -ErrorAction Stop
             $ver = $item.VersionInfo.FileVersion
