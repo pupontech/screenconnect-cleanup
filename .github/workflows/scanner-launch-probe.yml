@@ -1,0 +1,66 @@
+name: scanner-launch-probe
+
+# Diagnostic: do KVRT / ESET Online Scanner actually LAUNCH and stay alive on
+# real Windows? Runs on elevated GitHub Windows VMs (the only Windows hosts
+# reachable from here) - no interactive desktop, so 'GUI visible' cannot be
+# asserted, but 'process started and survived the 60s launch-grace window'
+# is exactly the failure signal from the field ("KVRT did not run").
+# Also proves the v1.7.22 NAS-free staging path end-to-end (fresh official
+# downloads only).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/Get-AVTools.ps1'
+      - 'Invoke-GUIScanner.ps1'
+      - '.github/workflows/scanner-launch-probe.yml'
+
+jobs:
+  launch-probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Stage KVRT + ESET fresh from official URLs (NAS-free)
+        shell: powershell
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tools/Get-AVTools.ps1 -ToolDir "$env:RUNNER_TEMP\tools\AV" -Force
+          Get-ChildItem "$env:RUNNER_TEMP\tools\AV" | Select-Object Name, Length
+
+      - name: Probe KVRT launch (elevated runner context)
+        shell: powershell
+        run: |
+          $kvrt = "$env:RUNNER_TEMP\tools\AV\KVRT.exe"
+          if (-not (Test-Path -LiteralPath $kvrt)) { Write-Error "KVRT.exe was not staged"; exit 1 }
+          $out = powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./Invoke-GUIScanner.ps1 -Scanner KVRT -ToolPath $kvrt -TimeoutMinutes 1 2>&1
+          $rc = $LASTEXITCODE
+          $out
+          Write-Host "KVRT_PROBE_RC=$rc"
+          Write-Host "KVRT processes after probe:"
+          Get-Process | Where-Object { $_.ProcessName -match 'kvrt|kasper' } | Select-Object ProcessName, Id | Format-Table -AutoSize | Out-String | Write-Host
+          if ($rc -eq 5) { Write-Error "KVRT exited early (ExitedEarly) - launch failed on this Windows host"; exit 1 }
+          if ($rc -eq 2 -or $rc -eq 3) { Write-Error "KVRT launch failed rc=$rc"; exit 1 }
+          Write-Host "KVRT launch probe OK: process launched and stayed alive (rc=$rc)"
+
+      - name: Probe ESET Online Scanner launch (elevated runner context)
+        shell: powershell
+        run: |
+          $eos = "$env:RUNNER_TEMP\tools\AV\esetonlinescanner.exe"
+          if (-not (Test-Path -LiteralPath $eos)) { Write-Error "esetonlinescanner.exe was not staged"; exit 1 }
+          $out = powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./Invoke-GUIScanner.ps1 -Scanner ESET -ToolPath $eos -TimeoutMinutes 1 2>&1
+          $rc = $LASTEXITCODE
+          $out
+          Write-Host "ESET_PROBE_RC=$rc"
+          Write-Host "ESET processes after probe:"
+          Get-Process | Where-Object { $_.ProcessName -match 'eos|eset' } | Select-Object ProcessName, Id | Format-Table -AutoSize | Out-String | Write-Host
+          if ($rc -eq 5) { Write-Error "ESET exited early (ExitedEarly) - launch failed on this Windows host"; exit 1 }
+          if ($rc -eq 2 -or $rc -eq 3) { Write-Error "ESET launch failed rc=$rc"; exit 1 }
+          Write-Host "ESET launch probe OK: process launched and stayed alive (rc=$rc)"
