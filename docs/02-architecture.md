@@ -86,6 +86,8 @@ remove-screenconnect.ps1 via a RunOnce key, not by the orchestrator.
 -IncidentDate <date>   incident window anchor (defaults to today; never prompted)
 -force        override the server-OS refusal
 -ExecuteRemoval  TEST MODE: pre-authorize removal (lab/VM only, no typed confirmation)
+-Debug        full debug logger: console transcript + debug detail to
+              <WorkDir>\logs\debug.log (send this file back when reporting a field issue)
 ```
 
 `-sr` matters more than it looks: **detect-only is the mode you can hand any technician

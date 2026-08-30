@@ -29,6 +29,9 @@ param(
     # Override the server-OS refusal (docs/02-architecture.md flags)
     [switch]$Force,
 
+    # Full debug logger: console transcript + debug detail to <workDir>\logs\debug.log
+    [switch]$Debug,
+
     # Minimum free space in GB on the system drive (default 10)
     [int]$MinFreeGB = 10,
 
@@ -418,6 +421,28 @@ Write-Stage ("Master log:        {0}" -f $masterLog)
 # ---    owner directive 2026-08-27: no prompts, no tags, just run + log) ---
 "OS:         $osCaption"                  | Out-File $masterLog -Append -Encoding ascii
 
+# --- 5b. Debug logger (v1.7.26): -Debug captures a full console transcript ---
+$debugLogPath = $null
+if ($Debug) {
+    $debugLogPath = Join-Path $workDir 'logs\debug.log'
+    try {
+        Start-Transcript -Path $debugLogPath -Force -ErrorAction Stop | Out-Null
+        Write-Stage ("DEBUG LOGGER ACTIVE - transcript: " + $debugLogPath)
+        Write-Stage ("preflight.ps1 flags: np=" + $np + " Force=" + $Force + " MinFreeGB=" + $MinFreeGB + " WorkingRoot=" + $WorkingRoot)
+    } catch {
+        Write-StageWarn ("Could not start debug transcript: " + $_.Exception.Message)
+        $debugLogPath = $null
+    }
+    trap {
+        Write-StageFail ("UNHANDLED ERROR: " + $_.Exception.Message + " | " + $_.InvocationInfo.PositionMessage)
+        if ($debugLogPath) {
+            try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch { }
+            Write-Host ("Debug log: " + $debugLogPath) -ForegroundColor Yellow
+        }
+        exit 1
+    }
+}
+
 # --- 6. Restore point + hive export (optional) ---
 $skipRestore = $np -or $SkipRestore
 if ($skipRestore) {
@@ -459,9 +484,13 @@ if (Test-ToolPack -ScriptPath $toolPackScript) {
 }
 
 # --- Result ---
+if ($debugLogPath) {
+    try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch { }
+}
 Write-Host ''
 if ($script:PreflightOk) {
     Write-Host 'PREFLIGHT COMPLETE.' -ForegroundColor Green
+    if ($debugLogPath) { Write-Host ("Debug log: " + $debugLogPath) -ForegroundColor Yellow }
     "PREFLIGHT COMPLETE $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File $masterLog -Append -Encoding ascii
     # Machine-readable handoff for the orchestrator (stdout JSON on one line).
     # Technician/client/incident tags removed per owner directive 2026-08-27.

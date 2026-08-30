@@ -40,7 +40,9 @@ param(
 
     # Debug / development
     [switch]$WhatIf,         # show what would run, execute nothing
-    [switch]$VerboseLog      # verbose stage logging
+    [switch]$VerboseLog,     # verbose stage logging
+    [switch]$Debug           # full debug logger: console transcript + debug
+                             # detail to <WorkDir>\logs\debug.log (v1.7.26)
 )
 
 Set-StrictMode -Version 2.0
@@ -49,7 +51,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Constants & script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.7.25'
+$ScriptVersion = '1.7.26'
 $ScriptName = 'sc-cleanup.ps1'
 $PipelineStages = @(
     @{ Id = 0; Name = 'Preflight';            SkipFlag = '' },
@@ -79,6 +81,13 @@ function Write-StageLog {
             Add-Content -Path $MasterLogPath -Value $line -Encoding UTF8
         }
     }
+}
+
+function Write-Dbg {
+    # Debug-only detail: always shown on the console (and therefore captured
+    # by the -Debug transcript), written to master.log only with -VerboseLog.
+    param([string]$Message)
+    if ($Debug) { Write-StageLog $Message 'Debug' }
 }
 
 function Write-Section {
@@ -216,6 +225,7 @@ function Invoke-ChildScript {
     $stderr = $stderrTask.Result
     $proc.WaitForExit()
     $exitCode = $proc.ExitCode
+    Write-Dbg ($LogTag + " child exit code: " + $exitCode)
 
     if ($stdout) {
         foreach ($line in ($stdout -split "`n")) {
@@ -278,6 +288,7 @@ function Invoke-Stage {
         } else {
             Write-StageLog ("Stage " + $StageId + " completed in " + $duration + "s")
         }
+        Write-Dbg ("Stage " + $StageId + " result: Error=" + $stageError + " WhatIf=" + ($WhatIf -eq $true) + " duration=" + $duration + "s")
     }
 
     return @{ Skipped = $false; Result = $stageResult; Duration = $duration; Error = $stageError }
@@ -342,6 +353,36 @@ Add-Content -Path $MasterLogPath -Value "Started: $((Get-Date).ToString('yyyy-MM
 Add-Content -Path $MasterLogPath -Value "Host: $hostName  OS: $osCaption  PS: $psVersion  Admin: $isAdmin  Server: $isServer" -Encoding UTF8
 Add-Content -Path $MasterLogPath -Value "Flags: sa=$sa sr=$sr np=$np offline=$offline procmon=$procmon force=$force ExecuteRemoval=$ExecuteRemoval" -Encoding UTF8
 Add-Content -Path $MasterLogPath -Value "IncidentDate: $IncidentDate" -Encoding UTF8
+
+# --- Debug logger (v1.7.26): -Debug captures a full console transcript ---
+# plus debug-level stage detail into one file for field debugging. Always
+# on only when asked; the transcript catches EVERYTHING the console shows,
+# including child-script output, so a tech can send back one file.
+$DebugLogPath = $null
+if ($Debug) {
+    $debugLogDir = Join-Path $WorkDir 'logs'
+    $null = New-Item -ItemType Directory -Path $debugLogDir -Force
+    $DebugLogPath = Join-Path $debugLogDir 'debug.log'
+    try {
+        Start-Transcript -Path $DebugLogPath -Force -ErrorAction Stop | Out-Null
+        $DebugPreference = 'Continue'
+        Write-StageLog ("DEBUG LOGGER ACTIVE - transcript: " + $DebugLogPath) 'Debug'
+        Write-Dbg ("sc-cleanup.ps1 v" + $ScriptVersion + " flags: sa=" + $sa + " sr=" + $sr + " avu=" + $avu + " np=" + $np + " offline=" + $offline + " procmon=" + $procmon + " force=" + $force + " ExecuteRemoval=" + $ExecuteRemoval + " IncidentDate=" + $IncidentDate + " OutRoot=" + $OutRoot + " ToolDir=" + $ToolDir)
+    } catch {
+        Write-StageLog ("Could not start debug transcript: " + $_.Exception.Message) 'Warn'
+        $DebugLogPath = $null
+    }
+    trap {
+        # Unhandled terminating error: name it with source location, close the
+        # transcript and exit truthfully instead of dying silently.
+        Write-StageLog ("UNHANDLED ERROR: " + $_.Exception.Message + " | " + $_.InvocationInfo.PositionMessage) 'Error'
+        if ($DebugLogPath) {
+            try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch { }
+            Write-Host ("Debug log: " + $DebugLogPath) -ForegroundColor Yellow
+        }
+        exit 1
+    }
+}
 
 # Resolve tool directory
 if (-not $ToolDir) {
@@ -1129,6 +1170,10 @@ if ($reportHtml) {
 }
 if ($resultsJson) {
     Write-Host ("Results (JSON):   " + $resultsJson)
+}
+if ($DebugLogPath) {
+    try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch { }
+    Write-Host ("Debug log:        " + $DebugLogPath)
 }
 Write-Host "======================================================================" -ForegroundColor Green
 

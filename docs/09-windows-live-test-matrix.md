@@ -96,6 +96,14 @@ no-NAS assertions), removal runtime contracts OK, integration OK,
     entry and the snapshot still completes. `diff-snapshots.ps1` treats Amcache
     as a stable section.
 
+**[NEW v1.7.26]**
+3.9 Debug logger: run `sc-cleanup.ps1 -Debug -sr ...` (and `preflight.ps1
+    -Debug`). Expected: "DEBUG LOGGER ACTIVE - transcript: ..." on the
+    console, `<WorkDir>\logs\debug.log` written containing EVERYTHING the
+    console showed (including child-script output) plus per-stage result
+    lines with timing, and the final summary prints "Debug log: <path>".
+    This file is what to send back when a field issue needs debugging.
+
 ## 4. Batch launchers (START-HERE.bat, RUN-REMOVAL-TEST.bat, Run-DetectRemoteAccess.bat)
 
 4.1 Apostrophe path: copy the tool tree to `C:\temp\it's the cleanup\` and launch

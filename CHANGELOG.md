@@ -3,6 +3,25 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.26] - 2026-08-28
+Debug logger added (owner request: "add in a logger to help with debugging"):
+- **`-Debug` on `sc-cleanup.ps1` and `preflight.ps1`** starts a full console
+  transcript to `<WorkDir>\logs\debug.log` - EVERYTHING the console shows is
+  captured, including child-script output, so a field issue can be debugged
+  from one file (send that file back instead of pasting console text).
+- Debug-level detail is emitted at the natural choke points: per-stage
+  entry/result with timing, child-script exit codes, and the invocation
+  flags at startup (`Write-Dbg`; console + transcript always, master.log
+  only with -VerboseLog).
+- Unhandled errors are named: a `trap` logs `UNHANDLED ERROR: <message> |
+  <source location>` (position info), closes the transcript, prints the
+  debug-log path and exits 1 - no more silent deaths in the field.
+- CI: pipeline-launcher contracts gain C7 (debug switch, transcript, trap
+  markers present in both scripts).
+- Verified: parse/ASCII clean; full suite green; -Debug functional run on
+  Linux (WhatIf path) produced the transcript with stage/child debug lines
+  and the final "Debug log:" line.
+
 ## [1.7.25] - 2026-08-28
 Scanner downloads sped up (KVRT is ~114 MB):
 - **BITS first.** `Get-AVTools.ps1` now downloads through `Start-BitsTransfer`
