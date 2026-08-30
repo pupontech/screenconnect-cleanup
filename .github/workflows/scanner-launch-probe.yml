@@ -49,6 +49,7 @@ jobs:
           if ($rc -eq 5) { Write-Error "KVRT exited early (ExitedEarly) - launch failed on this Windows host"; exit 1 }
           if ($rc -eq 2 -or $rc -eq 3) { Write-Error "KVRT launch failed rc=$rc"; exit 1 }
           Write-Host "KVRT launch probe OK: process launched and stayed alive (rc=$rc)"
+          exit 0
 
       - name: Probe ESET Online Scanner launch (elevated runner context)
         shell: powershell
@@ -64,3 +65,4 @@ jobs:
           if ($rc -eq 5) { Write-Error "ESET exited early (ExitedEarly) - launch failed on this Windows host"; exit 1 }
           if ($rc -eq 2 -or $rc -eq 3) { Write-Error "ESET launch failed rc=$rc"; exit 1 }
           Write-Host "ESET launch probe OK: process launched and stayed alive (rc=$rc)"
+          exit 0
