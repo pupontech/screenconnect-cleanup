@@ -3,6 +3,24 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.22] - 2026-08-28
+NAS/internal-share fallback removed from scanner staging (owner directive:
+"remove all logic for nas just do fresh downloads ... keep it clean"):
+- `tools/Get-AVTools.ps1` no longer has the `-InternalShare` parameter or the
+  copy-from-`\\10.0.0.5\Public\Tools` fallback block. Staging is exclusively
+  from the official vendor URLs (Kaspersky for KVRT, ESET for the Online
+  Scanner); a failed download is a loud FAILED and the next run fetches fresh.
+  The fallback could copy stale/corrupt copies from the share and masked the
+  real download state - that whole class of field issue is gone.
+- The skip-existing logic (valid copy already staged -> skip the ~150 MB
+  re-fetch; -Force to refresh) is UNCHANGED - it is the v1.7.14 anti-re-
+  download-loop behavior, not NAS logic.
+- CI: Test-ScannerProcessContracts now asserts the script contains no
+  internal-share path and no InternalShare parameter, so the fallback cannot
+  silently return.
+- Verified: parse/ASCII clean; scanner contract suite passes; no NAS
+  references remain in the script.
+
 ## [1.7.21] - 2026-08-28
 Two remaining builds landed (roadmap items M6 + Q4b#2):
 - **M6 - Procmon stage is now real.** `sc-cleanup.ps1 -procmon` runs a bounded

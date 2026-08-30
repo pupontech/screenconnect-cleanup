@@ -7,8 +7,8 @@
   Contracts checked:
     1. Get-AVTools.ps1 stages KVRT.exe + esetonlinescanner.exe and does NOT
        stage MBSetup.exe; Malwarebytes is documented as winget-installed.
-    2. Get-AVTools.ps1 uses official vendor download URLs, not stale shares as
-       the primary source.
+    2. Get-AVTools.ps1 uses official vendor download URLs as the ONLY source -
+       no internal-share/NAS fallback (removed v1.7.22).
     3. Invoke-GUIScanner.ps1 accepts KVRT, ESET and Malwarebytes; KVRT/ESET
        are staged EXEs, Malwarebytes runs winget install (no MBSetup mapping)
        and then launches the installed Malwarebytes GUI (mbam.exe).
@@ -55,6 +55,8 @@ else {
     if ($text -notmatch 'CORRUPT \(under 1 MB') { Add-Failure 'Get-AVTools.ps1 -Verify does not flag under-1-MB copies as corrupt.' }
     if ($text -notmatch 'function Test-PeExecutable') { Add-Failure 'Get-AVTools.ps1 missing the PE-header validity check (Test-PeExecutable) - a broken-but-big download would be skipped as "already present".' }
     if ($text -notmatch 'not a valid executable') { Add-Failure 'Get-AVTools.ps1 does not report corrupt PE files as such (not a valid executable).' }
+    if ($text -match '10\\.0\\.0\\.5') { Add-Failure 'Get-AVTools.ps1 still contains the internal-share/NAS path - the fallback was removed in v1.7.22 (official URLs only).' }
+    if ($text -match 'InternalShare') { Add-Failure 'Get-AVTools.ps1 still defines an InternalShare parameter - the NAS fallback was removed in v1.7.22.' }
     if ($text -notmatch '\$part = \$Dest \+ ''\.part''') { Add-Failure 'Get-AVTools.ps1 does not download to a .part staging file (atomic swap needed so a partial download cannot poison the staged exe).' }
     if ($text -notmatch 'Move-Item -LiteralPath \$part -Destination \$Dest') { Add-Failure 'Get-AVTools.ps1 does not atomically swap the .part file into place after the size check.' }
     if ($text -match 'Remove-Item -LiteralPath \$Dest') { Add-Failure 'Get-AVTools.ps1 deletes the destination BEFORE the download - a failed fetch leaves nothing staged (must keep the old file until a verified replacement exists).' }

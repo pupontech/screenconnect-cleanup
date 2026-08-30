@@ -32,17 +32,18 @@
     Get-AVTools.ps1 -ToolDir .\tools\AV -Force     # re-download even if present
 
   Download policy: a tool already staged as a valid copy (at least 1 MB - the
-  v1.7.8 sanity threshold that rejects HTML error pages / partial downloads)
-  is KEPT and skipped; only missing or corrupt/partial copies are downloaded.
-  -Force bypasses the skip. This stops Step 1 from re-fetching ~150 MB of
-  scanners every run when they are already on disk.
+  v1.7.8 sanity threshold that rejects HTML error pages / partial downloads,
+  plus the v1.7.17 PE-header check) is KEPT and skipped; only missing or
+  corrupt/partial copies are downloaded. -Force bypasses the skip. This stops
+  Step 1 from re-fetching ~150 MB of scanners every run when they are already
+  on disk. There is NO internal-share/NAS fallback (removed v1.7.22): every
+  download comes fresh from the official vendor URLs above.
 
   PS 5.1 compatible. Pure ASCII, no BOM.
 #>
 
 param(
     [string]$ToolDir,
-    [string]$InternalShare = '\\10.0.0.5\Public\Tools',
     [switch]$Verify,
     [switch]$Force,
     [switch]$Quiet
@@ -205,27 +206,10 @@ $null = Ensure-Tool -Url 'https://download.eset.com/com/eset/tools/online_scanne
 # Owner directive 2026-08-27: replace the MBSetup.exe download + GUI launch
 # with winget for both install and uninstall.
 
-# --- Optional offline fallback: copy from an internal share if reachable --
-# Never overwrites a file that was just downloaded from the official URL.
-if ($InternalShare -and (Test-Path -LiteralPath $InternalShare)) {
-    foreach ($pair in @(
-        @('AV\KVRT.exe', $kvrtPath, 'KVRT'),
-        @('AV\esetonlinescanner.exe', $eosPath, 'ESET Online Scanner')
-    )) {
-        $src = Join-Path $InternalShare $pair[0]
-        if (-not (Test-Path -LiteralPath $src)) { continue }
-        if (Test-Path -LiteralPath $pair[1]) {
-            Say ("  (share) skipping " + $pair[2] + " - official download already staged.") 'DarkGray'
-            continue
-        }
-        try {
-            Copy-Item -LiteralPath $src -Destination $pair[1] -Force -ErrorAction Stop
-            Say ("  OK (share): " + $pair[1]) 'Green'
-        } catch {
-            Say ("  FAILED to copy " + $pair[2] + ": " + $_.Exception.Message) 'Yellow'
-        }
-    }
-}
+# NOTE (v1.7.22): there is NO internal-share/NAS fallback. Tools are staged
+# exclusively from the official vendor URLs above; a failed download is a
+# loud FAILED and the next run fetches fresh. The old internal-share copy
+# path was removed - it staged stale/corrupt copies and caused field issues.
 
 Say ''
 Say ('Done. GUI scanners staged in ' + $ToolDir + ':') 'Cyan'

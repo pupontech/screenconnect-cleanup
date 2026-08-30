@@ -49,7 +49,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Constants & script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.7.21'
+$ScriptVersion = '1.7.22'
 $ScriptName = 'sc-cleanup.ps1'
 $PipelineStages = @(
     @{ Id = 0; Name = 'Preflight';            SkipFlag = '' },
