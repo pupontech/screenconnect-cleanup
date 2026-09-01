@@ -3,6 +3,12 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.34] - 2026-09-01
+- Fixed a normal preflight startup failure under `Set-StrictMode`: the
+  built-in `-Debug` common parameter is now read from `$PSBoundParameters`
+  instead of an unbound `$Debug` variable. Added a safe runtime regression
+  probe covering preflight without `-Debug`.
+
 ## [1.7.33] - 2026-09-01
 - Shortened the guided runner's command-prompt banners and repeated policy text
   while preserving decision prompts, destructive warnings, filter-block alerts,

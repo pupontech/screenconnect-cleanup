@@ -423,7 +423,9 @@ Write-Stage ("Master log:        {0}" -f $masterLog)
 
 # --- 5b. Debug logger (v1.7.26): -Debug captures a full console transcript ---
 $debugLogPath = $null
-if ($Debug) {
+# The common -Debug switch is not materialized as a `$Debug` variable when
+# omitted; use the bound-parameter table so StrictMode-safe normal runs work.
+if ($PSBoundParameters.ContainsKey('Debug') -and [bool]$PSBoundParameters['Debug']) {
     $debugLogPath = Join-Path $workDir 'logs\debug.log'
     try {
         Start-Transcript -Path $debugLogPath -Force -ErrorAction Stop | Out-Null

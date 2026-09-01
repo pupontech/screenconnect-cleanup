@@ -261,6 +261,31 @@ if ($preflightRc -ne 0 -or ($preflightOutput -notmatch 'SELFTEST OK')) {
     Add-Failure 'C8' ("preflight.ps1 -SelfTest did not execute successfully (exit {0}). Output: {1}" -f $preflightRc, ($preflightOutput -join ' | '))
 }
 
+# --- C9: preflight without -Debug must not read an unbound variable ---------
+# The common -Debug parameter is present in PSBoundParameters only when passed;
+# StrictMode must therefore not evaluate a bare $Debug variable on a normal run.
+$debugProbeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('rit-scc-preflight-debug-' + [guid]::NewGuid().ToString('N'))
+try {
+    $null = New-Item -ItemType Directory -Path $debugProbeRoot -Force
+    $toolStub = Join-Path $debugProbeRoot 'toolpack-stub.ps1'
+    @'
+param([switch]$Verify, [switch]$Quiet)
+exit 0
+'@ | Set-Content -Path $toolStub -Encoding ASCII
+    $probeRunRoot = Join-Path $debugProbeRoot 'run'
+    $probeOutput = & $psHost -NoProfile -File $preflightPath -np -MinFreeGB 0 -WorkingRoot $probeRunRoot -ToolPackPath $toolStub 2>&1
+    $probeRc = $LASTEXITCODE
+    if ($probeRc -ne 0 -and ($probeOutput -match '\$Debug.*has not been set')) {
+        Add-Failure 'C9' ("preflight.ps1 normal run reads unbound `$Debug under StrictMode (exit {0})." -f $probeRc)
+    } elseif ($probeRc -ne 0) {
+        Add-Failure 'C9' ("preflight.ps1 safe no- Debug probe failed for another reason (exit {0}). Output: {1}" -f $probeRc, ($probeOutput -join ' | '))
+    }
+} catch {
+    Add-Failure 'C9' ("preflight.ps1 safe no- Debug probe could not run: {0}" -f $_.Exception.Message)
+} finally {
+    Remove-Item -LiteralPath $debugProbeRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 if ($failures.Count -gt 0) {
     Write-Host ""
     Write-Host ("FAIL: {0} contract violation(s):" -f $failures.Count) -ForegroundColor Red
