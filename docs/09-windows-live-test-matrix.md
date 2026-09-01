@@ -143,16 +143,18 @@ no-NAS assertions), removal runtime contracts OK, integration OK,
 
 ## 5. Scanner downloads and attended GUI launches (Stage 5)
 
-**[NEW v1.7.22/23/25]**
-5.1 `tools\Get-AVTools.ps1` on a lab network: downloads/stages KVRT.exe and
-    esetonlinescanner.exe from the official vendor URLs only. Expected log lines:
-    `(BITS) KVRT.exe` and `(BITS) esetonlinescanner.exe` (BITS engine, v1.7.25;
-    a machine with BITS disabled falls back to Invoke-WebRequest - both are
-    fast - no progress bar is rendered). KVRT (~114 MB) should stage in
-    seconds-to-a-minute on a normal link, not many minutes. **FIELD-CONFIRMED
-    2026-08-28 on VMs: the BITS + polling-progress path (v1.7.28+) is faster
-    than the old Invoke-WebRequest progress-bar download** - the live
-    `KVRT.exe: 47% (53.7 / 114.1 MB)` line updates in place while it runs.
+**[NEW v1.7.22/23/25/35]**
+  5.1 `tools\Get-AVTools.ps1` on a lab network: downloads/stages KVRT.exe and
+     esetonlinescanner.exe from the official vendor URLs only. Expected output:
+     `(BITS) KVRT.exe` and `(BITS) esetonlinescanner.exe` (BITS engine, v1.7.25;
+     v1.7.35 adds a visible PowerShell progress bar while the asynchronous job
+     is transferring). A machine with BITS disabled falls back to
+     Invoke-WebRequest with its expensive renderer suppressed. KVRT (~114 MB)
+     should stage in seconds-to-a-minute on a normal link, not many minutes.
+     **FIELD-CONFIRMED 2026-08-28 on VMs:** the BITS + polling path is faster
+     than the old Invoke-WebRequest progress-bar download; v1.7.35 now exposes
+     that polling as a real progress bar instead of a text-only carriage-return
+     line.
     - NO NAS/share fallback exists (v1.7.22): there is no InternalShare
       parameter and nothing ever copies from a network share.
     - A failed download prints `FAILED to stage: <tools>` and exits 1 (v1.7.23) -

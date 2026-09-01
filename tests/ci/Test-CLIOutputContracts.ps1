@@ -58,7 +58,8 @@ Check 'early-exit alarm compact' ($scanner.Contains('with no GUI - NOT a complet
 Check 'toolpack cached line compact' ($toolPack.Contains('OK (cached; -Force re-downloads)'))
 Check 'toolpack quiet suppresses summary table' ($toolPack.Contains('if (-not $Quiet) {'))
 Check 'avtools closing is compact' ($avTools.Contains('Done. GUI scanners staged in ') -and -not $avTools.Contains('Run the staged scanners attended:'))
-Check 'avtools bits progress throttled' ($avTools.Contains('Throttle progress to 25/50/75/100%'))
+Check 'avtools uses a visible BITS progress bar' ($avTools.Contains('Write-Progress') -and $avTools.Contains('-PercentComplete') -and $avTools.Contains('-Completed'))
+Check 'guided AV staging keeps BITS progress visible' ($startHere.Contains('Get-AVTools.ps1" -ToolDir') -and $startHere -notmatch 'Get-AVTools\.ps1" -ToolDir[^\r\n]*-Quiet')
 Check 'removal-test done block is conditional' ($removalTest.Contains('if "%PIPE_RC%"=="0" (') -and $removalTest.Contains('[WARN] Pipeline exited %PIPE_RC%'))
 
 if ($script:failures -gt 0) {

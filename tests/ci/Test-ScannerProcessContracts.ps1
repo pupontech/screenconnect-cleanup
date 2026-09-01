@@ -62,6 +62,77 @@ else {
     if ($text -notmatch '\$part = \$Dest \+ ''\.part''') { Add-Failure 'Get-AVTools.ps1 does not download to a .part staging file (atomic swap needed so a partial download cannot poison the staged exe).' }
     if ($text -notmatch 'Move-Item -LiteralPath \$part -Destination \$Dest') { Add-Failure 'Get-AVTools.ps1 does not atomically swap the .part file into place after the size check.' }
     if ($text -match 'Remove-Item -LiteralPath \$Dest') { Add-Failure 'Get-AVTools.ps1 deletes the destination BEFORE the download - a failed fetch leaves nothing staged (must keep the old file until a verified replacement exists).' }
+
+    # BITS progress regression: use a fake async BITS job so this stays a
+    # deterministic, network-free behavior test. The real code must render an
+    # actual PowerShell progress record even though the IWR fallback remains
+    # globally suppressed for throughput.
+    $start = $text.IndexOf('function Start-DownloadFast {')
+    $end = $text.IndexOf('function Get-DownloadFile {', $start)
+    if ($start -lt 0 -or $end -le $start) {
+        Add-Failure 'Get-AVTools.ps1 BITS download helper cannot be isolated for the progress probe.'
+    } else {
+        $script:progressEvents = @()
+        $script:fakeBitsIndex = 0
+        $script:fakeBitsStates = @(
+            (New-Object PSObject -Property @{ JobId = 'fake-bits-job'; JobState = 'Transferring'; TotalBytes = [int64](10 * 1MB); BytesTransferred = [int64]0 }),
+            (New-Object PSObject -Property @{ JobId = 'fake-bits-job'; JobState = 'Transferring'; TotalBytes = [int64](10 * 1MB); BytesTransferred = [int64](5 * 1MB) }),
+            (New-Object PSObject -Property @{ JobId = 'fake-bits-job'; JobState = 'Transferred'; TotalBytes = [int64](10 * 1MB); BytesTransferred = [int64](10 * 1MB) })
+        )
+        function Start-BitsTransfer {
+            [CmdletBinding()]
+            param([string]$Source, [string]$Destination, [string]$DisplayName, [switch]$Asynchronous)
+            return (New-Object PSObject -Property @{ JobId = 'fake-bits-job' })
+        }
+        function Get-BitsTransfer {
+            [CmdletBinding()]
+            param([string]$JobId)
+            $state = $script:fakeBitsStates[[Math]::Min($script:fakeBitsIndex, $script:fakeBitsStates.Count - 1)]
+            $script:fakeBitsIndex++
+            return $state
+        }
+        function Complete-BitsTransfer {
+            [CmdletBinding()]
+            param($BitsJob)
+        }
+        function Start-Sleep {
+            param([int]$Seconds)
+        }
+        function Say {
+            param([string]$Message, [string]$Color = 'Gray')
+        }
+        function Write-Progress {
+            [CmdletBinding()]
+            param([string]$Activity, [string]$Status, [int]$PercentComplete, [switch]$Completed)
+            $script:progressEvents += (New-Object PSObject -Property @{
+                Activity = $Activity
+                Status = $Status
+                PercentComplete = $PercentComplete
+                Completed = [bool]$Completed
+                HasPercent = $PSBoundParameters.ContainsKey('PercentComplete')
+            })
+        }
+        $env:OS = 'Windows_NT'
+        $Quiet = $false
+        $ProgressPreference = 'SilentlyContinue'
+        . ([scriptblock]::Create($text.Substring($start, $end - $start)))
+        try {
+            Start-DownloadFast -Url 'https://example.invalid/tool.exe' -OutFile 'C:\\fake-tool.part' -Label 'fake-tool.exe'
+        } catch {
+            Add-Failure ("Get-AVTools.ps1 fake BITS progress probe threw: " + $_.Exception.Message)
+        }
+        if ($ProgressPreference -ne 'SilentlyContinue') {
+            Add-Failure 'Get-AVTools.ps1 BITS path did not restore the suppressed IWR progress preference.'
+        }
+        $percentEvents = @($script:progressEvents | Where-Object { $_.HasPercent })
+        $completedEvents = @($script:progressEvents | Where-Object { $_.Completed })
+        if ($percentEvents.Count -eq 0 -or -not ($percentEvents.PercentComplete -contains 0) -or -not ($percentEvents.PercentComplete -contains 100)) {
+            Add-Failure 'Get-AVTools.ps1 BITS path does not emit visible 0%-to-100% Write-Progress updates.'
+        }
+        if ($completedEvents.Count -eq 0) {
+            Add-Failure 'Get-AVTools.ps1 BITS path does not clear its progress bar with Write-Progress -Completed.'
+        }
+    }
     if ($script:failures.Count -eq 0) { Write-Host '  OK Get-AVTools.ps1: KVRT/ESET official downloads, Malwarebytes winget-only, skip-existing staging.' }
 }
 

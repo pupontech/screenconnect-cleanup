@@ -3,6 +3,17 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.35] - 2026-09-01
+- Fixed the BITS download display: `Get-AVTools.ps1` now renders a real
+  PowerShell `Write-Progress` bar for asynchronous BITS transfers, starting at
+  0% and updating through 100%, then clears it on completion or fallback.
+- BITS progress temporarily enables the renderer only inside the BITS path;
+  the slower `Invoke-WebRequest` renderer remains suppressed, including after
+  a BITS failure. The `.part` staging, 20-minute watchdog, error handling,
+  fallback, and atomic final-file swap are unchanged.
+- Added a deterministic fake-BITS regression harness covering visible progress,
+  completion cleanup, and restoration of the IWR progress preference.
+
 ## [1.7.34] - 2026-09-01
 - Fixed a normal preflight startup failure under `Set-StrictMode`: the
   built-in `-Debug` common parameter is now read from `$PSBoundParameters`

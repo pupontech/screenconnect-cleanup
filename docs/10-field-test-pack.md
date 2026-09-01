@@ -127,6 +127,9 @@ acceptance criterion. The highest-value items for the current candidate
 - NEW (v1.7.24): UAC-disabled prompt-and-wait (Section 4.5)
 - NEW (v1.7.25): BITS download speed - Step 1 should show "(BITS) KVRT.exe"
   and stage ~114 MB in seconds-to-a-minute (Section 5.1)
+- NEW (v1.7.35): the asynchronous BITS path renders a real PowerShell
+  `Write-Progress` bar (0% through 100%) and clears it when complete; the IWR
+  fallback remains progress-suppressed for download speed.
 
 ## What to send back after any of these
 

@@ -52,10 +52,9 @@ param(
     [switch]$Quiet
 )
 
-# The rendered progress bar is THE classic PowerShell large-download
-# slowdown: Invoke-WebRequest redraws it per buffer and can halve or worse
-# the throughput of a 100MB+ file on PS 5.1. Kill it script-wide; BITS and
-# the fallback both report nothing either way (v1.7.25).
+# Keep Invoke-WebRequest's rendered progress bar disabled: it redraws per
+# buffer and can halve or worse the throughput of a 100MB+ file on PS 5.1.
+# The BITS path explicitly enables its own lightweight progress bar locally.
 $ProgressPreference = 'SilentlyContinue'
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -140,7 +139,7 @@ function Start-DownloadFast {
     # Download helper for the big scanner files (KVRT is ~114 MB):
     # 1. BITS (Start-BitsTransfer, every Windows 10/11) - the OS transfer
     #    engine. Far faster than Invoke-WebRequest for 100MB+ files and
-    #    network-aware. Run ASYNCHRONOUSLY and poll for a live progress line
+    #    network-aware. Run ASYNCHRONOUSLY and poll for a live progress bar
     #    (the synchronous form shows nothing for the whole transfer).
     #    If it fails (403/UA rejection, BITS disabled by policy, service
     #    stopped) fall through to Invoke-WebRequest.
@@ -150,36 +149,44 @@ function Start-DownloadFast {
     param([string]$Url, [string]$OutFile, [string]$Label)
     $bits = Get-Command Start-BitsTransfer -ErrorAction SilentlyContinue
     if ($bits -and $env:OS -eq 'Windows_NT') {
+        $progressActivity = "Downloading " + $Label
+        $progressVisible = $false
+        $progressPreferenceBefore = $ProgressPreference
         try {
             Say ("  (BITS) " + $Label) 'DarkGray'
             $job = Start-BitsTransfer -Source $Url -Destination $OutFile -DisplayName ('ScreenConnect-Cleanup: ' + $Label) -Asynchronous -ErrorAction Stop
+            if (-not $Quiet) {
+                # The script suppresses IWR's expensive progress renderer
+                # globally, so explicitly enable the BITS bar locally.
+                $ProgressPreference = 'Continue'
+                Write-Progress -Activity $progressActivity -Status 'Starting BITS transfer...' -PercentComplete 0
+                $progressVisible = $true
+            }
             $deadline = (Get-Date).AddMinutes(20)
-            $lastPct = -1
-            $nextReport = 25
             $sizeUnknown = $true
             do {
                 Start-Sleep -Seconds 1
                 $job = Get-BitsTransfer -JobId $job.JobId -ErrorAction SilentlyContinue
                 if (-not $job) { break }
-                $pct = 0
                 if ($job.TotalBytes -gt 0) {
-                    $pct = [math]::Round(($job.BytesTransferred / $job.TotalBytes) * 100)
-                    # Throttle progress to 25/50/75/100% (and only when visible).
-                    if (-not $Quiet -and $pct -ne $lastPct -and $pct -ge $nextReport) {
-                        $lastPct = $pct
+                    $pct = [int][math]::Round(($job.BytesTransferred / $job.TotalBytes) * 100)
+                    if ($pct -lt 0) { $pct = 0 }
+                    if ($pct -gt 100) { $pct = 100 }
+                    if (-not $Quiet) {
                         $mb = [math]::Round($job.BytesTransferred / 1MB, 1)
                         $tmb = [math]::Round($job.TotalBytes / 1MB, 1)
-                        Write-Host ("`r  " + $Label + ": " + $pct + "% (" + $mb + " / " + $tmb + " MB)   ") -NoNewline
-                        $nextReport = (([math]::Floor($pct / 25)) + 1) * 25
+                        Write-Progress -Activity $progressActivity -Status (("{0}% ({1} / {2} MB)" -f $pct, $mb, $tmb)) -PercentComplete $pct
                     }
                     $sizeUnknown = $false
                 } elseif ($sizeUnknown -and -not $Quiet) {
-                    Write-Host ("`r  " + $Label + ": waiting for BITS size info...   ") -NoNewline
+                    Write-Progress -Activity $progressActivity -Status 'Waiting for BITS size information...'
                 }
             } while ($job -and $job.JobState -in @('Queued', 'Connecting', 'Transferring', 'TransientError') -and (Get-Date) -lt $deadline)
-            if (-not $Quiet) { Write-Host "" }
             if (-not $job) { throw 'BITS job disappeared' }
             if ($job.JobState -eq 'Transferred') {
+                if (-not $Quiet) {
+                    Write-Progress -Activity $progressActivity -Status 'Completing BITS transfer...' -PercentComplete 100
+                }
                 Complete-BitsTransfer -BitsJob $job -ErrorAction Stop
             } elseif ($job.JobState -eq 'Error') {
                 throw ('BITS error: ' + $job.ErrorDescription)
@@ -192,6 +199,12 @@ function Start-DownloadFast {
             # Remove only the partial transfer target (the .part staging file),
             # never the final staged tool - the anti-clobber contract stands.
             Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
+        } finally {
+            if (-not $Quiet -and $progressVisible) {
+                Write-Progress -Activity $progressActivity -Completed
+            }
+            # Keep the IWR fallback suppressed even after a BITS failure.
+            $ProgressPreference = $progressPreferenceBefore
         }
     }
     $headers = @{ 'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36' }
