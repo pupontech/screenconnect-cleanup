@@ -104,7 +104,7 @@ Run docs/09-windows-live-test-matrix.md sections 1-8 in order on a lab VM
 lab VM only).
 with Windows PowerShell 5.1. The release gate summary (section 8) is the
 acceptance criterion. The highest-value items for the current candidate
-(unreleased v1.7.32; latest release v1.7.31):
+(v1.7.33; latest release v1.7.31):
 
 - Section 3.1: clean read-only run `-sr` exits 0
 - Section 5.2/5.3/5.4: the three scanners (KVRT/ESET/Malwarebytes)

@@ -233,7 +233,7 @@ foreach ($tool in $tools) {
             $fileCount = $existingCheck.Count
             Add-Result -Tool $tool.Name -Status 'SKIPPED' -Count $fileCount -Error ''
             if (-not $Quiet) {
-                Write-Host "$($tool.Name): Already present and verified, skipping (use -Force to re-download)" -ForegroundColor Yellow
+                Write-Host "$($tool.Name): OK (cached; -Force re-downloads)" -ForegroundColor Yellow
             }
             continue
         }
@@ -379,10 +379,13 @@ if (-not (Save-Manifest $manifest $manifestPath)) {
     exit 1
 }
 
-# Print summary table
-Write-Host ""
-Write-Host "Download Summary:" -ForegroundColor Cyan
-$resultsObjects | Format-Table Tool, Status, Files, Error -AutoSize
+# Print summary table - the summary is the second pass's job in the guided
+# runner, so keep it quiet when -Quiet is set.
+if (-not $Quiet) {
+    Write-Host ""
+    Write-Host "Download Summary:" -ForegroundColor Cyan
+    $resultsObjects | Format-Table Tool, Status, Files, Error -AutoSize
+}
 
 if ($hasErrors) {
     Write-Host ""
@@ -390,6 +393,8 @@ if ($hasErrors) {
     exit 1
 }
 
-Write-Host ""
-Write-Host "All tools downloaded and verified successfully." -ForegroundColor Green
+if (-not $Quiet) {
+    Write-Host ""
+    Write-Host "All tools downloaded and verified successfully." -ForegroundColor Green
+}
 exit 0

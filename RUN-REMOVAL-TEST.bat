@@ -65,14 +65,17 @@ set "AVFLAG=-sa"
 if /i "%SKIPAV%"=="n" set "AVFLAG="
 set SKIPAV=
 
-echo.
-echo  Launching pipeline...
-echo.
 powershell -NoProfile -ExecutionPolicy Bypass -File ".\sc-cleanup.ps1" -ExecuteRemoval %AVFLAG%
+set "PIPE_RC=%ERRORLEVEL%"
 
 echo.
 echo  ============================================================
-echo   Done. Check under C:\RIT-SCC\ for:
+if "%PIPE_RC%"=="0" (
+    echo   Pipeline exited 0.
+) else (
+    echo   [WARN] Pipeline exited %PIPE_RC% - review master.log and the report.
+)
+echo   Results are under the work directory the pipeline printed above:
 echo     master.log             - full stage log
 echo     plan.json              - what Stage 3 approved
 echo     removal-manifest.json  - every action and its result

@@ -155,6 +155,7 @@ function Start-DownloadFast {
             $job = Start-BitsTransfer -Source $Url -Destination $OutFile -DisplayName ('ScreenConnect-Cleanup: ' + $Label) -Asynchronous -ErrorAction Stop
             $deadline = (Get-Date).AddMinutes(20)
             $lastPct = -1
+            $nextReport = 25
             $sizeUnknown = $true
             do {
                 Start-Sleep -Seconds 1
@@ -163,18 +164,20 @@ function Start-DownloadFast {
                 $pct = 0
                 if ($job.TotalBytes -gt 0) {
                     $pct = [math]::Round(($job.BytesTransferred / $job.TotalBytes) * 100)
-                    if ($pct -ne $lastPct) {
+                    # Throttle progress to 25/50/75/100% (and only when visible).
+                    if (-not $Quiet -and $pct -ne $lastPct -and $pct -ge $nextReport) {
                         $lastPct = $pct
                         $mb = [math]::Round($job.BytesTransferred / 1MB, 1)
                         $tmb = [math]::Round($job.TotalBytes / 1MB, 1)
                         Write-Host ("`r  " + $Label + ": " + $pct + "% (" + $mb + " / " + $tmb + " MB)   ") -NoNewline
+                        $nextReport = (([math]::Floor($pct / 25)) + 1) * 25
                     }
                     $sizeUnknown = $false
-                } elseif ($sizeUnknown) {
+                } elseif ($sizeUnknown -and -not $Quiet) {
                     Write-Host ("`r  " + $Label + ": waiting for BITS size info...   ") -NoNewline
                 }
             } while ($job -and $job.JobState -in @('Queued', 'Connecting', 'Transferring', 'TransientError') -and (Get-Date) -lt $deadline)
-            Write-Host ""
+            if (-not $Quiet) { Write-Host "" }
             if (-not $job) { throw 'BITS job disappeared' }
             if ($job.JobState -eq 'Transferred') {
                 Complete-BitsTransfer -BitsJob $job -ErrorAction Stop
@@ -286,14 +289,8 @@ if (-not (Ensure-Tool -Url 'https://download.eset.com/com/eset/tools/online_scan
 # path was removed - it staged stale/corrupt copies and caused field issues.
 
 Say ''
-Say ('Done. GUI scanners staged in ' + $ToolDir + ':') 'Cyan'
-Say '  KVRT.exe, esetonlinescanner.exe' 'Cyan'
-Say 'Malwarebytes is NOT staged here - install via winget:' 'Cyan'
-Say '  winget install -e --id Malwarebytes.Malwarebytes --accept-package-agreements --accept-source-agreements' 'Cyan'
-Say 'Run the staged scanners attended:' 'Cyan'
-Say '  .\Invoke-GUIScanner.ps1 -Scanner KVRT' 'Cyan'
-Say '  .\Invoke-GUIScanner.ps1 -Scanner ESET' 'Cyan'
-Say 'The pipeline never invents silent-scan flags (owner decision 2026-08-26).' 'Cyan'
+Say ('Done. GUI scanners staged in ' + $ToolDir + ': KVRT.exe, esetonlinescanner.exe') 'Cyan'
+Say 'Malwarebytes installs via winget: winget install -e --id Malwarebytes.Malwarebytes --accept-package-agreements --accept-source-agreements' 'Cyan'
 if ($failures.Count -gt 0) {
     Say ("FAILED to stage: " + ($failures -join ', ') + " - re-run Step 1 to retry. A failed download is never reported as success (v1.7.23).") 'Yellow'
     exit 1

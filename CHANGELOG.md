@@ -3,6 +3,21 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.33] - 2026-09-01
+- Shortened the guided runner's command-prompt banners and repeated policy text
+  while preserving decision prompts, destructive warnings, filter-block alerts,
+  and the current-run artifact path. Added PowerShell 5.1/pwsh output contracts.
+- Compacted the `sc-cleanup.ps1` pipeline console output: stage sections are one
+  line (`== STAGE n: Name ==`), the redundant "Starting Stage" line is
+  debug-only, stage-0/final environment and path pairs print once, per-scanner
+  session chatter and the duplicate completion banner are gone. Child snapshot
+  runs use `-Quiet` while collection-error warnings stay visible. Shortened
+  UAC/removal/diff/procmon wording, Malwarebytes diagnostics tails, tool-pack
+  and AV-staging summaries, and the early-exit alarm. `RUN-REMOVAL-TEST.bat`
+  now reports the pipeline's real exit code instead of an unconditional Done.
+- Fixed the Windows integration fixture to use an approved synthetic uninstall
+  root and supplied the isolated uninstaller test's path-containment shim.
+
 ## [1.7.32] - 2026-08-31
 Safety and correctness hardening from the read-only audit:
 - Bound the guided runner to a fresh per-run artifact directory; failed detection,

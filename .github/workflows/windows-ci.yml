@@ -86,6 +86,14 @@ jobs:
         shell: pwsh
         run: ./tests/ci/Test-ScannerProcessContracts.ps1
 
+      - name: CLI output contracts (Windows PowerShell 5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/ci/Test-CLIOutputContracts.ps1
+
+      - name: CLI output contracts (pwsh)
+        shell: pwsh
+        run: ./tests/ci/Test-CLIOutputContracts.ps1
+
       - name: Safety regression contracts (Windows PowerShell 5.1)
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/ci/Test-SafetyRegressionContracts.ps1

@@ -1780,9 +1780,14 @@ $elapsed = (Get-Date) - $startTime
 Write-Info "Snapshot written to: $OutFile"
 Write-Info ("Elapsed: {0:N1}s  IsAdmin={1}  CollectionErrors={2}" -f $elapsed.TotalSeconds, $isAdmin, $script:CollectionErrors.Count)
 
-if ($script:CollectionErrors.Count -gt 0 -and -not $Quiet) {
-    Write-Info 'Sections with errors:'
-    foreach ($e in $script:CollectionErrors) {
-        Write-Info ("  - {0}: {1}" -f $e.Section, $e.Error)
+if ($script:CollectionErrors.Count -gt 0) {
+    # ALWAYS visible, even under -Quiet: collection errors are evidence the
+    # technician must act on and do not necessarily surface as a nonzero exit.
+    Write-Host ("  [WARN] Snapshot contains " + $script:CollectionErrors.Count + " collection error(s) - see the snapshot JSON and log for details.") -ForegroundColor Yellow
+    if (-not $Quiet) {
+        Write-Info 'Sections with errors:'
+        foreach ($e in $script:CollectionErrors) {
+            Write-Info ("  - {0}: {1}" -f $e.Section, $e.Error)
+        }
     }
 }

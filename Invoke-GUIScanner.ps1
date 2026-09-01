@@ -176,16 +176,13 @@ if ($DiagnosticsOnly) {
         if ($filterNames.Count -gt 0) { Write-Host ("  Named evidence: " + ($filterNames -join ', ')) -ForegroundColor Yellow }
         $strong = @($diagnostics.StrongEvidence)
         if ($strong.Count -gt 0) { Write-Host ("  Evidence: " + ($strong -join '; ')) -ForegroundColor Yellow }
-        Write-Host "  This is evidence, not proof of causation. Ask the filter/network administrator to review the listed endpoint checks and allow them, then retry." -ForegroundColor Yellow
+        Write-Host "  Evidence, not proof - ask the filter admin to allow the checked endpoints, then retry." -ForegroundColor Yellow
     } elseif ($diagnostics.Classification -eq 'EndpointReachable') {
-        Write-Host "  No filter block was observed: the official Malwarebytes endpoint was reachable." -ForegroundColor Yellow
-        Write-Host "  Investigate winget/App Installer source, package policy, or the package result next." -ForegroundColor Yellow
+        Write-Host "  No filter block observed - endpoint reachable. Check winget source/package policy next." -ForegroundColor Yellow
     } else {
-        Write-Host "  The endpoint probe failed, but no specific filter block was identified." -ForegroundColor Yellow
-        Write-Host "  Review the saved diagnostics for DNS, TLS, proxy, and HTTP details before retrying." -ForegroundColor Yellow
+        Write-Host "  Probe failed without a named filter - review saved diagnostics (DNS/TLS/proxy), then retry." -ForegroundColor Yellow
     }
     $json | Write-Output
-    Write-Host "Malwarebytes installation failed; no attended scan was completed." -ForegroundColor Red
     exit 6
 }
 
@@ -461,13 +458,11 @@ if ($wingetViaCmd -and -not $timedOut -and ($null -eq $exitCode -or $exitCode -n
             if ($strong.Count -gt 0) {
                 Write-Host ("  Evidence: " + ($strong -join '; ')) -ForegroundColor Yellow
             }
-            Write-Host "  This is evidence, not proof of causation. Ask the filter/network administrator to review the listed endpoint checks and allow them, then retry." -ForegroundColor Yellow
+            Write-Host "  Evidence, not proof - ask the filter admin to allow the checked endpoints, then retry." -ForegroundColor Yellow
         } elseif ($downloadDiagnostics.Classification -eq 'EndpointReachable') {
-            Write-Host "  No filter block was observed: the official Malwarebytes endpoint was reachable." -ForegroundColor Yellow
-            Write-Host "  Investigate winget/App Installer source, package policy, or the package result next." -ForegroundColor Yellow
+            Write-Host "  No filter block observed - endpoint reachable. Check winget source/package policy next." -ForegroundColor Yellow
         } else {
-            Write-Host "  The endpoint probe failed, but no specific filter block was identified." -ForegroundColor Yellow
-            Write-Host "  Review the saved diagnostics for DNS, TLS, proxy, and HTTP details before retrying." -ForegroundColor Yellow
+            Write-Host "  Probe failed without a named filter - review saved diagnostics (DNS/TLS/proxy), then retry." -ForegroundColor Yellow
         }
     }
 }
@@ -549,7 +544,6 @@ if ($ResultPath) {
 $json | Write-Output
 
 if ($installFailed) {
-    Write-Host "Malwarebytes installation failed; no attended scan was completed." -ForegroundColor Red
     exit 6
 }
 if ($launchFailed) {
@@ -561,7 +555,7 @@ if ($timedOut) {
     exit 4
 }
 if ($earlyExit) {
-    Write-Host ("SUSPICIOUS: " + $toolLabel + " exited " + $duration + "s after launch (exit code " + $earlyExitCode + ") with no surviving GUI process. This is NOT counted as a completed scan.") -ForegroundColor Yellow
+    Write-Host ("SUSPICIOUS: " + $toolLabel + " exited " + $duration + "s after launch (exit code " + $earlyExitCode + ") with no GUI - NOT a completed scan.") -ForegroundColor Yellow
     Write-Host "  Likely causes: the client's own antivirus blocked the tool, a stale/corrupt staged copy, or SmartScreen interference." -ForegroundColor Yellow
     if ($uacDisabled) {
         Write-Host "  ** UAC IS DISABLED on this machine - KVRT/ESET commonly exit immediately for exactly this reason." -ForegroundColor Yellow

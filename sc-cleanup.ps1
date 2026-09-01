@@ -51,7 +51,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Constants & script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.7.32'
+$ScriptVersion = '1.7.33'
 $ScriptName = 'sc-cleanup.ps1'
 $PipelineStages = @(
     @{ Id = 0; Name = 'Preflight';            SkipFlag = '' },
@@ -92,16 +92,10 @@ function Write-Dbg {
 
 function Write-Section {
     param([string]$Title)
-    $bar = '-' * 70
-    Write-Host ""
-    Write-Host $bar -ForegroundColor DarkCyan
-    Write-Host "  $Title" -ForegroundColor Cyan
-    Write-Host $bar -ForegroundColor DarkCyan
+    Write-Host ("== " + $Title + " ==") -ForegroundColor Cyan
     if ($MasterLogPath -and (Test-Path $MasterLogPath)) {
         Add-Content -Path $MasterLogPath -Value "" -Encoding UTF8
-        Add-Content -Path $MasterLogPath -Value $bar -Encoding UTF8
-        Add-Content -Path $MasterLogPath -Value "  $Title" -Encoding UTF8
-        Add-Content -Path $MasterLogPath -Value $bar -Encoding UTF8
+        Add-Content -Path $MasterLogPath -Value ("== " + $Title + " ==") -Encoding UTF8
     }
 }
 
@@ -279,7 +273,7 @@ function Invoke-Stage {
     }
 
     Write-Section ("STAGE " + $StageId + ": " + $StageName)
-    Write-StageLog ("Starting Stage " + $StageId + ": " + $StageName)
+    Write-Dbg ("Starting Stage " + $StageId + ": " + $StageName)
 
     $stageStart = Get-Date
     $stageResult = $null
@@ -335,7 +329,7 @@ Write-Host "====================================================================
 Write-Host "  ScreenConnect Cleanup Tool  v$ScriptVersion" -ForegroundColor Cyan
 Write-Host "  Pipeline: $($PipelineStages.Count) stages" -ForegroundColor Cyan
 Write-Host "======================================================================" -ForegroundColor Cyan
-Write-Host "Host: $hostName  |  OS: $osCaption  |  PS: $psVersion  |  Admin: $isAdmin  |  Server: $isServer"
+Write-Host "Host: $hostName  |  OS: $osCaption"
 if ($ExecuteRemoval -and -not $sr) {
     Write-Host ""
     Write-Host "  *** -ExecuteRemoval: REMOVAL IS PRE-AUTHORIZED. THIS RUN WILL ACTUALLY" -ForegroundColor Red
@@ -421,7 +415,7 @@ if ($ExecuteRemoval -and -not $isAdmin) {
 
 # Preflight checks
 if (-not $isAdmin) {
-    Write-StageLog "WARNING: Not running as admin. On Windows, re-run elevated. Continuing on non-Windows test host." 'Warn'
+    Write-StageLog "WARNING: Not elevated - re-run elevated on Windows." 'Warn'
     # throw "Admin rights required. Re-run elevated."
 }
 
@@ -450,16 +444,16 @@ if (-not $uacEnabled -and -not $force) {
         $uacAnswer = $uacInput.Trim().Substring(0,1).ToUpperInvariant()
     } while ($uacAnswer -ne 'Y' -and $uacAnswer -ne 'F')
     if ($uacAnswer -eq 'F') {
-        Write-StageLog "UAC still disabled (force-continued at the prompt) - record this as a finding." 'Warn'
+        Write-StageLog "UAC still disabled - recording as finding." 'Warn'
     } else {
         if (Test-UacEnabled) {
             Write-StageLog "UAC check: enabled (confirmed after user action)."
         } else {
-            Write-StageLog "UAC reported enabled but EnableLUA still reads disabled (reboot pending?) - continuing on the user confirmation." 'Warn'
+            Write-StageLog "EnableLUA still reads 0 (reboot pending?) - continuing on user confirmation." 'Warn'
         }
     }
 } elseif (-not $uacEnabled) {
-    Write-StageLog "UAC is DISABLED on this machine (-force set, continuing). Record this as a finding." 'Warn'
+    Write-StageLog "UAC disabled (-force set) - recording as finding." 'Warn'
 } else {
     Write-StageLog "UAC check: enabled."
 }
@@ -483,12 +477,10 @@ $stage0Result = Invoke-Stage -StageId 0 -StageName 'Preflight' -SkipFlag '' -Sta
     Write-StageLog ("Disk space on " + $OutRoot + ": " + $freeGb + "GB free")
     Add-Content -Path $MasterLogPath -Value ("Disk space: " + $freeGb + "GB free") -Encoding UTF8
 
-    # Working directory
-    Write-StageLog "Working directory: $WorkDir"
+    # Working directory (console copy printed at init; keep master.log copy)
     Add-Content -Path $MasterLogPath -Value "WorkDir: $WorkDir" -Encoding UTF8
 
-    # Master log opened
-    Write-StageLog "Master log opened: $MasterLogPath"
+    # Master log opened (console copy printed at init)
 
     # System Restore point
     $script:RestorePointFailed = $false
@@ -606,7 +598,7 @@ $stage1Result = Invoke-Stage -StageId 1 -StageName 'Snapshot (Before)' -SkipFlag
     }
 
     Write-StageLog ("Running collect-snapshot.ps1 -Label before -OutFile " + $beforeSnapshot)
-    $snapArgs = @('-Label', 'before', '-IncidentWindowDays', [string]$incidentDaysInt, '-OutFile', $beforeSnapshot)
+    $snapArgs = @('-Label', 'before', '-IncidentWindowDays', [string]$incidentDaysInt, '-OutFile', $beforeSnapshot, '-Quiet')
     $rc = Invoke-ChildScript -ScriptPath $collectSnapshot -ArgumentList $snapArgs -LogTag 'Snapshot(before)'
     if ($rc -ne 0) { throw ("collect-snapshot.ps1 exited with code " + $rc) }
     Write-StageLog ("Snapshot saved: " + $beforeSnapshot)
@@ -779,7 +771,7 @@ $stage4Result = Invoke-Stage -StageId 4 -StageName 'Contain + Remove' -SkipFlag 
     # diff and report matter most, so record it and carry on rather than aborting
     # the pipeline before any of that is produced.
     if ($rc -ne 0) {
-        Write-StageLog ("remove-screenconnect.ps1 exited with code " + $rc + " - removal incomplete. Continuing so the manifest, diff and report are still produced.") 'Warn'
+        Write-StageLog ("Removal exited " + $rc + " - continuing to produce manifest/diff/report.") 'Warn'
         Add-Content -Path $MasterLogPath -Value ("Removal: INCOMPLETE (exit " + $rc + ")") -Encoding UTF8
     }
     $manifest = Join-Path $WorkDir 'removal-manifest.json'
@@ -851,7 +843,6 @@ $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 'sa' -St
                 Write-StageLog ($launch.Scanner + " did not write its result artifact: " + $scannerResultPath) 'Warn'
             }
             $scannerResults += $record
-            Write-StageLog ($launch.Scanner + " session recorded: Status=" + $status + " ExitCode=" + $rc) 'Cyan'
         }
     } else {
         Write-StageLog "Invoke-GUIScanner.ps1 not found - GUI scanners cannot be launched." 'Warn'
@@ -937,8 +928,7 @@ $stage7Result = Invoke-Stage -StageId 7 -StageName 'Procmon' -SkipFlag '' -Stage
 
     Write-StageLog ("Procmon capture: " + $procmonExe)
     Write-StageLog ("  capturing for " + $runtimeSec + "s -> " + $pmlPath)
-    Write-StageLog "  REPRODUCE the resurrection now (watch Task Manager, re-run whatever reinstalls the agent)."
-    Write-StageLog "  Capture is bounded; after the run, open the .pml and focus on the paths the Stage 8 diff flags."
+    Write-StageLog ("  REPRODUCE the resurrection now (capture ends in " + $runtimeSec + "s); afterwards open the .pml and focus on the Stage 8 diff paths.")
 
     # /BackingFile path is quoted because the work dir can contain spaces.
     $argStr = '/AcceptEula /Quiet /Minimized /BackingFile "' + $pmlPath + '" /Runtime ' + $runtimeSec
@@ -997,7 +987,7 @@ $stage8Result = Invoke-Stage -StageId 8 -StageName 'Snapshot (After)+Diff' -Skip
     }
 
     Write-StageLog ("Running collect-snapshot.ps1 -Label after -OutFile " + $afterSnapshot)
-    $snapArgs = @('-Label', 'after', '-IncidentWindowDays', [string]$incidentDaysInt, '-OutFile', $afterSnapshot)
+    $snapArgs = @('-Label', 'after', '-IncidentWindowDays', [string]$incidentDaysInt, '-OutFile', $afterSnapshot, '-Quiet')
     $rc = Invoke-ChildScript -ScriptPath $collectSnapshot -ArgumentList $snapArgs -LogTag 'Snapshot(after)'
     if ($rc -ne 0) { throw ("collect-snapshot.ps1 (after) exited with code " + $rc) }
     Write-StageLog ("After-snapshot saved: " + $afterSnapshot)
@@ -1021,9 +1011,9 @@ $stage8Result = Invoke-Stage -StageId 8 -StageName 'Snapshot (After)+Diff' -Skip
         $diffVerdict = [string](Get-PropertyValue $diffResult 'Verdict')
         if ($rc -eq 1) {
             if ($diffVerdict -eq 'INCOMPLETE') {
-                Write-StageLog "diff-snapshots.ps1 reports INCOMPLETE collection evidence (exit 1) - continuing to report." 'Error'
+                Write-StageLog "Diff: INCOMPLETE collection evidence - continuing to report." 'Error'
             } else {
-                Write-StageLog "diff-snapshots.ps1 reports RESURRECTION (exit 1) - continuing to report." 'Warn'
+                Write-StageLog "Diff: RESURRECTION detected - continuing to report." 'Warn'
             }
         }
     } else {
@@ -1204,7 +1194,6 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
 # -----------------------------------------------------------------------------
 # Pipeline complete
 # -----------------------------------------------------------------------------
-Write-Section "PIPELINE COMPLETE"
 $removalExitCode = $null
 if ($stage4Result -and $stage4Result.Result) {
     $stage4Payload = $stage4Result.Result
@@ -1240,8 +1229,6 @@ if ($pipelineIncomplete) {
 } else {
     Write-StageLog "All stages executed successfully."
 }
-Write-StageLog ("Working directory: " + $WorkDir)
-Write-StageLog ("Master log: " + $MasterLogPath)
 $reportHtml = $null
 $resultsJson = $null
 if ($stage9Result -and $stage9Result.ContainsKey('Result') -and $stage9Result.Result -and $stage9Result.Result.ContainsKey('ReportHtml')) {

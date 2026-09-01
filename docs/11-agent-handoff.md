@@ -1,4 +1,4 @@
-# Agent Handoff — ScreenConnect Cleanup Tool (unreleased v1.7.32 worktree; latest release v1.7.31)
+# Agent Handoff — ScreenConnect Cleanup Tool (v1.7.33 release candidate; latest release v1.7.31)
 
 Handoff for a NEW agent taking over this project. Read this first, then the
 docs listed. Absolute paths, no assumptions. **PROVEN vs WRITTEN-BUT-UNVERIFIED
@@ -12,7 +12,7 @@ is distinguished throughout — trust only what the notes say was executed.**
 - `gh` authenticated as **pupontech** (verified). Releases published from here.
 - Latest released version: **v1.7.31** (sha256 `2a3b7d48…`, byte-verified, Windows CI
   green on win-2022 + win-2025). Current main HEAD: `06dbf0b`; the worktree
-  contains unreleased v1.7.32 hardening changes.
+  contains the v1.7.33 release-candidate changes.
 - Deploy bundle for the latest release: `/root/screenconnect cleanup tool/repo/screenconnect-cleanup-v1.7.31.zip`
 
 ## What this tool is
@@ -70,7 +70,7 @@ default-NO prompt, NOT UAC logic). 1.7.31 fixed the duplicate preflight
 `-Debug` parameter; owner field confirmation also established that KVRT works
 with UAC disabled.
 
-## Unreleased v1.7.32 worktree changes
+## v1.7.33 release-candidate worktree changes
 
 The current worktree adds safety/correctness hardening: fresh-run artifact
 binding and plan provenance checks, fail-closed registry/elevation handling,

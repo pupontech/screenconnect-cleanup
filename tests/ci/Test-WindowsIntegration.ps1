@@ -36,6 +36,22 @@ function Check {
     }
 }
 
+# The 5c isolated function test invokes Run-VendorUninstaller without loading
+# the whole remover. Supply the same literal descendant check it needs, while
+# keeping the harness independent of production side effects.
+function Test-PathContained {
+    param([string]$BasePath, [string]$CandidatePath)
+    if ([string]::IsNullOrWhiteSpace($BasePath) -or [string]::IsNullOrWhiteSpace($CandidatePath)) { return $false }
+    try {
+        $baseFull = [System.IO.Path]::GetFullPath($BasePath).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+        $candidateFull = [System.IO.Path]::GetFullPath($CandidatePath)
+        $prefix = $baseFull + [System.IO.Path]::DirectorySeparatorChar
+        return $candidateFull.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)
+    } catch {
+        return $false
+    }
+}
+
 # ---------------------------------------------------------------------
 # 1. Removal dry-run is inert + rejects a smuggled non-ScreenConnect entry
 # ---------------------------------------------------------------------
@@ -233,7 +249,7 @@ Check 'sc-cleanup -WhatIf exits 0' ($whatIfRc -eq 0) "rc=$whatIfRc"
 #    never executes a registry command string; the fabricated uninstall
 #    paths point at files that do not exist on the runner.
 # ---------------------------------------------------------------------
-$quietRoot = 'HKCU:\Software\RIT-SCC-CI'
+$quietRoot = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\RIT-SCC-CI'
 $quietKey = Join-Path $quietRoot ('quiet-' + [Guid]::NewGuid().ToString('N'))
 $bareKey = Join-Path $quietRoot ('bare-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $quietKey -Force | Out-Null

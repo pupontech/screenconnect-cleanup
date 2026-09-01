@@ -37,25 +37,24 @@ rem ---- Bind every artifact to a fresh run root -------------------------------
 for /f "delims=" %%R in ('powershell -NoProfile -Command "$p=Join-Path (Get-Location) ('runs/' + [guid]::NewGuid().ToString('N')); New-Item -ItemType Directory -Path $p -Force ^| Out-Null; $p"') do set "SCC_RUN_ROOT=%%R"
 if not defined SCC_RUN_ROOT goto :run_setup_failed
 
-echo     [i] Current run root: !SCC_RUN_ROOT!
+echo     Run: !SCC_RUN_ROOT!
 
 echo.
 echo  ============================================================
-echo   SCREENCONNECT CLEANUP TOOL - guided run
-echo   You are prompted before each step that needs a decision. Ctrl+C to abort.
+echo   SCREENCONNECT CLEANUP - guided run
+echo   Prompts mark decisions; Ctrl+C aborts.
 echo.
-echo   1 toolpack     2 preflight    3 before-snapshot
-echo   4 detection    5 REMOVE       6 antivirus scans
-echo   7 tikun        8 uninstall-AV 9 after-snapshot+diff   10 report
+echo   1 toolpack  2 preflight  3 snapshot  4 detect  5 remove
+echo   6 scanners  7 Tikun  8 AV uninstall  9 diff  10 report
 echo  ============================================================
 echo.
 
 rem ---- Step 1: tool pack -----------------------------------------------------
-echo  STEP 1 of 10: Build/verify tool pack (Sysinternals + KVRT/ESET; Malwarebytes via winget)
+echo  STEP 1/10: Tool pack + scanner staging
 set /p GO="    Run now? [Y/n] "
 if /i not "%GO%"=="n" (
     if exist "%~dp0tools\Get-ToolPack.ps1" (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\Get-ToolPack.ps1"
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\Get-ToolPack.ps1" -Quiet
         powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\Get-ToolPack.ps1" -Verify
     ) else (
         echo     [WARN] tools\Get-ToolPack.ps1 missing - skipping pack.
@@ -70,14 +69,14 @@ set GO=
 
 rem ---- Step 2: preflight (ALWAYS runs - owner directive 2026-08-28) ---------
 echo.
-echo  STEP 2 of 10: Preflight checks (admin, UAC, disk, working dir; restore point)
+echo  STEP 2/10: Preflight
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0preflight.ps1"
 if errorlevel 1 goto :preflight_failed
 set GO=
 
 rem ---- Step 3: BEFORE snapshot -----------------------------------------------
 echo.
-echo  STEP 3 of 10: BEFORE snapshot (automatic - baseline for the step 9 diff)
+echo  STEP 3/10: Before snapshot
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect-snapshot.ps1" -Label before -OutFile "!SCC_RUN_ROOT!\snapshot_before.json" -Quiet
 if errorlevel 1 goto :before_snapshot_failed
 if exist "!SCC_RUN_ROOT!\snapshot_before.json" (
@@ -89,7 +88,7 @@ set GO=
 
 rem ---- Step 4: detection -----------------------------------------------------
 echo.
-echo  STEP 4 of 10: Remote-access detection (read-only, automatic)
+echo  STEP 4/10: Remote-access detection
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0detect-remote-access.ps1" -All -NoPause -NoZip -OutRoot "!SCC_RUN_ROOT!\detect"
 if errorlevel 1 goto :detection_failed
 set GO=
@@ -109,9 +108,9 @@ if not defined FINDINGS_JSON (
 
 rem ---- Step 5: REMOVE (typed confirmation) ----------------------------------
 echo.
-echo  STEP 5 of 10: Remove detected ScreenConnect (typed confirmation required)
-echo    Every detected ScreenConnect instance is reviewed before removal; files
-echo    are quarantined, never deleted; every action is logged.
+echo  STEP 5/10: Review/remove ScreenConnect
+echo    Review each instance. Files are quarantined, never deleted.
+echo    Type y only after confirming the instance and removal.
 if exist "%~dp0Invoke-ReviewAndRemove.ps1" (
     if defined FINDINGS_JSON (
         powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-ReviewAndRemove.ps1" -FindingsJson "!FINDINGS_JSON!"
@@ -127,11 +126,11 @@ set GO=
 
 rem ---- Step 6: antivirus scans - each one is its own step ---------------------
 echo.
-echo  STEP 6 of 10: Antivirus scans (KVRT, ESET Online Scanner; Malwarebytes install + launch via winget)
-echo    Each scanner is a visible attended GUI. Drive the UI, then return here.
+echo  STEP 6/10: Antivirus scans (attended)
+echo    Each scanner opens visibly. Complete it, then return here.
 
 echo.
-echo    -- 6a: KVRT (interactive GUI) --
+echo    -- 6a: KVRT --
 set /p GO="    Launch KVRT? [Y/n] "
 if /i not "%GO%"=="n" (
     if exist "%~dp0tools\AV\KVRT.exe" (
@@ -144,7 +143,7 @@ if /i not "%GO%"=="n" (
 set GO=
 
 echo.
-echo    -- 6b: ESET Online Scanner (interactive GUI) --
+echo    -- 6b: ESET Online Scanner --
 set /p GO="    Launch ESET Online Scanner? [Y/n] "
 if /i not "%GO%"=="n" (
     if exist "%~dp0tools\AV\esetonlinescanner.exe" (
@@ -157,7 +156,7 @@ if /i not "%GO%"=="n" (
 set GO=
 
 echo.
-echo    -- 6c: Malwarebytes (install via winget) --
+echo    -- 6c: Malwarebytes --
 set /p GO="    Install Malwarebytes via winget now? [Y/n] "
 if /i "%GO%"=="n" goto :skip_6c
 where winget >nul 2>&1
@@ -197,12 +196,10 @@ set GO=
 
 rem ---- Step 7: Tikun (OPT-IN - destructive, deletes without quarantine) --------
 echo.
-echo  STEP 7 of 10: Tikun ^(the general fix - tools\GeneralFix\^)
-echo    Note: Tikun kills processes and DELETES files, folders and registry
-echo    Run-keys system-wide, including removable drives, without quarantine.
-echo    It also installs a scheduled task that reruns it at boot and on USB
-echo    insertion. This is the ONLY step here that deletes instead of
-echo    quarantines - type y to run it, Enter or n skips it.
+echo  STEP 7/10: Tikun (opt-in destructive)
+echo    Kills processes; DELETES files/registry entries without quarantine;
+echo    also targets removable drives; installs a startup task.
+echo    Enter skips; type y to run.
 set /p GO="    Run Tikun now? [y/N] "
 if /i "%GO%"=="y" (
     set "GFIX_SCRIPT="
@@ -218,24 +215,21 @@ set GO=
 
 rem ---- Step 8: Uninstall installed AV (attended) -------------------------------
 echo.
-echo  STEP 8 of 10: Uninstall installed third-party antivirus (attended)
-echo    Malwarebytes is uninstalled via winget (uninstall -e --id
-echo    Malwarebytes.Malwarebytes --accept-package-agreements
-echo    --accept-source-agreements). Every other detected AV product opens its
-echo    uninstaller for YOU to drive. Never silent-uninstalls vendor
-echo    uninstallers. Windows Defender is excluded (it is the OS, not
-echo    installed AV). Skips if none is detected. Type y to run it.
+echo  STEP 8/10: Uninstall third-party AV (attended)
+echo    Malwarebytes uses winget; other AV uninstallers open for you.
+echo    Never silent-uninstalls - uninstallers open for you to drive.
+echo    Defender is excluded. Enter skips.
 set /p GO="    Run installed-AV uninstall now? [y/N] "
 if /i "%GO%"=="y" (
     powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-AVUninstaller.ps1" -LogDir "!SCC_RUN_ROOT!\logs"
 ) else (
-    echo     Skipped. (To skip this in sc-cleanup.ps1 use -avu.)
+    echo     Skipped.
 )
 set GO=
 
 rem ---- Step 9: AFTER snapshot + diff ------------------------------------------
 echo.
-echo  STEP 9 of 10: After-snapshot and diff vs the before-snapshot (automatic)
+echo  STEP 9/10: After snapshot + diff
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect-snapshot.ps1" -Label after -OutFile "!SCC_RUN_ROOT!\snapshot_after.json" -Quiet
 if errorlevel 1 echo     [WARN] After-snapshot exited with errorlevel %errorlevel%
 rem Only diff when the baseline from this run actually exists.
@@ -261,7 +255,7 @@ set GO=
 
 rem ---- Step 10: report ---------------------------------------------------------
 echo.
-echo  STEP 10 of 10: Generate the investigation report
+echo  STEP 10/10: Report
 if not defined FINDINGS_JSON (
     echo     [WARN] No current-run findings.json available - skipping report.
 ) else (
@@ -288,11 +282,9 @@ set FINDINGS_JSON=
 
 echo.
 echo  ============================================================
-echo   Done. Removal output (plan.json, removal-manifest.json,
-echo   quarantine\) is under C:\RIT-SCC\.
-echo   If ScreenConnect was found: check RELAY HOST in the report,
-echo   and send back raw\ + PARSE PROBLEMS so we can validate the
-echo   key map ^(see DEPLOY.md section 4^).
+echo   Done. Run artifacts: !SCC_RUN_ROOT!
+echo   See plan.json, removal-manifest.json, quarantine\, report.html.
+echo   Review the report, if produced, for relay host and parse problems.
 echo  ============================================================
 pause
 goto :done
