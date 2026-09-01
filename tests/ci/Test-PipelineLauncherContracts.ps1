@@ -273,7 +273,7 @@ param([switch]$Verify, [switch]$Quiet)
 exit 0
 '@ | Set-Content -Path $toolStub -Encoding ASCII
     $probeRunRoot = Join-Path $debugProbeRoot 'run'
-    $probeOutput = & $psHost -NoProfile -File $preflightPath -np -MinFreeGB 0 -WorkingRoot $probeRunRoot -ToolPackPath $toolStub 2>&1
+    $probeOutput = & $psHost -NoProfile -File $preflightPath -np -Force -MinFreeGB 0 -WorkingRoot $probeRunRoot -ToolPackPath $toolStub 2>&1
     $probeRc = $LASTEXITCODE
     if ($probeRc -ne 0 -and ($probeOutput -match '\$Debug.*has not been set')) {
         Add-Failure 'C9' ("preflight.ps1 normal run reads unbound `$Debug under StrictMode (exit {0})." -f $probeRc)
