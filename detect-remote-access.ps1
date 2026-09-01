@@ -1,5 +1,5 @@
 <#
-  detect-remote-access.ps1  -  ScreenConnect cleanup detector (v1.7.35)
+  detect-remote-access.ps1  -  ScreenConnect cleanup detector (v1.7.36)
 
   Read-only. Detects remote-access agents on this machine, with a deep module
   for ScreenConnect / ConnectWise Control that tries to extract the INSTANCE
@@ -51,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "1.7.35"
+$ScriptVersion = "1.7.36"
 
 # ---------------------------------------------------------------------------
 # Embedded target defaults - keeps the script standalone if targets.json is

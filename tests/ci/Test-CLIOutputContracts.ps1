@@ -19,16 +19,17 @@ $toolPack = [System.IO.File]::ReadAllText((Join-Path $repoRoot 'tools/Get-ToolPa
 $avTools = [System.IO.File]::ReadAllText((Join-Path $repoRoot 'tools/Get-AVTools.ps1'))
 $snapshot = [System.IO.File]::ReadAllText((Join-Path $repoRoot 'collect-snapshot.ps1'))
 $removalTest = [System.IO.File]::ReadAllText((Join-Path $repoRoot 'RUN-REMOVAL-TEST.bat'))
+$bundleBuilder = [System.IO.File]::ReadAllText((Join-Path $repoRoot 'make-deploy-bundle.sh'))
 
 # --- START-HERE.bat guided runner ---
 Check 'compact guided title exists' ($startHere.Contains('SCREENCONNECT CLEANUP - guided run'))
 Check 'compact stage map exists' ($startHere.Contains('1 toolpack  2 preflight  3 snapshot  4 detect  5 remove'))
-Check 'compact second stage map exists' ($startHere.Contains('6 scanners  7 Tikun  8 AV uninstall  9 diff  10 report'))
-Check 'stage labels use compact slash form' ($startHere.Contains('STEP 1/10: Tool pack + scanner staging') -and $startHere.Contains('STEP 10/10: Report'))
+Check 'compact second stage map excludes Tikun' ($startHere.Contains('6 scanners  7 AV uninstall  8 diff  9 report') -and -not $startHere.Contains('Tikun'))
+Check 'stage labels use compact slash form' ($startHere.Contains('STEP 1/9: Tool pack + scanner staging') -and $startHere.Contains('STEP 9/9: Report') -and -not $startHere.Contains('/10:'))
 Check 'destructive removal warning remains' ($startHere.Contains('quarantined, never deleted'))
-Check 'Tikun destructive warning remains' ($startHere.Contains('Kills processes; DELETES files/registry entries without quarantine') -and $startHere.Contains('removable drives'))
 Check 'AV never-silent promise remains' ($startHere.Contains('Never silent-uninstalls - uninstallers open for you to drive.'))
-Check 'decision prompts remain' ($startHere.Contains('Run now? [Y/n]') -and $startHere.Contains('Launch KVRT? [Y/n]') -and $startHere.Contains('Run Tikun now? [y/N]'))
+Check 'decision prompts remain' ($startHere.Contains('Run now? [Y/n]') -and $startHere.Contains('Launch KVRT? [Y/n]') -and -not $startHere.Contains('Run Tikun now? [y/N]'))
+Check 'Tikun is removed from the guided runner' (-not $startHere.Contains('Tikun') -and -not $startHere.Contains('GeneralFix'))
 Check 'filter-block diagnostic path remains' ($startHere.Contains('DiagnosticsOnly') -and $startHere.Contains('scanner-Malwarebytes-result.json'))
 Check 'run artifact location remains visible' ($startHere.Contains('Run artifacts: !SCC_RUN_ROOT!'))
 Check 'done banner names explicit artifacts' ($startHere.Contains('plan.json, removal-manifest.json, quarantine\'))
@@ -61,6 +62,8 @@ Check 'avtools closing is compact' ($avTools.Contains('Done. GUI scanners staged
 Check 'avtools uses a visible BITS progress bar' ($avTools.Contains('Write-Progress') -and $avTools.Contains('-PercentComplete') -and $avTools.Contains('-Completed'))
 Check 'guided AV staging keeps BITS progress visible' ($startHere.Contains('Get-AVTools.ps1" -ToolDir') -and $startHere -notmatch 'Get-AVTools\.ps1" -ToolDir[^\r\n]*-Quiet')
 Check 'removal-test done block is conditional' ($removalTest.Contains('if "%PIPE_RC%"=="0" (') -and $removalTest.Contains('[WARN] Pipeline exited %PIPE_RC%'))
+Check 'Tikun is removed from the bundle builder' (-not $bundleBuilder.Contains('Tikun') -and -not $bundleBuilder.Contains('GeneralFix'))
+Check 'Tikun source directory is removed' (-not (Test-Path (Join-Path $repoRoot 'tools/GeneralFix')))
 
 if ($script:failures -gt 0) {
     Write-Host ("$script:failures CLI output contract(s) failed")

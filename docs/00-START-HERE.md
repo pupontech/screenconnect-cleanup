@@ -93,7 +93,7 @@ screenconnect-cleanup/
   scanners are staged by `tools/Get-AVTools.ps1` and launched through
   `Invoke-GUIScanner.ps1` (KVRT/ESET attended GUI; Malwarebytes via winget).
   targets.json                    What to look for. 15 products, toggleable.
-  START-HERE.bat                  Guided 10-step launcher (Steps 4 = read-only detection; Step 5 = typed review + confirmation; Step 7 Tikun = opt-in destructive).
+  START-HERE.bat                  Guided 9-step launcher (Steps 4 = read-only detection; Step 5 = typed review + confirmation).
   RUN-REMOVAL-TEST.bat            Lab-only -ExecuteRemoval test launcher.
   Run-DetectRemoteAccess.bat      Double-click detection launcher.
   make-deploy-bundle.sh           Builds the field-deploy zip.

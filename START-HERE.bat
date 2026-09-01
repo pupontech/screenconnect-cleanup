@@ -2,9 +2,9 @@
 rem ============================================================================
 rem  START-HERE.bat - one-by-one guided runner for the ScreenConnect Cleanup Tool
 rem  Walks the technician through each step in order, prompting before each one
-rem  that needs a decision. Steps 1-4 and 9-10 are read-only (steps 3, 4 and 9
+rem  that needs a decision. Steps 1-4 and 8-9 are read-only (steps 3, 4, 8 and 9
 rem  run automatically). Step 5 requires typed review and confirmation before
-rem  ScreenConnect removal. Step 7 is an opt-in destructive tool. Self-elevates.
+rem  ScreenConnect removal. Self-elevates.
 rem  Pure ASCII, no BOM.
 rem ============================================================================
 
@@ -45,12 +45,12 @@ echo   SCREENCONNECT CLEANUP - guided run
 echo   Prompts mark decisions; Ctrl+C aborts.
 echo.
 echo   1 toolpack  2 preflight  3 snapshot  4 detect  5 remove
-echo   6 scanners  7 Tikun  8 AV uninstall  9 diff  10 report
+echo   6 scanners  7 AV uninstall  8 diff  9 report
 echo  ============================================================
 echo.
 
 rem ---- Step 1: tool pack -----------------------------------------------------
-echo  STEP 1/10: Tool pack + scanner staging
+echo  STEP 1/9: Tool pack + scanner staging
 set /p GO="    Run now? [Y/n] "
 if /i not "%GO%"=="n" (
     if exist "%~dp0tools\Get-ToolPack.ps1" (
@@ -69,14 +69,14 @@ set GO=
 
 rem ---- Step 2: preflight (ALWAYS runs - owner directive 2026-08-28) ---------
 echo.
-echo  STEP 2/10: Preflight
+echo  STEP 2/9: Preflight
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0preflight.ps1"
 if errorlevel 1 goto :preflight_failed
 set GO=
 
 rem ---- Step 3: BEFORE snapshot -----------------------------------------------
 echo.
-echo  STEP 3/10: Before snapshot
+echo  STEP 3/9: Before snapshot
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect-snapshot.ps1" -Label before -OutFile "!SCC_RUN_ROOT!\snapshot_before.json" -Quiet
 if errorlevel 1 goto :before_snapshot_failed
 if exist "!SCC_RUN_ROOT!\snapshot_before.json" (
@@ -88,7 +88,7 @@ set GO=
 
 rem ---- Step 4: detection -----------------------------------------------------
 echo.
-echo  STEP 4/10: Remote-access detection
+echo  STEP 4/9: Remote-access detection
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0detect-remote-access.ps1" -All -NoPause -NoZip -OutRoot "!SCC_RUN_ROOT!\detect"
 if errorlevel 1 goto :detection_failed
 set GO=
@@ -101,14 +101,14 @@ for /f "delims=" %%D in ('dir /b /ad /o-d "!SCC_RUN_ROOT!\detect\*_*" 2^>nul') d
     )
 )
 if not defined FINDINGS_JSON (
-    echo     [i] No findings.json found - steps 5 and 9 need it.
+    echo     [i] No findings.json found - steps 5 and 8 need it.
 ) else (
     echo     [i] Latest findings: !FINDINGS_JSON!
 )
 
 rem ---- Step 5: REMOVE (typed confirmation) ----------------------------------
 echo.
-echo  STEP 5/10: Review/remove ScreenConnect
+echo  STEP 5/9: Review/remove ScreenConnect
 echo    Review each instance. Files are quarantined, never deleted.
 echo    Type y only after confirming the instance and removal.
 if exist "%~dp0Invoke-ReviewAndRemove.ps1" (
@@ -126,7 +126,7 @@ set GO=
 
 rem ---- Step 6: antivirus scans - each one is its own step ---------------------
 echo.
-echo  STEP 6/10: Antivirus scans (attended)
+echo  STEP 6/9: Antivirus scans (attended)
 echo    Each scanner opens visibly. Complete it, then return here.
 
 echo.
@@ -194,28 +194,9 @@ echo        Malwarebytes session ended - continuing.
 :skip_6c
 set GO=
 
-rem ---- Step 7: Tikun (OPT-IN - destructive, deletes without quarantine) --------
+rem ---- Step 7: Uninstall installed AV (attended) -------------------------------
 echo.
-echo  STEP 7/10: Tikun (opt-in destructive)
-echo    Kills processes; DELETES files/registry entries without quarantine;
-echo    also targets removable drives; installs a startup task.
-echo    Enter skips; type y to run.
-set /p GO="    Run Tikun now? [y/N] "
-if /i "%GO%"=="y" (
-    set "GFIX_SCRIPT="
-    for %%S in ("%~dp0tools\GeneralFix\*.bat") do if not defined GFIX_SCRIPT set "GFIX_SCRIPT=%%~fS"
-    if defined GFIX_SCRIPT (
-        call "!GFIX_SCRIPT!"
-    ) else (
-        echo     [WARN] No .bat found under tools\GeneralFix\ - skipping Tikun.
-    )
-    set GFIX_SCRIPT=
-)
-set GO=
-
-rem ---- Step 8: Uninstall installed AV (attended) -------------------------------
-echo.
-echo  STEP 8/10: Uninstall third-party AV (attended)
+echo  STEP 7/9: Uninstall third-party AV (attended)
 echo    Malwarebytes uses winget; other AV uninstallers open for you.
 echo    Never silent-uninstalls - uninstallers open for you to drive.
 echo    Defender is excluded. Enter skips.
@@ -227,9 +208,9 @@ if /i "%GO%"=="y" (
 )
 set GO=
 
-rem ---- Step 9: AFTER snapshot + diff ------------------------------------------
+rem ---- Step 8: AFTER snapshot + diff ------------------------------------------
 echo.
-echo  STEP 9/10: After snapshot + diff
+echo  STEP 8/9: After snapshot + diff
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect-snapshot.ps1" -Label after -OutFile "!SCC_RUN_ROOT!\snapshot_after.json" -Quiet
 if errorlevel 1 echo     [WARN] After-snapshot exited with errorlevel %errorlevel%
 rem Only diff when the baseline from this run actually exists.
@@ -253,9 +234,9 @@ if not exist "!SCC_RUN_ROOT!\snapshot_before.json" (
 )
 set GO=
 
-rem ---- Step 10: report ---------------------------------------------------------
+rem ---- Step 9: report ---------------------------------------------------------
 echo.
-echo  STEP 10/10: Report
+echo  STEP 9/9: Report
 if not defined FINDINGS_JSON (
     echo     [WARN] No current-run findings.json available - skipping report.
 ) else (

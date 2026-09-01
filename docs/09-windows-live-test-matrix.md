@@ -1,4 +1,4 @@
-# Windows Live-Test Matrix (validation checklist, current for v1.7.32)
+# Windows Live-Test Matrix (validation checklist, current for v1.7.36)
 
 This document is the exact validation checklist for the ScreenConnect Cleanup
 Tool. All items run on a dedicated, disposable Windows lab VM under Windows
@@ -219,7 +219,7 @@ identity/signature and deferred-hash hardening) recorded the following evidence:
 `Invoke-AVUninstaller.ps1` sweeps leftovers after every uninstall attempt and
 MOVES them (never deletes) to `<LogDir>\av-uninstall-quarantine`.
 
-6c.1 On a machine with ESET installed, run Step 8. After the vendor uninstaller
+6c.1 On a machine with ESET installed, run Step 7. After the vendor uninstaller
       window closes, confirm the script reports the leftover sweep with N
       item(s) moved.
 6c.2 Confirm the ESET Start Menu folder and Program Files\ESET are GONE from

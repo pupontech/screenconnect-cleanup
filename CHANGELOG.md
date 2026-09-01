@@ -3,6 +3,13 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.36] - 2026-09-01
+- Temporarily removed the optional Tikun / General Fix component from the
+  guided runner and deployment bundle.
+- Removed its destructive launcher step, tracked batch file, bundle-copy logic,
+  and obsolete whitelist/contract references. The guided runner now has 9
+  steps; the core ScreenConnect, scanner, and quarantine workflow is unchanged.
+
 ## [1.7.35] - 2026-09-01
 - Fixed the BITS download display: `Get-AVTools.ps1` now renders a real
   PowerShell `Write-Progress` bar for asynchronous BITS transfers, starting at

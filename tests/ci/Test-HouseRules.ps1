@@ -17,7 +17,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 # Directories that hold third-party binaries / vendored tools - skip them.
-$excludeDirs = @('\.git\', '\tools\Autoruns\', '\tools\ProcessMonitor\', '\tools\Sigcheck\', '\tools\TCPView\', '\tools\GeneralFix\')
+$excludeDirs = @('\.git\', '\tools\Autoruns\', '\tools\ProcessMonitor\', '\tools\Sigcheck\', '\tools\TCPView\')
 $extensions = @('.ps1', '.bat', '.cmd', '.json', '.md', '.yml', '.sh')
 
 $files = Get-ChildItem -Path $repoRoot -Recurse -File | Where-Object {
