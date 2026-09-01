@@ -4,6 +4,7 @@ $tmp = Join-Path $tmpRoot ('scc-report-test-' + (Get-Random))
 $null = New-Item -ItemType Directory -Path $tmp -Force
 $repo = Split-Path -Parent $PSScriptRoot
 $reportScript = Join-Path $repo 'New-InvestigationReport.ps1'
+$reportSource = Get-Content -LiteralPath $reportScript -Raw
 
 # Minimal but valid findings.json (hostile values to prove escaping still holds)
 $findings = @{
@@ -24,6 +25,27 @@ $findings = @{
 $findingsJson = Join-Path $tmp 'findings.json'
 $findings | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $findingsJson -Encoding UTF8 -NoNewline
 
+# A one-instance JSON result is serialized as a bare object by Windows
+# PowerShell 5.1. The report must preserve array context before reading .Count.
+$singleFindings = @{
+    ComputerName = 'ONE-PC'
+    OSCaption    = 'Windows'
+    TargetsSelected = @('screenconnect')
+    TargetsSource = 'embedded'
+    ScreenConnect = @{
+        Instances  = @(@{ Identifier = 'only-instance'; Key = 'only-instance'; Sources = @('service') })
+        ParseIssues = @()
+        Historical  = @()
+        RawFilesSaved = @()
+    }
+    OtherTargets = @()
+}
+$singleFindingsJson = Join-Path $tmp 'single-findings.json'
+$singleFindings | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $singleFindingsJson -Encoding UTF8 -NoNewline
+$singleOut = Join-Path $tmp 'single-report.html'
+& $reportScript -FindingsJson $singleFindingsJson -OutputPath $singleOut *> $null
+$singleHtml = Get-Content -LiteralPath $singleOut -Raw
+
 # scanner_results.json as sc-cleanup.ps1 Stage 5 writes it
 $scannerResults = @(
     @{ Tool = 'KVRT.exe'; Scanner = 'KVRT'; Status = 'Completed'; ExitCode = 0 },
@@ -37,6 +59,10 @@ $failures = 0
 function Check($name, $cond) {
     if ($cond) { Write-Host "PASS  $name" } else { Write-Host "FAIL  $name"; $script:failures++ }
 }
+
+Check 'report preserves singleton ScreenConnect array context' ($reportSource.Contains('$scCount = @($scInstances).Count'))
+Check 'single ScreenConnect count appears in section heading' ($singleHtml.Contains('<h2>ScreenConnect instances (1)</h2>'))
+Check 'single ScreenConnect count appears in summary card' ($singleHtml -match '(?s)<div class="stat-card stat-danger">\s*<div class="stat-number">1</div>\s*<div class="stat-label">ScreenConnect instance\(s\) found')
 
 # 1. With -ScannerSummary: table rendered, statuses present, hostile scanner escaped
 $out1 = Join-Path $tmp 'report1.html'

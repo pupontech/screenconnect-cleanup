@@ -170,8 +170,10 @@ Worth recording because both were silent-wrong-answer bugs, not crashes.
 **1. PowerShell 5.1 single-element array unwrapping.**
 `.Count` on a single-element result returned `$null`, printing a blank count. It showed up
 as `artifacts found:` (blank) for AnyDesk's single hit. **This would have misreported the
-one-ScreenConnect-instance case — the most common real scenario.** Fixed by forcing array
-context (`@(...)`) at all 11 counting sites.
+one-ScreenConnect-instance case — the most common real scenario.** Detector counts were
+fixed by forcing array context (`@(...)`) at all 11 counting sites. The report renderer had
+the same PowerShell 5.1 boundary issue; v1.7.37 now preserves the normalized instance array
+before rendering both the summary count and the ScreenConnect section heading.
 
 **2. `-Target a,b` broken through the .bat launcher.**
 `powershell.exe -File` passes `a,b` as a single string, not an array, so the whole thing

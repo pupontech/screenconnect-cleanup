@@ -102,7 +102,11 @@ jobs:
         shell: pwsh
         run: ./tests/ci/Test-SafetyRegressionContracts.ps1
 
-      - name: Report rendering regression
+      - name: Report rendering regression (Windows PowerShell 5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/test_report_scanner_section.ps1
+
+      - name: Report rendering regression (pwsh)
         shell: pwsh
         run: ./tests/test_report_scanner_section.ps1
 

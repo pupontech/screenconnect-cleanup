@@ -3,6 +3,13 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.37] - 2026-09-01
+- Fixed the HTML report count for the common single ScreenConnect-instance
+  case under PowerShell 5.1. The summary card and ScreenConnect section heading
+  now both show the exact number of instances instead of a blank count.
+- Preserved array context for JSON-derived collections before reading `.Count`;
+  added a one-instance report regression test.
+
 ## [1.7.36] - 2026-09-01
 - Temporarily removed the optional Tikun / General Fix component from the
   guided runner and deployment bundle.

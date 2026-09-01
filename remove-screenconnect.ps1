@@ -61,7 +61,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.7.36'
+$ScriptVersion = '1.7.37'
 $ScriptName = 'remove-screenconnect.ps1'
 
 # We need the helper in scope before the elevation gate below runs.

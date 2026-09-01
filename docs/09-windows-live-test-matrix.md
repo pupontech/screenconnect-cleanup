@@ -1,4 +1,4 @@
-# Windows Live-Test Matrix (validation checklist, current for v1.7.36)
+# Windows Live-Test Matrix (validation checklist, current for v1.7.37)
 
 This document is the exact validation checklist for the ScreenConnect Cleanup
 Tool. All items run on a dedicated, disposable Windows lab VM under Windows

@@ -196,10 +196,10 @@ $toolName        = Get-Prop $findings 'Tool'
 $toolVersion     = Get-Prop $findings 'Version'
 $psVersion       = Get-Prop $findings 'PSVersion'
 $targetsSource   = Get-Prop $findings 'TargetsSource'
-$targetsSelected = Get-Items (Get-Prop $findings 'TargetsSelected')
+$targetsSelected = @(Get-Items (Get-Prop $findings 'TargetsSelected'))
 $eventLogError   = Get-Prop $findings 'EventLogError'
 $scResult        = Get-Prop $findings 'ScreenConnect'
-$otherTargets    = Get-Items (Get-Prop $findings 'OtherTargets')
+$otherTargets    = @(Get-Items (Get-Prop $findings 'OtherTargets'))
 
 $removalEntries = @()
 $removalManifestError = $null
@@ -207,7 +207,7 @@ if ($RemovalManifest) {
     if (Test-Path -LiteralPath $RemovalManifest) {
         try {
             $manifestObject = (Get-Content -LiteralPath $RemovalManifest -Raw) | ConvertFrom-Json
-            $removalEntries = Get-Items (Get-Prop $manifestObject 'Entries')
+            $removalEntries = @(Get-Items (Get-Prop $manifestObject 'Entries'))
         }
         catch { $removalManifestError = $_.Exception.Message }
     } else { $removalManifestError = 'Manifest file not found.' }
@@ -227,17 +227,17 @@ $scParseIssues  = @()
 $scHistorical   = @()
 $scRawFiles     = @()
 if ($null -ne $scResult) {
-    $scInstances   = Get-Items (Get-Prop $scResult 'Instances')
-    $scParseIssues = Get-Items (Get-Prop $scResult 'ParseIssues')
-    $scHistorical  = Get-Items (Get-Prop $scResult 'Historical')
-    $scRawFiles    = Get-Items (Get-Prop $scResult 'RawFilesSaved')
+    $scInstances   = @(Get-Items (Get-Prop $scResult 'Instances'))
+    $scParseIssues = @(Get-Items (Get-Prop $scResult 'ParseIssues'))
+    $scHistorical  = @(Get-Items (Get-Prop $scResult 'Historical'))
+    $scRawFiles    = @(Get-Items (Get-Prop $scResult 'RawFilesSaved'))
 }
 
 $otherHitTotal = 0
 $otherProductsWithHits = 0
 $otherAgentGroups = New-Object System.Collections.ArrayList
 foreach ($t in $otherTargets) {
-    $hits = Get-Items (Get-Prop $t 'Hits')
+    $hits = @(Get-Items (Get-Prop $t 'Hits'))
     if ($hits.Count -gt 0) {
         $otherHitTotal += $hits.Count
         $otherProductsWithHits++
@@ -275,7 +275,7 @@ $headerHtml = @"
 # Summary banner
 # ---------------------------------------------------------------------------
 
-$scCount = $scInstances.Count
+$scCount = @($scInstances).Count
 $scCardClass = 'stat-ok'
 if ($scCount -gt 0) { $scCardClass = 'stat-danger' }
 
@@ -502,12 +502,12 @@ function Build-InstanceHtml {
 $scSectionHtml = ''
 if ($null -eq $scResult) {
     $scSectionHtml = "<section id='screenconnect'><h2>ScreenConnect instances</h2><p class='muted'>ScreenConnect was not included as a scan target in this run (see Targets scanned in the Environment section).</p></section>"
-} elseif ($scInstances.Count -eq 0) {
+} elseif ($scCount -eq 0) {
     $scSectionHtml = "<section id='screenconnect'><h2>ScreenConnect instances</h2><p class='ok-line'>None found. No ScreenConnect / ConnectWise Control service, process, install directory, or uninstall entry was detected on this machine.</p></section>"
 } else {
     $cards = ''
     foreach ($inst in $scInstances) { $cards += (Build-InstanceHtml $inst) }
-    $scSectionHtml = "<section id='screenconnect'><h2>ScreenConnect instances ($($scInstances.Count))</h2>$cards</section>"
+    $scSectionHtml = "<section id='screenconnect'><h2>ScreenConnect instances ($scCount)</h2>$cards</section>"
 }
 
 # ---------------------------------------------------------------------------
