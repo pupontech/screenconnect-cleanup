@@ -76,6 +76,42 @@ function Load-Manifest {
     return New-Object PSObject
 }
 
+function Test-ManifestToolFiles {
+    param($Tool, $ManifestEntry)
+    $count = 0
+    if ($null -eq $ManifestEntry) {
+        return [pscustomobject]@{ Valid = $false; Count = 0; Error = 'Manifest entry missing' }
+    }
+    $fileProp = $ManifestEntry.PSObject.Properties['files']
+    if (-not $fileProp -or $null -eq $fileProp.Value) {
+        return [pscustomobject]@{ Valid = $false; Count = 0; Error = 'Manifest entry has no files map' }
+    }
+    foreach ($fileEntry in @($fileProp.Value.PSObject.Properties)) {
+        $fileName = [string]$fileEntry.Name
+        $fileInfo = $fileEntry.Value
+        $filePath = Join-Path (Join-Path $ToolDir $Tool.Name) $fileName
+        if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
+            return [pscustomobject]@{ Valid = $false; Count = $count; Error = "Missing file: $fileName" }
+        }
+        $size = (Get-Item -LiteralPath $filePath).Length
+        $hash = Get-FileSha256 -FilePath $filePath
+        if (-not $hash -or [string]$hash -ne [string]$fileInfo.sha256 -or [int64]$size -ne [int64]$fileInfo.size) {
+            return [pscustomobject]@{ Valid = $false; Count = $count; Error = "Hash/size mismatch: $fileName" }
+        }
+        $count++
+    }
+    foreach ($expected in @($Tool.ExesToCheck)) {
+        $expectedPath = Join-Path (Join-Path $ToolDir $Tool.Name) $expected
+        if (-not (Test-Path -LiteralPath $expectedPath -PathType Leaf)) {
+            return [pscustomobject]@{ Valid = $false; Count = $count; Error = "Expected executable missing: $expected" }
+        }
+    }
+    if ($count -eq 0 -and @($Tool.ExesToCheck).Count -eq 0) {
+        return [pscustomobject]@{ Valid = $false; Count = 0; Error = 'Manifest files map is empty' }
+    }
+    return [pscustomobject]@{ Valid = $true; Count = $count; Error = '' }
+}
+
 # Helper function to save manifest
 function Save-Manifest {
     param($Data, [string]$Path)
@@ -190,15 +226,20 @@ foreach ($tool in $tools) {
     $toolError = ''
     $fileCount = 0
 
-    # Check if already downloaded and -Force not specified
     $existingEntry = $manifest.PSObject.Properties | Where-Object { $_.Name -eq $tool.Name }
     if ($existingEntry -and -not $Force) {
-        $fileCount = @($existingEntry.Value.files.PSObject.Properties).Count
-        Add-Result -Tool $tool.Name -Status 'SKIPPED' -Count $fileCount -Error ''
-        if (-not $Quiet) {
-            Write-Host "$($tool.Name): Already present, skipping (use -Force to re-download)" -ForegroundColor Yellow
+        $existingCheck = Test-ManifestToolFiles -Tool $tool -ManifestEntry $existingEntry.Value
+        if ($existingCheck.Valid) {
+            $fileCount = $existingCheck.Count
+            Add-Result -Tool $tool.Name -Status 'SKIPPED' -Count $fileCount -Error ''
+            if (-not $Quiet) {
+                Write-Host "$($tool.Name): Already present and verified, skipping (use -Force to re-download)" -ForegroundColor Yellow
+            }
+            continue
         }
-        continue
+        if (-not $Quiet) {
+            Write-Host "$($tool.Name): stale/incomplete manifest entry ($($existingCheck.Error)); re-downloading." -ForegroundColor Yellow
+        }
     }
 
     # Download the tool

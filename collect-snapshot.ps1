@@ -6,13 +6,16 @@
   removal work and once AFTER, then diff the two files to prove what actually
   changed (and to catch anything that re-installs itself).
 
-  This script makes NO changes to the system. It only ever writes its own
-  output file. No Set-, Stop-, Remove-, Start-, New- (system state) cmdlets
-  are used against anything on the machine.
+  This script writes its own output file and, for the Amcache section only, may
+  temporarily mount the Windows Amcache hive under HKLM:\Amcache when running
+  elevated. The mount is always attempted in a finally block and unload failure
+  is recorded. All other collection paths are read-only and no Set-, Stop-,
+  Remove-, Start-, or New- (system state) cmdlets are used against the machine.
 
   Requires Windows PowerShell 5.1+. Admin is NOT required - every section is
   individually wrapped so a failure there is recorded in CollectionErrors and
-  the rest of the run continues. Some sections (notably per-process owner,
+  the rest of the run continues; intentional limitations/absent optional artifacts
+  are recorded in CollectionWarnings. Some sections (notably per-process owner,
   some registry hives, some services) return less detail without admin.
 
   --------------------------------------------------------------------------
@@ -76,6 +79,7 @@ param(
     [string]$Section = '',      # internal: collect ONE section and exit (manual / single-section jobs)
     [string]$Sections = '',     # internal: collect a comma-separated GROUP of sections and exit (v1.7.16 group jobs)
     [switch]$NoParallel,        # collect everything sequentially (no background jobs)
+    [int]$ParallelTimeoutSeconds = 300,
     [switch]$Quiet
 )
 
@@ -104,10 +108,18 @@ function Get-HostNameSafe {
 # ---------------------------------------------------------------------------
 
 $script:CollectionErrors = New-Object System.Collections.Generic.List[object]
+$script:CollectionWarnings = New-Object System.Collections.Generic.List[object]
+$script:CollectionIncomplete = $false
 
 function Get-CollectionErrorsArray {
     $arr = New-Object object[] $script:CollectionErrors.Count
     $script:CollectionErrors.CopyTo($arr, 0)
+    return $arr
+}
+
+function Get-CollectionWarningsArray {
+    $arr = New-Object object[] $script:CollectionWarnings.Count
+    $script:CollectionWarnings.CopyTo($arr, 0)
     return $arr
 }
 
@@ -120,9 +132,18 @@ function Write-Info {
 
 function Add-CollectionError {
     param([string]$Section, [string]$ErrorText)
+    $script:CollectionIncomplete = $true
     $script:CollectionErrors.Add([PSCustomObject]@{
         Section = $Section
         Error   = $ErrorText
+    })
+}
+
+function Add-CollectionWarning {
+    param([string]$Section, [string]$WarningText)
+    $script:CollectionWarnings.Add([PSCustomObject]@{
+        Section = $Section
+        Warning = $WarningText
     })
 }
 
@@ -808,6 +829,20 @@ function Test-InIncidentWindow {
     }
 }
 
+function Convert-BamFileTime {
+    # BAM/DAM values are REG_BINARY. Published layouts place the last-execution
+    # FILETIME at offset 0; invalid/short payloads remain undecoded.
+    param($Value)
+    if ($Value -isnot [byte[]] -or $Value.Length -lt 8) { return $null }
+    try {
+        $fileTime = [BitConverter]::ToInt64($Value, 0)
+        if ($fileTime -le 0) { return $null }
+        return [DateTime]::FromFileTimeUtc($fileTime)
+    } catch {
+        return $null
+    }
+}
+
 # ---------------------------------------------------------------------------
 # Prefetch - C:\Windows\Prefetch\*.pf
 #
@@ -853,100 +888,57 @@ function Get-PrefetchSection {
 # ShimCache (Application Compatibility Cache)
 #   HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\AppCompatCache
 #
-# Raw REG_BINARY decoded in-script for the Windows 8.1 / Windows 10 entry
-# layouts (entry types 0x30 and 0x10 following a 48-byte '10ts' header).
-# *** The binary layout was written from published forensic references and
-# *** has NOT been verified against a live Windows host - if decoding fails
-# *** the section degrades to reporting the raw blob length plus a
-# *** CollectionErrors entry rather than emitting wrong paths. Older formats
-# *** (XP/Vista/Win7) are intentionally not decoded here.
-# Key = lower-cased cached path (the identity Shimcache itself stores).
+# Raw REG_BINARY metadata only. Windows 8.1/10/11 AppCompatCache has multiple
+# layout revisions and this collector has no cross-version fixture set yet.
+# Do NOT emit decoded paths from an unvalidated layout: retain a stable hash,
+# byte length, and header preview plus a CollectionWarning until the Windows
+# owner supplies fixtures and a separately verified decoder.
 # ---------------------------------------------------------------------------
-function Convert-ShimFileTime {
-    param([byte[]]$Blob, [int]$Offset)
-    try {
-        $ft = [BitConverter]::ToInt64($Blob, $Offset)
-        if ($ft -le 0 -or $ft -ge 2650467744000000000) { return $null }
-        return [DateTime]::FromFileTimeUtc($ft)
-    } catch {
-        return $null
-    }
-}
-
 function Get-ShimCacheSection {
     param([int]$WindowDays)
 
     $rows = New-Object System.Collections.Generic.List[object]
     $keyPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\AppCompatCache'
     if (-not (Test-Path -LiteralPath $keyPath)) {
-        throw "AppCompatCache key not found: $keyPath"
+        Add-CollectionWarning -Section 'ShimCache' -WarningText "AppCompatCache key not found: $keyPath"
+        return $rows
     }
     $item = Get-Item -LiteralPath $keyPath -ErrorAction Stop
     $valueName = 'AppCompatCache'
     if ($item.Property -notcontains $valueName) {
-        throw 'AppCompatCache value not present'
+        Add-CollectionWarning -Section 'ShimCache' -WarningText 'AppCompatCache value not present'
+        return $rows
     }
     $blob = (Get-ItemProperty -LiteralPath $keyPath -Name $valueName -ErrorAction Stop).$valueName
-    if ($null -eq $blob -or $blob.Length -lt 64) {
-        throw ('AppCompatCache blob too small ({0} bytes)' -f $blob.Length)
+    $blobLength = 0
+    if ($null -ne $blob) { $blobLength = [int]$blob.Length }
+    if ($blobLength -eq 0) {
+        Add-CollectionWarning -Section 'ShimCache' -WarningText 'AppCompatCache blob is empty'
+        return $rows
     }
 
-    # Header sanity: Win8.1/10 blobs carry the signature '10ts' (0x73743031)
-    # inside the first 16 bytes.
-    $sigOk = $false
+    $rawSha256 = ''
+    $headerHex = ''
     try {
-        $sig = [System.Text.Encoding]::ASCII.GetString($blob, 0, 16)
-        if ($sig.IndexOf('10ts') -ge 0) { $sigOk = $true }
-    } catch { }
-    if (-not $sigOk) {
-        throw ('AppCompatCache: unrecognized header signature (raw {0} bytes kept undecoded; pre-Win8.1 format not supported)' -f $blob.Length)
-    }
-
-    $pos = 48
-    $total = $blob.Length
-    $maxEntries = 4096   # hard stop against corrupt-loop paranoia
-    $count = 0
-    while (($pos + 4) -le $total -and $count -lt $maxEntries) {
-        $count++
-        $size = [BitConverter]::ToUInt16($blob, $pos)
-        if ($size -lt 8) { break }
-        if (($pos + $size) -gt $total) { break }
+        $sha = [System.Security.Cryptography.SHA256CryptoServiceProvider]::Create()
         try {
-            $type = [BitConverter]::ToUInt16($blob, $pos + 2)
-            $pathOffset = 0; $pathLen = 0; $modTime = $null
-
-            if ($type -eq 0x30) {
-                # 0x30: WORD wLen@4, WORD wMaxLen@6, DWORD absOffset@8, QWORD filetime@12
-                $pathLen = [BitConverter]::ToUInt16($blob, $pos + 4)
-                $pathOffset = [BitConverter]::ToUInt32($blob, $pos + 8)
-                $modTime = Convert-ShimFileTime -Blob $blob -Offset ($pos + 12)
-            } elseif ($type -eq 0x10) {
-                # 0x10: WORD wLen@4, WORD wMaxLen@6, DWORD absOffset@8 (no mod time)
-                $pathLen = [BitConverter]::ToUInt16($blob, $pos + 4)
-                $pathOffset = [BitConverter]::ToUInt32($blob, $pos + 8)
-            } else {
-                $pos += $size
-                continue
-            }
-
-            if ($pathLen -gt 0 -and $pathOffset -gt 0 -and ($pathOffset + $pathLen) -le $total) {
-                $pathStr = [System.Text.Encoding]::Unicode.GetString($blob, [int]$pathOffset, $pathLen).TrimEnd([char]0)
-                if (-not [string]::IsNullOrWhiteSpace($pathStr)) {
-                    $rows.Add([PSCustomObject]@{
-                        Key              = $pathStr.ToLowerInvariant()
-                        CachedPath       = $pathStr
-                        EntryType        = ('0x{0:X2}' -f $type)
-                        LastModifiedUtc  = $(if ($modTime) { $modTime.ToString('yyyy-MM-dd HH:mm:ss') } else { '' })
-                        InIncidentWindow = (Test-InIncidentWindow -WindowDays $WindowDays -TimestampUtc $modTime)
-                    })
-                }
-            }
-        } catch {
-            Add-CollectionError -Section 'ShimCache' -ErrorText ("Entry at offset ${pos}: $($_.Exception.Message)")
-        }
-        $pos += $size
+            $rawSha256 = (([System.BitConverter]::ToString($sha.ComputeHash($blob))).Replace('-', '').ToLowerInvariant())
+        } finally { $sha.Dispose() }
+        $previewLength = [Math]::Min(16, $blobLength)
+        $headerHex = (([System.BitConverter]::ToString($blob, 0, $previewLength)).Replace('-', '').ToLowerInvariant())
+    } catch {
+        Add-CollectionError -Section 'ShimCache' -ErrorText ("Raw blob hashing failed: " + $_.Exception.Message)
     }
 
+    [void]$rows.Add([PSCustomObject]@{
+        Key              = '__raw__'
+        DecoderStatus    = 'RawOnly'
+        BlobLengthBytes  = $blobLength
+        RawSha256        = $rawSha256
+        HeaderHex        = $headerHex
+        InIncidentWindow = $false
+    })
+    Add-CollectionWarning -Section 'ShimCache' -WarningText 'ShimCache path decoding disabled pending validated Windows 8.1/10/11 fixtures; raw metadata retained.'
     return $rows
 }
 
@@ -956,10 +948,10 @@ function Get-ShimCacheSection {
 #   HKLM\SYSTEM\CurrentControlSet\Services\dam\State\UserSettings\<SID>
 #
 # Each value under a per-SID key is the FULL PATH of an executable that ran;
-# the "when" lives in the registry KEY's last-write time (not exposed by the
-# PS provider), read here through RegQueryInfoKey via a small P/Invoke that
-# degrades to a blank timestamp if unavailable (non-Windows, or Add-Type
-# refused by policy). Key = service|SID|value-name.
+# the REG_BINARY value data carries the last-execution FILETIME at offset 0.
+# The key's last-write time is retained separately as provenance metadata (not
+# substituted for execution time), read through RegQueryInfoKey. Key =
+# service|SID|value-name.
 # ---------------------------------------------------------------------------
 if (-not ([System.Management.Automation.PSTypeName]'SCC.RegKeyTimes').Type) {
     try {
@@ -1024,7 +1016,15 @@ function Get-BamDamSection {
             $keyLastWrite = $null
             try {
                 if ($null -ne ([System.Management.Automation.PSTypeName]'SCC.RegKeyTimes').Type) {
-                    $keyLastWrite = [SCC.RegKeyTimes]::GetLastWriteUtc($sk.Name)
+                    # RegQueryInfoKey requires a native hive name, not the
+                    # provider-qualified HKLM:\ path or only the SID leaf.
+                    $nativeRoot = if ($spec.Root -like 'HKLM:*') {
+                        'HKEY_LOCAL_MACHINE' + $spec.Root.Substring(5)
+                    } elseif ($spec.Root -like 'HKCU:*') {
+                        'HKEY_CURRENT_USER' + $spec.Root.Substring(5)
+                    } else { $spec.Root }
+                    $nativeKeyPath = $nativeRoot.TrimEnd([char]92) + [char]92 + [string]$sk.PSChildName
+                    $keyLastWrite = [SCC.RegKeyTimes]::GetLastWriteUtc($nativeKeyPath)
                 }
             } catch { $keyLastWrite = $null }
 
@@ -1033,16 +1033,27 @@ function Get-BamDamSection {
                 foreach ($valueName in $item.Property) {
                     if ($valueName -in @('Version', 'SequenceNumber', 'UserPrettyName')) { continue }
                     $val = (Get-ItemProperty -LiteralPath $sk.PSPath -Name $valueName -ErrorAction SilentlyContinue).$valueName
-                    $progPath = ConvertTo-NullSafeString $val
+                    $executionTime = Convert-BamFileTime -Value $val
+                    $rawDataHex = ''
+                    $rawDataLength = 0
+                    if ($val -is [byte[]]) {
+                        $rawDataLength = $val.Length
+                        $rawDataHex = [BitConverter]::ToString($val).Replace('-', '')
+                    }
+                    $progPath = ConvertTo-NullSafeString $valueName
                     if ([string]::IsNullOrWhiteSpace($progPath)) { continue }
+                    $executionText = if ($executionTime) { $executionTime.ToString('yyyy-MM-dd HH:mm:ss') } else { '' }
                     $rows.Add([PSCustomObject]@{
-                        Key               = "$($spec.Service)|$($sk.PSChildName)|$valueName"
-                        Service           = $spec.Service
-                        Sid               = $sk.PSChildName
-                        ValueName         = $valueName
-                        ProgramPath       = $progPath
-                        KeyLastWriteUtc   = $(if ($keyLastWrite) { $keyLastWrite.ToString('yyyy-MM-dd HH:mm:ss') } else { '' })
-                        InIncidentWindow  = (Test-InIncidentWindow -WindowDays $WindowDays -TimestampUtc $keyLastWrite)
+                        Key                 = "$($spec.Service)|$($sk.PSChildName)|$valueName"
+                        Service             = $spec.Service
+                        Sid                 = $sk.PSChildName
+                        ValueName           = $valueName
+                        ProgramPath         = $progPath
+                        LastExecutionUtc    = $executionText
+                        ValueDataLengthBytes = $rawDataLength
+                        ValueDataHex        = $rawDataHex
+                        KeyLastWriteUtc     = $(if ($keyLastWrite) { $keyLastWrite.ToString('yyyy-MM-dd HH:mm:ss') } else { '' })
+                        InIncidentWindow    = (Test-InIncidentWindow -WindowDays $WindowDays -TimestampUtc $executionTime)
                     })
                 }
             } catch {
@@ -1057,8 +1068,8 @@ function Get-BamDamSection {
 # UserAssist - HKCU\...\Explorer\UserAssist\<GUID>\Count
 #
 # Value names are ROT13-obfuscated program/shortcut paths; the DWORD payload
-# carries run statistics. We decode ROT13 and read Runcount (offset 4 of the
-# binary value, the field every published reference agrees on). Key =
+# carries run statistics and a last-run FILETIME at bytes 60-67. We decode ROT13,
+# read RunCount (offset 4), and expose the last execution timestamp. Key =
 # GUID|decoded name.
 # ---------------------------------------------------------------------------
 function Convert-Rot13 {
@@ -1070,6 +1081,19 @@ function Convert-Rot13 {
         elseif ($c -ge 97 -and $c -le 122) { $chars[$i] = [char](((($c - 97) + 13) % 26) + 97) }
     }
     return -join $chars
+}
+
+function Convert-UserAssistFileTime {
+    # Modern UserAssist payloads place the last-run FILETIME at bytes 60-67.
+    param($Value)
+    if ($Value -isnot [byte[]] -or $Value.Length -lt 68) { return $null }
+    try {
+        $fileTime = [BitConverter]::ToInt64($Value, 60)
+        if ($fileTime -le 0) { return $null }
+        return [DateTime]::FromFileTimeUtc($fileTime)
+    } catch {
+        return $null
+    }
 }
 
 function Get-UserAssistSection {
@@ -1098,19 +1122,24 @@ function Get-UserAssistSection {
             foreach ($valueName in $item.Property) {
                 $decoded = Convert-Rot13 -Text $valueName
                 $runCount = $null
+                $lastExecution = $null
                 try {
                     $data = (Get-ItemProperty -LiteralPath $countKey -Name $valueName -ErrorAction Stop).$valueName
                     if ($data -is [byte[]] -and $data.Length -ge 8) {
                         $runCount = [BitConverter]::ToUInt32($data, 4)
+                        $lastExecution = Convert-UserAssistFileTime -Value $data
                     }
                 } catch { }
+                $lastExecutionText = if ($lastExecution) { $lastExecution.ToString('yyyy-MM-dd HH:mm:ss') } else { '' }
                 $rows.Add([PSCustomObject]@{
-                    Key          = "$guid|$decoded"
-                    Guid         = $guid
-                    Kind         = $kind
-                    EncodedName  = $valueName
-                    ProgramName  = $decoded
-                    RunCount     = $runCount
+                    Key               = "$guid|$decoded"
+                    Guid              = $guid
+                    Kind              = $kind
+                    EncodedName       = $valueName
+                    ProgramName       = $decoded
+                    RunCount          = $runCount
+                    LastExecutionUtc  = $lastExecutionText
+                    InIncidentWindow  = (Test-InIncidentWindow -WindowDays $WindowDays -TimestampUtc $lastExecution)
                 })
             }
         } catch {
@@ -1220,8 +1249,9 @@ function Get-AmcacheSection {
     # offline program-execution ledger after ShimCache/BAM). Read it by
     # mounting the hive under HKLM:\Amcache with reg.exe, enumerating the
     # inventory keys, then unmounting. Admin required; a non-admin or
-    # locked-hive run yields an empty section + a CollectionError (never
-    # aborts the snapshot). InstallDate is NOT used as a window filter: its
+    # locked-hive run yields an empty section + an explicit CollectionWarning
+    # when the artifact is absent, or a CollectionError for mount/read/unload
+    # failures (never aborts the snapshot). InstallDate is NOT used as a window filter: its
     # format (YYYYMMDD) and reliability vary by Windows version, and every
     # entry is worth keeping for an investigation.
     $rows = New-Object System.Collections.Generic.List[object]
@@ -1233,7 +1263,7 @@ function Get-AmcacheSection {
     }
     $amcachePath = Join-Path $windir 'AppCompat\Programs\Amcache.hve'
     if (-not (Test-Path -LiteralPath $amcachePath)) {
-        Add-CollectionError -Section 'Amcache' -ErrorText "Amcache.hve not found at $amcachePath"
+        Add-CollectionWarning -Section 'Amcache' -WarningText "Amcache.hve not found at $amcachePath"
         return , @()
     }
     $regExe = $null
@@ -1243,14 +1273,20 @@ function Get-AmcacheSection {
         return , @()
     }
     $mountKey = 'HKLM\Amcache'
+    $mountProviderPath = 'Registry::' + $mountKey
     $mounted = $false
+    $alreadyMounted = $false
+    try { $alreadyMounted = Test-Path -LiteralPath $mountProviderPath } catch { $alreadyMounted = $false }
     try {
-        $null = & $regExe load $mountKey $amcachePath 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            Add-CollectionError -Section 'Amcache' -ErrorText ("reg.exe load failed (exit " + $LASTEXITCODE + ") - hive in use, or not elevated")
-            return , @()
+        if (-not $alreadyMounted) {
+            & $regExe load $mountKey $amcachePath 2>$null | Out-Null
+            $loadCode = $LASTEXITCODE
+            if ($loadCode -ne 0) {
+                Add-CollectionError -Section 'Amcache' -ErrorText ("reg.exe load failed (exit " + $loadCode + ") - hive in use, or not elevated")
+                return , @()
+            }
+            $mounted = $true
         }
-        $mounted = $true
 
         # InventoryApplicationFile: one subkey per binary file the service saw.
         $rootFile = 'Registry::' + $mountKey + '\Root\InventoryApplicationFile'
@@ -1260,13 +1296,17 @@ function Get-AmcacheSection {
                     $p = Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction Stop
                     $fileId = [string]$p.FileId
                     if (-not $fileId) { $fileId = $k.PSChildName }
+                    $filePath = ConvertTo-NullSafeString $p.LowerCaseLongPath
+                    if (-not $filePath) { $filePath = ConvertTo-NullSafeString $p.Path }
+                    $fileVersion = ConvertTo-NullSafeString $p.ProductVersion
+                    if (-not $fileVersion) { $fileVersion = ConvertTo-NullSafeString $p.Version }
                     $rows.Add([PSCustomObject]@{
                         Key       = 'AF:' + $fileId
                         Kind      = 'file'
                         Name      = ConvertTo-NullSafeString $p.Name
-                        Path      = ConvertTo-NullSafeString $p.Path
+                        Path      = $filePath
                         Publisher = ConvertTo-NullSafeString $p.Publisher
-                        Version   = ConvertTo-NullSafeString $p.Version
+                        Version   = $fileVersion
                         Hash      = ConvertTo-NullSafeString $p.Hash
                     })
                 } catch {
@@ -1275,7 +1315,8 @@ function Get-AmcacheSection {
             }
         }
 
-        # InventoryApplication: installed / executed application records.
+        # InventoryApplication: application inventory records. These indicate
+        # presence/metadata, not definitive execution by themselves.
         $rootApp = 'Registry::' + $mountKey + '\Root\InventoryApplication'
         if (Test-Path -LiteralPath $rootApp) {
             foreach ($k in @(Get-ChildItem -LiteralPath $rootApp -ErrorAction SilentlyContinue)) {
@@ -1283,14 +1324,18 @@ function Get-AmcacheSection {
                     $p = Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction Stop
                     $appId = [string]$p.AppId
                     if (-not $appId) { $appId = $k.PSChildName }
+                    $appPath = ConvertTo-NullSafeString $p.RootDirPath
+                    if (-not $appPath) { $appPath = ConvertTo-NullSafeString $p.FolderPath }
+                    $appVersion = ConvertTo-NullSafeString $p.ProductVersion
+                    if (-not $appVersion) { $appVersion = ConvertTo-NullSafeString $p.Version }
                     $rows.Add([PSCustomObject]@{
                         Key         = 'AP:' + $appId
                         Kind        = 'application'
                         Name        = ConvertTo-NullSafeString $p.Name
                         Publisher   = ConvertTo-NullSafeString $p.Publisher
-                        Version     = ConvertTo-NullSafeString $p.Version
+                        Version     = $appVersion
                         InstallDate = ConvertTo-NullSafeString $p.InstallDate
-                        Path        = ConvertTo-NullSafeString $p.FolderPath
+                        Path        = $appPath
                     })
                 } catch {
                     Add-CollectionError -Section 'Amcache' -ErrorText ("App entry " + $k.PSChildName + ": " + $_.Exception.Message)
@@ -1301,7 +1346,13 @@ function Get-AmcacheSection {
         Add-CollectionError -Section 'Amcache' -ErrorText $_.Exception.Message
     } finally {
         if ($mounted) {
-            $null = & $regExe unload $mountKey 2>$null
+            & $regExe unload $mountKey 2>$null | Out-Null
+            $unloadCode = $LASTEXITCODE
+            if ($unloadCode -ne 0) {
+                Add-CollectionError -Section 'Amcache' -ErrorText ("reg.exe unload failed (exit " + $unloadCode + "); HKLM\\Amcache may remain mounted")
+            }
+        } elseif ($alreadyMounted) {
+            Add-CollectionWarning -Section 'Amcache' -WarningText 'HKLM\\Amcache was already mounted; existing mount was reused and not unloaded'
         }
     }
     return , @($rows.ToArray())
@@ -1345,6 +1396,8 @@ function Get-SectionDataByName {
         'UserAssist'        { $out = Sort-ByKey (Invoke-Section -Name 'UserAssist' -ScriptBlock { Get-UserAssistSection -WindowDays $IncidentWindowDays }); return @($out) }
         'Prefetch'          { $out = Sort-ByKey (Invoke-Section -Name 'Prefetch' -ScriptBlock { Get-PrefetchSection -WindowDays $IncidentWindowDays }); return @($out) }
         'ShimCache'         { $out = Sort-ByKey (Invoke-Section -Name 'ShimCache' -ScriptBlock { Get-ShimCacheSection -WindowDays $IncidentWindowDays }); return @($out) }
+        'Srum'              { return (Get-SrumSection -SnapshotDir (Split-Path -Parent $OutFile)) }
+        'Amcache'           { $out = Sort-ByKey (Get-AmcacheSection); return @($out) }
         'StartupFolders'    { $out = Sort-ByKey (Invoke-Section -Name 'StartupFolders' -ScriptBlock { Get-StartupFoldersSection }); return @($out) }
         default { throw ("Unknown section: " + $Name) }
     }
@@ -1352,10 +1405,12 @@ function Get-SectionDataByName {
 
 if ($Section) {
     $out = Get-SectionDataByName -Name $Section
-    $data = @($out)
+    $data = if ($Section -eq 'Srum') { $out } else { @($out) }
     $errs = New-Object System.Collections.ArrayList
     foreach ($e in $script:CollectionErrors) { [void]$errs.Add($e.Error) }
-    [pscustomobject]@{ Section = $Section; Data = $data; Errors = $errs.ToArray() } |
+    $warns = New-Object System.Collections.ArrayList
+    foreach ($w in $script:CollectionWarnings) { [void]$warns.Add($w.Warning) }
+    [pscustomobject]@{ Section = $Section; Data = $data; Errors = $errs.ToArray(); Warnings = $warns.ToArray() } |
         ConvertTo-Json -Depth 8 -Compress | Write-Output
     exit 0
 }
@@ -1366,11 +1421,13 @@ if ($Sections) {
         $n = $n.Trim()
         if (-not $n) { continue }
         $out = Get-SectionDataByName -Name $n
-        $map[$n] = @($out)
+        if ($n -eq 'Srum') { $map[$n] = $out } else { $map[$n] = @($out) }
     }
     $errs = New-Object System.Collections.ArrayList
     foreach ($e in $script:CollectionErrors) { [void]$errs.Add([pscustomobject]@{ Section = $e.Section; Error = $e.Error }) }
-    [pscustomobject]@{ Sections = $map; Errors = $errs.ToArray() } |
+    $warns = New-Object System.Collections.ArrayList
+    foreach ($w in $script:CollectionWarnings) { [void]$warns.Add([pscustomobject]@{ Section = $w.Section; Warning = $w.Warning }) }
+    [pscustomobject]@{ Sections = $map; Errors = $errs.ToArray(); Warnings = $warns.ToArray() } |
         ConvertTo-Json -Depth 8 -Compress | Write-Output
     exit 0
 }
@@ -1379,12 +1436,13 @@ if ($Sections) {
 # Parallel section collection (v1.7.16 - concurrent GROUPS + live progress):
 # the independent sections run in at most 4 concurrent background jobs - each
 # job collects a GROUP of sections via -Sections mode and emits one JSON line
-# {Sections: {name: data}, Errors: [{Section, Error}]}. v1.7.6 parallelized 3
-# sections; v1.7.12 ran sequential waves (wall-clock = SUM of waves); v1.7.16
-# starts every group at once, so wall-clock = MAX of the groups (same
-# 4-process peak as one old wave, only 4 job spawns instead of 14). Every
-# group falls back to its sections' sequential in-process blocks on ANY
-# failure (spawn, timeout, bad payload). While waiting, a live progress line
+# {Sections: {name: data}, Errors: [{Section, Error}], Warnings: [{Section, Warning}]}.
+# v1.7.6 parallelized 3 sections; v1.7.12 ran sequential waves (wall-clock =
+# SUM of waves); v1.7.16 starts every group at once, so wall-clock = MAX of the
+# groups (same 4-process peak as one old wave, only 4 job spawns instead of 14).
+# payload failures fall back to the sections' sequential in-process blocks.
+# A hard timeout stops the remaining jobs and marks those sections incomplete;
+# it does NOT run an unbounded fallback after the deadline.
 # ticks in the console so the technician can see the snapshot is still
 # working - this is NOT gated by -Quiet (the guided runner runs -Quiet and
 # the progress bar is exactly what the technician needs to see).
@@ -1431,7 +1489,7 @@ function Invoke-GroupJob {
 }
 
 function Receive-GroupJob {
-    # Parse a group job's {Sections, Errors} envelope and merge every section
+    # Parse a group job's {Sections, Errors, Warnings} envelope and merge every section
     # into $script:waveData. Returns $true on success; $false on any failure
     # (the caller then runs that group's sections sequentially in-process).
     param([string]$Group, $Job, [string[]]$Members)
@@ -1456,6 +1514,14 @@ function Receive-GroupJob {
                 $errText = $pe.Error
                 if (-not $secName) { $secName = $Group }
                 Add-CollectionError -Section $secName -ErrorText ([string]$errText)
+            }
+        }
+        if ($parsed.Warnings) {
+            foreach ($pw in @($parsed.Warnings)) {
+                $secName = $pw.Section
+                $warningText = $pw.Warning
+                if (-not $secName) { $secName = $Group }
+                Add-CollectionWarning -Section $secName -WarningText ([string]$warningText)
             }
         }
         return $true
@@ -1487,7 +1553,24 @@ function Invoke-SectionGroups {
     }
 
     $pending = @($GroupNames)
+    $timeoutSeconds = [Math]::Max(30, $ParallelTimeoutSeconds)
+    $deadline = [DateTime]::UtcNow.AddSeconds($timeoutSeconds)
     while ($pending.Count -gt 0) {
+        if ([DateTime]::UtcNow -ge $deadline) {
+            Write-Info ("  (parallel snapshot groups exceeded " + $timeoutSeconds + " seconds; stopping remaining jobs and marking sections incomplete)")
+            foreach ($g in $pending) {
+                if ($null -ne $jobs[$g]) {
+                    try { Stop-Job -Job $jobs[$g] -ErrorAction SilentlyContinue } catch { }
+                    try { Remove-Job -Job $jobs[$g] -Force -ErrorAction SilentlyContinue } catch { }
+                }
+                foreach ($n in @($GroupMembers[$g])) {
+                    Add-CollectionError -Section $n -ErrorText ("parallel group timed out after " + $timeoutSeconds + " seconds")
+                    Add-WaveData -Name $n -Data @()
+                }
+            }
+            $pending = @()
+            break
+        }
         $live = @($pending | Where-Object { $null -ne $jobs[$_] })
         if ($live.Count -gt 0) {
             $null = Wait-Job -Job ($live | ForEach-Object { $jobs[$_] }) -Timeout 2
@@ -1651,7 +1734,9 @@ $result = [ordered]@{
     IsAdmin            = $isAdmin
     OSCaption          = $osCaption
     IncidentWindowDays = $IncidentWindowDays
+    CollectionComplete = (-not $script:CollectionIncomplete)
     CollectionErrors   = Get-CollectionErrorsArray
+    CollectionWarnings = Get-CollectionWarningsArray
     Sections           = [ordered]@{
         Services         = @($services)
         ScheduledTasks   = @($scheduledTasks)

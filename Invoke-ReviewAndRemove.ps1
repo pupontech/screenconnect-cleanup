@@ -14,10 +14,9 @@
   OWNER POLICY: ScreenConnect instances ONLY. Every other remote-access
   product in targets.json is detect/report-only and is never touched.
 
-  Dry-run by default. Nothing is removed unless the technician types the
-  confirmation phrase, or -Yes is passed. START-HERE.bat Step 5 passes -Yes:
-  the guided runner detects, removes and logs automatically with NO prompts
-  (owner directive 2026-08-27).
+  Dry-run by default. Nothing is removed unless the technician completes the
+  typed review and confirmation prompts. The former -Yes compatibility switch is
+  rejected because automatic destructive approval is not safe.
 
   PS 5.1 compatible. Pure ASCII, no BOM.
   Exit codes: 0 = ok (including "nothing to do"), 1 = removal reported failure.
@@ -33,9 +32,8 @@ param(
     # Where to look for findings when -FindingsJson is not given.
     [string]$ScanRoot = "$env:USERPROFILE\Desktop\RemoteAccessScan",
 
-    # Automatic: mark every ScreenConnect instance REMOVE and skip the typed
-    # confirmation. Used by START-HERE.bat Step 5 (owner directive 2026-08-27:
-    # "just run and remove and log").
+    # Deprecated compatibility switch. It is rejected; destructive approval must
+    # always be performed through the typed review and confirmation prompts.
     [switch]$Yes,
 
     # Review and write plan.json, but never call the remover.
@@ -51,12 +49,25 @@ function Write-Line {
     Write-Host $Message -ForegroundColor $Color
 }
 
+if ($Yes) {
+    Write-Line 'ERROR: -Yes automatic approval is disabled. Use the typed review and confirmation prompts.' 'Red'
+    exit 2
+}
+
 function Get-Prop {
     param($Object, [string]$Name)
     if ($null -eq $Object) { return $null }
     $p = $Object.PSObject.Properties[$Name]
     if ($p) { return $p.Value }
     return $null
+}
+
+function Get-JsonItems {
+    param($Value)
+    if ($null -eq $Value) { return , @() }
+    if ($Value -is [pscustomobject] -and @($Value.PSObject.Properties).Count -eq 0) { return , @() }
+    if ($Value -is [System.Array]) { return , @($Value) }
+    return , @($Value)
 }
 
 # --- Locate findings.json ---------------------------------------------------
@@ -85,7 +96,7 @@ $sc = Get-Prop $findings 'ScreenConnect'
 $instances = @()
 if ($sc) {
     $raw = Get-Prop $sc 'Instances'
-    if ($raw) { $instances = @($raw) }
+    $instances = Get-JsonItems $raw
 }
 
 if ($instances.Count -eq 0) {
@@ -95,15 +106,6 @@ if ($instances.Count -eq 0) {
 
 Write-Line ""
 Write-Line ("Found " + $instances.Count + " ScreenConnect instance(s).") 'White'
-
-if ($Yes) {
-    Write-Line ""
-    Write-Line "  *** -Yes: AUTOMATIC REMOVAL (owner directive 2026-08-27). Every" 'Red'
-    Write-Line "  *** ScreenConnect instance is marked REMOVE and -Execute applied" 'Red'
-    Write-Line "  *** with NO typed confirmation. ScreenConnect-only; quarantine," 'Red'
-    Write-Line "  *** never delete; every action is logged to the manifest + report." 'Red'
-    Write-Line ""
-}
 
 # --- Review gate ------------------------------------------------------------
 $approved = New-Object System.Collections.ArrayList
@@ -121,20 +123,15 @@ foreach ($inst in $instances) {
         if ($v) { Write-Line ("    {0,-15} {1}" -f ($f + ':'), $v) }
     }
 
-    if ($Yes) {
-        Write-Line "  -Yes: automatically marked REMOVE." 'Yellow'
-        [void]$approved.Add($inst)
-    } else {
-        # KEEP is the default. ScreenConnect is legitimate software a client's
-        # own IT may have installed deliberately, so a careless Enter must not
-        # remove anything. Explicit 'y' is required to mark an instance.
-        do {
-            $d = Read-Host 'Remove this instance? [y/N]'
-            if ([string]::IsNullOrWhiteSpace($d)) { $d = 'N' }
-            $d = $d.Trim().Substring(0,1).ToUpperInvariant()
-        } while ($d -ne 'Y' -and $d -ne 'N')
-        if ($d -eq 'Y') { [void]$approved.Add($inst) } else { Write-Line "  Keeping $id." }
-    }
+    # KEEP is the default. ScreenConnect is legitimate software a client's
+    # own IT may have installed deliberately, so a careless Enter must not
+    # remove anything. Explicit 'y' is required to mark an instance.
+    do {
+        $d = Read-Host 'Remove this instance? [y/N]'
+        if ([string]::IsNullOrWhiteSpace($d)) { $d = 'N' }
+        $d = $d.Trim().Substring(0,1).ToUpperInvariant()
+    } while ($d -ne 'Y' -and $d -ne 'N')
+    if ($d -eq 'Y') { [void]$approved.Add($inst) } else { Write-Line "  Keeping $id." }
 }
 
 if ($approved.Count -eq 0) {
@@ -145,19 +142,15 @@ if ($approved.Count -eq 0) {
 
 # --- Confirmation -----------------------------------------------------------
 $confirmed = $false
-if ($Yes) {
-    $confirmed = $true
-} else {
-    Write-Line ""
-    Write-Line ($approved.Count.ToString() + " instance(s) marked REMOVE.") 'Yellow'
-    Write-Line "Files are quarantined, never deleted. Type y to proceed." 'Yellow'
-    do {
-        $c = Read-Host 'Proceed with removal? [y/N]'
-        if ([string]::IsNullOrWhiteSpace($c)) { $c = 'N' }
-        $c = $c.Trim().Substring(0,1).ToUpperInvariant()
-    } while ($c -ne 'Y' -and $c -ne 'N')
-    if ($c -eq 'Y') { $confirmed = $true }
-}
+Write-Line ""
+Write-Line ($approved.Count.ToString() + " instance(s) marked REMOVE.") 'Yellow'
+Write-Line "Files are quarantined, never deleted. Type y to proceed." 'Yellow'
+do {
+    $c = Read-Host 'Proceed with removal? [y/N]'
+    if ([string]::IsNullOrWhiteSpace($c)) { $c = 'N' }
+    $c = $c.Trim().Substring(0,1).ToUpperInvariant()
+} while ($c -ne 'Y' -and $c -ne 'N')
+if ($c -eq 'Y') { $confirmed = $true }
 
 if (-not $confirmed) {
     Write-Line "Confirmation not given - nothing was removed." 'Yellow'
@@ -177,13 +170,18 @@ $decision = 'PARTIAL_REMOVE'
 if ($approved.Count -eq $instances.Count) { $decision = 'ALL_REMOVE' }
 
 $planPath = Join-Path $WorkDir 'plan.json'
+$sourceFindingsHash = (Get-FileHash -LiteralPath $FindingsJson -Algorithm SHA256 -ErrorAction Stop).Hash
+$sourceRunId = Split-Path -Leaf (Split-Path -Parent $FindingsJson)
 $plan = [ordered]@{
-    GeneratedUtc           = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
-    ComputerName           = $env:COMPUTERNAME
-    Decision               = $decision
-    SourceFindings         = $FindingsJson
-    RemovalConfirmed       = $true
-    ScreenConnectInstances = $approved.ToArray()
+    PlanSchemaVersion       = 2
+    RunId                   = $sourceRunId
+    GeneratedUtc            = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+    ComputerName            = $env:COMPUTERNAME
+    Decision                = $decision
+    SourceFindings          = $FindingsJson
+    SourceFindingsSha256    = $sourceFindingsHash
+    RemovalConfirmed        = $true
+    ScreenConnectInstances  = $approved.ToArray()
 }
 $plan | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $planPath -Encoding UTF8 -NoNewline
 Write-Line ""
@@ -202,8 +200,16 @@ if (-not (Test-Path -LiteralPath $remover)) {
 }
 
 Write-Line "Running removal..." 'Cyan'
-& $remover -PlanJson $planPath -WorkDir $WorkDir -Execute
+# remove-screenconnect.ps1 uses top-level exit codes. Run it in a child host so
+# those codes cannot terminate this review wrapper before it reports status.
+$childPowerShell = 'powershell.exe'
+if ($PSVersionTable.PSEdition -eq 'Core') {
+    $pwshCommand = Get-Command pwsh -ErrorAction SilentlyContinue
+    if ($pwshCommand) { $childPowerShell = $pwshCommand.Source }
+}
+& $childPowerShell -NoProfile -ExecutionPolicy Bypass -File $remover -PlanJson $planPath -WorkDir $WorkDir -Execute
 $rc = $LASTEXITCODE
+if ($null -eq $rc) { $rc = 1 }
 
 Write-Line ""
 if ($rc -eq 0) {

@@ -86,14 +86,14 @@ screenconnect-cleanup/
   preflight.ps1                   Stage 0 preflight. BUILT (Linux-verified).
   collect-snapshot.ps1            Stage 1/8 snapshot collector. BUILT.
   detect-remote-access.ps1        Stage 2 detector. BUILT, TESTED, read-only.
-  Invoke-ReviewAndRemove.ps1      Stage 3 review gate -> Stage 4. BUILT. (-Yes = automatic remove + log, used by START-HERE Step 5.)
+  Invoke-ReviewAndRemove.ps1      Stage 3 review gate -> Stage 4. BUILT. Typed confirmation required; legacy -Yes is rejected.
   remove-screenconnect.ps1        Stage 4 removal/containment. BUILT, dry-run default.
   diff-snapshots.ps1              Stage 8 before/after diff. BUILT.
   New-InvestigationReport.ps1     Stage 9 report. BUILT (XSS + empty-case verified).
   scanners are staged by `tools/Get-AVTools.ps1` and launched through
   `Invoke-GUIScanner.ps1` (KVRT/ESET attended GUI; Malwarebytes via winget).
   targets.json                    What to look for. 15 products, toggleable.
-  START-HERE.bat                  Guided 10-step launcher (Steps 4+5 = automatic detect+remove, no prompts — owner directive 2026-08-27; Step 7 Tikun = opt-in destructive).
+  START-HERE.bat                  Guided 10-step launcher (Steps 4 = read-only detection; Step 5 = typed review + confirmation; Step 7 Tikun = opt-in destructive).
   RUN-REMOVAL-TEST.bat            Lab-only -ExecuteRemoval test launcher.
   Run-DetectRemoteAccess.bat      Double-click detection launcher.
   make-deploy-bundle.sh           Builds the field-deploy zip.

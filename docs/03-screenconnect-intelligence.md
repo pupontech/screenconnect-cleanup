@@ -133,11 +133,13 @@ install as `Historical`.
 Requires admin on most builds. The detector degrades gracefully and says so when it
 cannot read the log.
 
-**[KNOWN]** Other retrospective execution artifacts exist and are far more useful than
+**[STATUS v1.7.32]** Other retrospective execution artifacts exist and are far more useful than
 live monitoring, because a technician always arrives after the fact: Prefetch, Amcache,
 ShimCache, BAM/DAM, UserAssist, SRUM (which records per-application bytes sent/received,
-quantifying how much data moved). **None of these are implemented yet.** They are the
-natural Stage 1 expansion.
+quantifying how much data moved). Prefetch, Amcache, BAM/DAM, UserAssist, and SRUM inventory
+are implemented in Stage 1. Amcache currently uses a temporary hive mount and needs live
+cleanup validation; ShimCache is raw-metadata-only until its format-specific decoder is
+validated against Windows 8.1/10/11 fixtures.
 
 ---
 

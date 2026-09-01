@@ -12,6 +12,7 @@
 param(
     [Parameter(Mandatory=$true)][string]$FindingsJson,
     [string]$OutputPath,
+    [string]$DiffPath,
     [string]$RemovalManifest,
     [string]$AVUninstall,
     [string]$ScannerSummary,
@@ -210,6 +211,15 @@ if ($RemovalManifest) {
         }
         catch { $removalManifestError = $_.Exception.Message }
     } else { $removalManifestError = 'Manifest file not found.' }
+}
+
+$diffData = $null
+$diffError = $null
+if ($DiffPath) {
+    if (Test-Path -LiteralPath $DiffPath) {
+        try { $diffData = (Get-Content -LiteralPath $DiffPath -Raw) | ConvertFrom-Json }
+        catch { $diffError = $_.Exception.Message }
+    } else { $diffError = 'Diff file not found.' }
 }
 
 $scInstances    = @()
@@ -600,9 +610,20 @@ if ($ScannerSummary -or $ScannersSkipped) {
         } else { $scannerError = "results file not found: $ScannerSummary" }
 
         $rows = ''
+        $scannerWarnings = ''
         foreach ($s in @($scannerData)) {
             if ($null -eq $s) { continue }
             $rows += "<tr><td>$(Fmt (Get-Prop $s 'Scanner'))</td><td>$(Fmt (Get-Prop $s 'Tool'))</td><td>$(Fmt (Get-Prop $s 'Status'))</td><td>$(Fmt (Get-Prop $s 'ExitCode'))</td></tr>`n"
+            $filterSuspected = [string](Get-Prop $s 'FilterSuspected')
+            if ($filterSuspected -match '(?i)^(true|1|yes)$') {
+                $classification = [string](Get-Prop $s 'FilterClassification')
+                if ([string]::IsNullOrWhiteSpace($classification)) { $classification = 'FilterOrProxySuspected' }
+                $diagnosticPath = [string](Get-Prop $s 'ResultPath')
+                $pathNote = if ($diagnosticPath) { " Review the diagnostic artifact: $(Fmt $diagnosticPath)." } else { '' }
+                $filterNames = @(Get-Prop $s 'FilterNames')
+                $namesNote = if ($filterNames.Count -gt 0) { " Named filter evidence: $(Fmt ($filterNames -join ', '))." } else { '' }
+                $scannerWarnings += "<p class='warn-line'>Malwarebytes install failure: possible web-filter/proxy interference was reported ($(Fmt $classification)).$namesNote$pathNote</p>`n"
+            }
         }
         if (-not $rows) {
             if ($scannerError) {
@@ -611,7 +632,12 @@ if ($ScannerSummary -or $ScannersSkipped) {
                 $rows = '<tr><td colspan="4">No scanner sessions were recorded.</td></tr>'
             }
         }
-        $scannerNote = if ($scannerError) { "<p class='warn-line'>$scannerError</p>" } else { "<p class='muted'>Each scanner ran as a visible attended GUI driven by the technician. Any status other than Completed means the scan did not finish or was unavailable - treat the scan as NOT done. Source: $(Fmt $ScannerSummary)</p>" }
+        if ($scannerError) {
+            $scannerNote = "<p class='warn-line'>$scannerError</p>"
+        } else {
+            $scannerNote = "<p class='muted'>Each scanner ran as a visible attended GUI driven by the technician. Any status other than Completed means the scan did not finish or was unavailable - treat the scan as NOT done. Source: $(Fmt $ScannerSummary)</p>"
+        }
+        if ($scannerWarnings) { $scannerNote += $scannerWarnings }
         $scannerSectionHtml = @"
 <section id="scanners">
   <h2>Antivirus / malware scanners</h2>
@@ -642,6 +668,57 @@ if ($RemovalManifest -or $removalManifestError) {
   <p class="warn-line">After containment, reset ScreenConnect/ConnectWise credentials and any local or service-account credentials that may have been exposed. Revoke active sessions/tokens, rotate API keys, and verify MFA and authorized relay hosts.</p>
 </section>
 "@
+}
+
+# ---------------------------------------------------------------------------
+# Snapshot diff / collection completeness
+# ---------------------------------------------------------------------------
+$diffSectionHtml = ''
+if ($DiffPath -or $diffError) {
+    if ($diffError) {
+        $diffSectionHtml = "<section id='snapshot-diff'><h2 class='danger-heading'>Before/after snapshot diff unavailable</h2><p class='warn-line'>$(Fmt $diffError)</p></section>"
+    } else {
+        $diffVerdict = Get-Prop $diffData 'Verdict' 'UNKNOWN'
+        $diffClass = 'badge-low'
+        if ($diffVerdict -eq 'INCOMPLETE') { $diffClass = 'badge-high' }
+        elseif ($diffVerdict -eq 'RESURRECTION') { $diffClass = 'badge-high' }
+        $beforeComplete = Get-Prop $diffData 'BeforeCollectionComplete'
+        $afterComplete = Get-Prop $diffData 'AfterCollectionComplete'
+        $beforeDiffErrors = @(Get-Items (Get-Prop $diffData 'BeforeCollectionErrors'))
+        $afterDiffErrors = @(Get-Items (Get-Prop $diffData 'AfterCollectionErrors'))
+        $diffErrors = @($beforeDiffErrors) + @($afterDiffErrors)
+        $beforeDiffWarnings = @(Get-Items (Get-Prop $diffData 'BeforeCollectionWarnings'))
+        $afterDiffWarnings = @(Get-Items (Get-Prop $diffData 'AfterCollectionWarnings'))
+        $diffWarnings = @($beforeDiffWarnings) + @($afterDiffWarnings)
+        $diffErrorHtml = ''
+        if ($diffErrors.Count -gt 0) {
+            $errorItems = ''
+            foreach ($e in $diffErrors) { $errorItems += "<li>$(Fmt (Get-Prop $e 'Section')): $(Fmt (Get-Prop $e 'Error'))</li>`n" }
+            $diffErrorHtml = "<h4>Collection errors</h4><ul>$errorItems</ul>"
+        } else {
+            $diffErrorHtml = '<p class="ok-line">No collection errors were recorded.</p>'
+        }
+        $diffWarningHtml = ''
+        if ($diffWarnings.Count -gt 0) {
+            $warningItems = ''
+            foreach ($w in $diffWarnings) { $warningItems += "<li>$(Fmt (Get-Prop $w 'Section')): $(Fmt (Get-Prop $w 'Warning'))</li>`n" }
+            $diffWarningHtml = "<h4>Collection warnings</h4><ul>$warningItems</ul>"
+        }
+        $diffRows = ''
+        foreach ($d in (Get-Items (Get-Prop $diffData 'Sections'))) {
+            $diffRows += "<tr><td>$(Fmt (Get-Prop $d 'Section'))</td><td>$(Fmt (Get-Prop $d 'Kind'))</td><td>$(Fmt (Get-Items (Get-Prop $d 'Removed')).Count)</td><td>$(Fmt (Get-Items (Get-Prop $d 'Added')).Count)</td><td>$(Fmt (Get-Items (Get-Prop $d 'Changed')).Count)</td></tr>`n"
+        }
+        if (-not $diffRows) { $diffRows = '<tr><td colspan="5">No section diff rows were produced.</td></tr>' }
+        $diffSectionHtml = @"
+<section id="snapshot-diff">
+  <h2>Before/after snapshot diff <span class="badge $diffClass">$(Fmt $diffVerdict)</span></h2>
+  <p class="muted">Before collection complete: $(FmtBool $beforeComplete); after collection complete: $(FmtBool $afterComplete). Source: $(Fmt $DiffPath)</p>
+  $diffErrorHtml
+  $diffWarningHtml
+  <div class="table-scroll"><table class="data-table"><thead><tr><th>Section</th><th>Kind</th><th>Removed</th><th>Added</th><th>Changed</th></tr></thead><tbody>$diffRows</tbody></table></div>
+</section>
+"@
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -891,6 +968,7 @@ $otherSectionHtml
 $avUninstallSectionHtml
 $scannerSectionHtml
 $removalSectionHtml
+$diffSectionHtml
 $histSectionHtml
 $parseSectionHtml
 $envSectionHtml

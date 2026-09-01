@@ -4,7 +4,8 @@
 #
 # tools/Get-ToolPack.ps1 (Sysinternals) and tools/Get-AVTools.ps1 (AV scanner
 # stager) are bundled when present; both are committed to the repo. Get-AVTools
-# stages KVRT.exe, esetonlinescanner.exe and MBSetup.exe from official vendor URLs.
+# stages KVRT.exe and esetonlinescanner.exe from official vendor URLs; Malwarebytes
+# is installed by the visible winget path at runtime.
 set -euo pipefail
 SRC="$(cd "$(dirname "$0")" && pwd)"
 OUT_BASE="$(dirname "$SRC")/screenconnect-cleanup"
@@ -19,7 +20,7 @@ mkdir -p "$D/tools"
 # Core scripts + docs (all required). Fail loudly if any are missing.
 for f in sc-cleanup.ps1 preflight.ps1 collect-snapshot.ps1 diff-snapshots.ps1 \
          detect-remote-access.ps1 remove-screenconnect.ps1 install-latest.ps1 \
-         Invoke-ReviewAndRemove.ps1 Invoke-GUIScanner.ps1 Invoke-AVUninstaller.ps1 Run-DetectRemoteAccess.bat START-HERE.bat \
+         Invoke-ReviewAndRemove.ps1 Invoke-GUIScanner.ps1 Get-MalwarebytesDownloadDiagnostics.ps1 Invoke-AVUninstaller.ps1 Run-DetectRemoteAccess.bat START-HERE.bat \
          targets.json New-InvestigationReport.ps1 DEPLOY.md; do
   cp "$SRC/$f" "$D/"
 done

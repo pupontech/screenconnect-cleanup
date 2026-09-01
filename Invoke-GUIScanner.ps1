@@ -15,7 +15,9 @@
       3. block until that process exits, then report elapsed time + exit code.
          For Malwarebytes the script then also launches the freshly installed
          Malwarebytes GUI (mbam.exe) and waits on it like any scanner, so the
-         pipeline stays paused while the technician runs the scan.
+         pipeline stays paused while the technician runs the scan. If winget
+         fails, a read-only diagnostic pass checks the official endpoint,
+         Techloq/other filter evidence, proxy settings, and hosts-file entries.
 
   It never passes scan/clean switches, never parses the scanner's output, and
   never fabricates a result: the technician drives the UI; this script just
@@ -26,6 +28,7 @@
     .\Invoke-GUIScanner.ps1 -Scanner KVRT            # KVRT.exe
     .\Invoke-GUIScanner.ps1 -Scanner ESET            # esetonlinescanner.exe
     .\Invoke-GUIScanner.ps1 -Scanner Malwarebytes    # winget install -e --id Malwarebytes.Malwarebytes; then launches the GUI
+    .\Invoke-GUIScanner.ps1 -DiagnosticsOnly -InstallerExitCode 1 -ResultPath C:\path\result.json
     .\Invoke-GUIScanner.ps1 -ToolPath C:\path\tool.exe   # any explicit EXE
 
   Search order when -ToolPath is not given (KVRT/ESET):
@@ -47,7 +50,8 @@
     - Exit codes: 0 technician closed the tool; 2 tool failed to start;
       3 tool not found; 4 timeout reached (process still running);
       5 launched EXE exited within the 60s launch-grace window with no
-      surviving GUI process (reported as failure, never as a completed scan).
+      surviving GUI process (reported as failure, never as a completed scan);
+      6 Malwarebytes winget installation failed after the diagnostic pass.
 
   House rules: PS 5.1 compatible, pure ASCII, no BOM.
 #>
@@ -57,7 +61,10 @@ param(
     [ValidateSet('KVRT', 'ESET', 'Malwarebytes')]
     [string]$Scanner,
     [string]$ToolPath,              # explicit path wins over -Scanner lookup
-    [int]$TimeoutMinutes = 240      # cap for an abandoned GUI window
+    [int]$TimeoutMinutes = 240,     # cap for an abandoned GUI window
+    [string]$ResultPath,            # optional machine-readable result artifact
+    [switch]$DiagnosticsOnly,       # run Malwarebytes failure checks without installing
+    [int]$InstallerExitCode = -1    # winget code supplied to -DiagnosticsOnly
 )
 
 Set-StrictMode -Version 2.0
@@ -111,6 +118,75 @@ function Test-PeExecutable {
 # (owner directive 2026-08-27: Malwarebytes install/uninstall via winget).
 $wingetScanners = @{
     'Malwarebytes' = 'Malwarebytes.Malwarebytes'
+}
+
+# The failure diagnostics are kept in a separate function-only script so the
+# CLI runner can reuse the same checks without turning this launcher into a
+# second network/inventory implementation.
+$downloadDiagnosticScript = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'Get-MalwarebytesDownloadDiagnostics.ps1'
+if (Test-Path -LiteralPath $downloadDiagnosticScript) {
+    . $downloadDiagnosticScript
+}
+
+if ($DiagnosticsOnly) {
+    Write-Host ("Malwarebytes installation failed (reported winget exit code " + $InstallerExitCode + ").") -ForegroundColor Red
+    Write-Host "Checking for Techloq or other web-filter/proxy blocking evidence..." -ForegroundColor Yellow
+    try {
+        if (-not (Get-Command Get-MalwarebytesDownloadDiagnostics -CommandType Function -ErrorAction Stop)) {
+            throw 'Get-MalwarebytesDownloadDiagnostics is unavailable.'
+        }
+        $diagnostics = Get-MalwarebytesDownloadDiagnostics -InstallerExitCode $InstallerExitCode
+    } catch {
+        Write-Host ("  [WARN] Malwarebytes download diagnostics could not run: " + $_.Exception.Message) -ForegroundColor Yellow
+        exit 7
+    }
+
+    $result = [ordered]@{
+        Tool                = 'Malwarebytes.Malwarebytes (winget install)'
+        Status              = 'InstallFailed'
+        StartTimeUtc        = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        EndTimeUtc          = [datetime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss')
+        DurationSeconds     = 0
+        ProcessExitCode     = $InstallerExitCode
+        InstallExitCode     = $InstallerExitCode
+        ScannerPath         = $null
+        PeValid             = $null
+        EarlyExit           = $false
+        UacDisabled         = $false
+        FilterSuspected     = [bool]$diagnostics.FilterSuspected
+        FilterClassification = $diagnostics.Classification
+        DownloadDiagnostics  = $diagnostics
+    }
+    $json = $result | ConvertTo-Json -Depth 10 -Compress
+    if ($ResultPath) {
+        try {
+            $resultDir = Split-Path -Parent $ResultPath
+            if ($resultDir -and -not (Test-Path -LiteralPath $resultDir)) {
+                $null = New-Item -ItemType Directory -Path $resultDir -Force
+            }
+            $json | Set-Content -LiteralPath $ResultPath -Encoding UTF8 -NoNewline
+            Write-Host ("Scanner result written: " + $ResultPath) -ForegroundColor DarkGray
+        } catch {
+            Write-Host ("  [WARN] Could not write scanner result " + $ResultPath + ": " + $_.Exception.Message) -ForegroundColor Yellow
+        }
+    }
+    if ([bool]$diagnostics.FilterSuspected) {
+        Write-Host "  [ALERT] Possible Techloq or another web-filter/proxy block detected." -ForegroundColor Red
+        $filterNames = @($diagnostics.FilterNames)
+        if ($filterNames.Count -gt 0) { Write-Host ("  Named evidence: " + ($filterNames -join ', ')) -ForegroundColor Yellow }
+        $strong = @($diagnostics.StrongEvidence)
+        if ($strong.Count -gt 0) { Write-Host ("  Evidence: " + ($strong -join '; ')) -ForegroundColor Yellow }
+        Write-Host "  This is evidence, not proof of causation. Ask the filter/network administrator to review the listed endpoint checks and allow them, then retry." -ForegroundColor Yellow
+    } elseif ($diagnostics.Classification -eq 'EndpointReachable') {
+        Write-Host "  No filter block was observed: the official Malwarebytes endpoint was reachable." -ForegroundColor Yellow
+        Write-Host "  Investigate winget/App Installer source, package policy, or the package result next." -ForegroundColor Yellow
+    } else {
+        Write-Host "  The endpoint probe failed, but no specific filter block was identified." -ForegroundColor Yellow
+        Write-Host "  Review the saved diagnostics for DNS, TLS, proxy, and HTTP details before retrying." -ForegroundColor Yellow
+    }
+    $json | Write-Output
+    Write-Host "Malwarebytes installation failed; no attended scan was completed." -ForegroundColor Red
+    exit 6
 }
 
 # ---------------------------------------------------------------------------
@@ -355,9 +431,51 @@ if (-not $timedOut) {
     else { try { $exitCode = $proc.ExitCode } catch { } }
 }
 
+# A failed winget install is not a completed scanner session. Run a bounded,
+# read-only diagnostic pass before returning so the technician can distinguish
+# a possible Techloq/web-filter block from a normal winget/App Installer error.
+$installFailed = $false
+$downloadDiagnostics = $null
+if ($wingetViaCmd -and -not $timedOut -and ($null -eq $exitCode -or $exitCode -ne 0)) {
+    $installFailed = $true
+    $displayExitCode = if ($null -eq $exitCode) { 'unknown' } else { [string]$exitCode }
+    Write-Host ("Malwarebytes installation failed (winget exit code " + $displayExitCode + ").") -ForegroundColor Red
+    Write-Host "Checking for Techloq or other web-filter/proxy blocking evidence..." -ForegroundColor Yellow
+    try {
+        if (Get-Command Get-MalwarebytesDownloadDiagnostics -CommandType Function -ErrorAction Stop) {
+            $diagnosticExitCode = -1
+            if ($null -ne $exitCode) { $diagnosticExitCode = [int]$exitCode }
+            $downloadDiagnostics = Get-MalwarebytesDownloadDiagnostics -InstallerExitCode $diagnosticExitCode
+        }
+    } catch {
+        Write-Host ("  [WARN] Malwarebytes download diagnostics could not run: " + $_.Exception.Message) -ForegroundColor Yellow
+    }
+    if ($downloadDiagnostics) {
+        $filterNames = @($downloadDiagnostics.FilterNames)
+        if ([bool]$downloadDiagnostics.FilterSuspected) {
+            Write-Host "  [ALERT] Possible Techloq or another web-filter/proxy block detected." -ForegroundColor Red
+            if ($filterNames.Count -gt 0) {
+                Write-Host ("  Named evidence: " + ($filterNames -join ', ')) -ForegroundColor Yellow
+            }
+            $strong = @($downloadDiagnostics.StrongEvidence)
+            if ($strong.Count -gt 0) {
+                Write-Host ("  Evidence: " + ($strong -join '; ')) -ForegroundColor Yellow
+            }
+            Write-Host "  This is evidence, not proof of causation. Ask the filter/network administrator to review the listed endpoint checks and allow them, then retry." -ForegroundColor Yellow
+        } elseif ($downloadDiagnostics.Classification -eq 'EndpointReachable') {
+            Write-Host "  No filter block was observed: the official Malwarebytes endpoint was reachable." -ForegroundColor Yellow
+            Write-Host "  Investigate winget/App Installer source, package policy, or the package result next." -ForegroundColor Yellow
+        } else {
+            Write-Host "  The endpoint probe failed, but no specific filter block was identified." -ForegroundColor Yellow
+            Write-Host "  Review the saved diagnostics for DNS, TLS, proxy, and HTTP details before retrying." -ForegroundColor Yellow
+        }
+    }
+}
+
 # Malwarebytes: winget just installed it - launch the GUI so the technician
 # can scan with it, the same attended model as KVRT/ESET (waits for the UI
 # to close; the scan happens inside it).
+$launchFailed = $false
 if ($wingetViaCmd -and -not $timedOut -and $exitCode -eq 0) {
     $mbam = $null
     $candidates = @((Join-Path $env:ProgramFiles 'Malwarebytes\Anti-Malware\mbam.exe'))
@@ -374,39 +492,70 @@ if ($wingetViaCmd -and -not $timedOut -and $exitCode -eq 0) {
         try {
             $mbamProc = Start-Process -FilePath $mbam -PassThru -ErrorAction Stop
         } catch {
+            $launchFailed = $true
             Write-Host ("  [WARN] Could not launch Malwarebytes GUI: " + $_.Exception.Message) -ForegroundColor Yellow
         }
         if ($null -ne $mbamProc) {
             if (-not $mbamProc.WaitForExit($TimeoutMinutes * 60 * 1000)) {
                 $timedOut = $true   # deliberately NOT killed, same rule as the scanners
             }
+        } else {
+            $launchFailed = $true
         }
         $end = Get-Date
         $duration = [int]($end - $start).TotalSeconds
     } else {
+        $launchFailed = $true
         Write-Host "  [WARN] Malwarebytes installed but mbam.exe not found at standard paths - launch it from the Start Menu." -ForegroundColor Yellow
     }
 }
 
 $status = 'Completed'
-if ($timedOut) { $status = 'Timeout' }
+if ($installFailed) { $status = 'InstallFailed' }
+elseif ($launchFailed) { $status = 'LaunchFailed' }
+elseif ($timedOut) { $status = 'Timeout' }
 elseif ($earlyExit) { $status = 'ExitedEarly' }
 
 $result = @{
-    Tool            = $toolLabel
-    Status          = $status
-    StartTimeUtc    = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
-    EndTimeUtc      = $end.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
-    DurationSeconds = $duration
-    ProcessExitCode = $exitCode
-    ScannerPath     = $target
-    FileSizeBytes   = $fileSizeBytes
-    PeValid         = $peValid
-    EarlyExit       = $earlyExit
-    UacDisabled     = $uacDisabled
+    Tool                 = $toolLabel
+    Status               = $status
+    StartTimeUtc         = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+    EndTimeUtc           = $end.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+    DurationSeconds      = $duration
+    ProcessExitCode      = $exitCode
+    InstallExitCode      = if ($installFailed) { $exitCode } else { $null }
+    ScannerPath          = $target
+    FileSizeBytes        = $fileSizeBytes
+    PeValid              = $peValid
+    EarlyExit            = $earlyExit
+    UacDisabled          = $uacDisabled
+    FilterSuspected      = if ($downloadDiagnostics) { [bool]$downloadDiagnostics.FilterSuspected } else { $false }
+    FilterClassification  = if ($downloadDiagnostics) { $downloadDiagnostics.Classification } else { $null }
+    DownloadDiagnostics  = $downloadDiagnostics
 }
-$result | ConvertTo-Json -Compress | Write-Output
+$json = $result | ConvertTo-Json -Depth 10 -Compress
+if ($ResultPath) {
+    try {
+        $resultDir = Split-Path -Parent $ResultPath
+        if ($resultDir -and -not (Test-Path -LiteralPath $resultDir)) {
+            $null = New-Item -ItemType Directory -Path $resultDir -Force
+        }
+        $json | Set-Content -LiteralPath $ResultPath -Encoding UTF8 -NoNewline
+        Write-Host ("Scanner result written: " + $ResultPath) -ForegroundColor DarkGray
+    } catch {
+        Write-Host ("  [WARN] Could not write scanner result " + $ResultPath + ": " + $_.Exception.Message) -ForegroundColor Yellow
+    }
+}
+$json | Write-Output
 
+if ($installFailed) {
+    Write-Host "Malwarebytes installation failed; no attended scan was completed." -ForegroundColor Red
+    exit 6
+}
+if ($launchFailed) {
+    Write-Host "Malwarebytes GUI launch failed; no attended scan was completed." -ForegroundColor Red
+    exit 2
+}
 if ($timedOut) {
     Write-Host ("TIMEOUT after " + $TimeoutMinutes + " min - scanner still running; pipeline result marked Timeout.") -ForegroundColor Yellow
     exit 4

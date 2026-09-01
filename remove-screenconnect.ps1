@@ -22,7 +22,7 @@
         manifest), delete service registration, clean persistence (scheduled
         tasks, Run keys, WMI subscriptions referencing quarantined paths)
   (3) Write removal-manifest.json recording every action + result
-  (4) Support reboot-resume via RunOnce key if files were in-use
+  (4) Support reboot-resume via a highest-privilege scheduled logon task if files were in-use
   (5) Dry-run default: require explicit -Execute to act, otherwise log what
       would happen
 
@@ -61,7 +61,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.6.1'
+$ScriptVersion = '1.7.32'
 $ScriptName = 'remove-screenconnect.ps1'
 
 # We need the helper in scope before the elevation gate below runs.
@@ -123,7 +123,10 @@ function Add-ManifestEntry {
         [string]$Target,
         [string]$Result,
         [string]$Details = '',
-        [int]$ExitCode = $null
+        [int]$ExitCode = $null,
+        [string]$SourcePath = '',
+        [string]$DestinationPath = '',
+        [string]$SourceIdentity = ''
     )
     $entry = [ordered]@{
         TimestampUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
@@ -134,6 +137,9 @@ function Add-ManifestEntry {
         Details      = $Details
         ExitCode     = $ExitCode
     }
+    if ($SourcePath) { $entry.SourcePath = $SourcePath }
+    if ($DestinationPath) { $entry.DestinationPath = $DestinationPath }
+    if ($SourceIdentity) { $entry.SourceIdentity = $SourceIdentity }
     [void]$script:Manifest.Add($entry)
 }
 
@@ -159,17 +165,201 @@ function Get-Sha256Hex {
     } finally { $sha.Dispose() }
 }
 
+function Get-PathIdentityHash {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if (-not $item.PSIsContainer) {
+        $hash = Get-Sha256File -Path $Path
+        if (-not $hash) { throw "Could not hash source file: $Path" }
+        return $hash.ToLowerInvariant()
+    }
+    $rootFull = [System.IO.Path]::GetFullPath($Path).TrimEnd([char[]]@([char]92, [char]47))
+    $allChildren = @(Get-ChildItem -LiteralPath $Path -Recurse -Force -ErrorAction Stop)
+    foreach ($child in $allChildren) {
+        if (($child.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Reparse point encountered while hashing source tree: $($child.FullName)"
+        }
+    }
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($child in @($allChildren | Where-Object { -not $_.PSIsContainer })) {
+        $hash = Get-Sha256File -Path $child.FullName
+        if (-not $hash) { throw "Could not hash source tree file: $($child.FullName)" }
+        $relative = $child.FullName.Substring($rootFull.Length).TrimStart([char[]]@([char]92, [char]47))
+        [void]$lines.Add(($relative.ToLowerInvariant() + '|' + [string]$child.Length + '|' + $hash.ToLowerInvariant()))
+    }
+    $identityText = 'directory`n' + (($lines.ToArray() | Sort-Object) -join "`n")
+    return (Get-Sha256Hex -Text $identityText)
+}
+
 function Expand-Env {
     param([string]$Path)
     if (-not $Path) { return $Path }
     return [System.Environment]::ExpandEnvironmentVariables($Path)
 }
 
+function Test-PathContained {
+    param([Parameter(Mandatory = $true)][string]$Root, [Parameter(Mandatory = $true)][string]$Candidate)
+    try {
+        $rootFull = [System.IO.Path]::GetFullPath($Root).TrimEnd([char[]]@([char]92, [char]47))
+        if (-not (Test-Path -LiteralPath $rootFull)) { return $false }
+        $rootPrefix = $rootFull + [System.IO.Path]::DirectorySeparatorChar
+        $candidateFull = [System.IO.Path]::GetFullPath($Candidate)
+        if (-not $candidateFull.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+
+        # Lexical containment is not enough when a path component is a junction
+        # or symlink. Walk existing components, including the nearest existing
+        # parent of a not-yet-created candidate, and reject every reparse point.
+        $current = $candidateFull
+        while ($current) {
+            if (Test-Path -LiteralPath $current) {
+                $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop
+                if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
+            }
+            if ($current.TrimEnd([char[]]@([char]92, [char]47)) -eq $rootFull) { break }
+            $parent = [System.IO.Directory]::GetParent($current)
+            if ($null -eq $parent) { return $false }
+            $current = $parent.FullName
+        }
+        return $true
+    } catch { return $false }
+}
+
+function Test-LiteralPathReference {
+    param([string]$Text, [string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Text) -or [string]::IsNullOrWhiteSpace($Path)) { return $false }
+    $needle = $Path.Trim().Trim('"').TrimEnd([char[]]@([char]92, [char]47))
+    if (-not $needle) { return $false }
+    $start = 0
+    while ($start -lt $Text.Length) {
+        $index = $Text.IndexOf($needle, $start, [System.StringComparison]::OrdinalIgnoreCase)
+        if ($index -lt 0) { return $false }
+        $beforeOk = ($index -eq 0) -or ($Text[$index - 1] -in @([char]92, [char]47, [char]34, [char]32, [char]9))
+        $afterIndex = $index + $needle.Length
+        $afterOk = ($afterIndex -ge $Text.Length) -or ($Text[$afterIndex] -in @([char]92, [char]47, [char]34, [char]32, [char]9, [char]63, [char]59))
+        if ($beforeOk -and $afterOk) { return $true }
+        $start = $index + 1
+    }
+    return $false
+}
+
+function Protect-QuarantinePathAcl {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if ($env:OS -ne 'Windows_NT') { return }
+    $rootItem = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    $items = New-Object System.Collections.ArrayList
+    [void]$items.Add($rootItem)
+    if ($rootItem.PSIsContainer) {
+        $allChildren = @(Get-ChildItem -LiteralPath $Path -Recurse -Force -ErrorAction Stop)
+        foreach ($child in $allChildren) {
+            if (($child.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Reparse point encountered while protecting quarantine: $($child.FullName)"
+            }
+            [void]$items.Add($child)
+        }
+    }
+    $adminSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')
+    $systemSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
+    $userSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+    foreach ($item in @($items)) {
+        $acl = if ($item.PSIsContainer) {
+            New-Object System.Security.AccessControl.DirectorySecurity
+        } else {
+            New-Object System.Security.AccessControl.FileSecurity
+        }
+        $acl.SetAccessRuleProtection($true, $false)
+        $inheritance = if ($item.PSIsContainer) {
+            ([System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit)
+        } else {
+            [System.Security.AccessControl.InheritanceFlags]::None
+        }
+        foreach ($sid in @($adminSid, $systemSid, $userSid)) {
+            $rule = New-Object -TypeName System.Security.AccessControl.FileSystemAccessRule -ArgumentList @(
+                $sid,
+                [System.Security.AccessControl.FileSystemRights]::FullControl,
+                $inheritance,
+                [System.Security.AccessControl.PropagationFlags]::None,
+                [System.Security.AccessControl.AccessControlType]::Allow
+            )
+            $acl.AddAccessRule($rule)
+        }
+        $acl.SetOwner($adminSid)
+        Set-Acl -LiteralPath $item.FullName -AclObject $acl -ErrorAction Stop
+        $verifiedAcl = Get-Acl -LiteralPath $item.FullName -ErrorAction Stop
+        if (-not $verifiedAcl.AreAccessRulesProtected) { throw "ACL inheritance remains enabled: $($item.FullName)" }
+    }
+}
+
+function Test-ResumeMaterialsTrusted {
+    param([Parameter(Mandatory = $true)][string[]]$Paths)
+    if ($env:OS -ne 'Windows_NT') { return $true }
+    $writeMask = [int]([System.Security.AccessControl.FileSystemRights]::Write -bor
+        [System.Security.AccessControl.FileSystemRights]::Delete -bor
+        [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles)
+    foreach ($path in $Paths) {
+        if ([string]::IsNullOrWhiteSpace($path)) { return $false }
+        try {
+            $current = [System.IO.Path]::GetFullPath($path)
+            while ($current) {
+                if (Test-Path -LiteralPath $current) {
+                    $acl = Get-Acl -LiteralPath $current -ErrorAction Stop
+                    foreach ($rule in @($acl.Access)) {
+                        if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
+                        if (([int]$rule.FileSystemRights -band $writeMask) -eq 0) { continue }
+                        try { $sid = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]) } catch { return $false }
+                        $trusted = $sid.IsWellKnown([System.Security.Principal.WellKnownSidType]::LocalSystemSid) -or
+                            $sid.IsWellKnown([System.Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid)
+                        if (-not $trusted) { return $false }
+                    }
+                }
+                $parent = [System.IO.Directory]::GetParent($current)
+                if ($null -eq $parent) { break }
+                if ($parent.FullName -eq $current) { break }
+                $current = $parent.FullName
+            }
+        } catch { return $false }
+    }
+    return $true
+}
+
+function Get-SafeInstanceDirectoryName {
+    param([string]$InstanceId)
+    $safe = [regex]::Replace([string]$InstanceId, '[^A-Za-z0-9._-]', '_')
+    $safe = $safe.Trim(' ', '.')
+    if ([string]::IsNullOrWhiteSpace($safe) -or $safe -eq '.' -or $safe -eq '..') { $safe = 'unknown' }
+    if ($safe.Length -gt 96) { $safe = $safe.Substring(0, 96) }
+    return $safe
+}
+
+function Get-SafeInstanceFileStem {
+    param([string]$InstanceId)
+    $safe = Get-SafeInstanceDirectoryName -InstanceId $InstanceId
+    $digest = Get-Sha256Hex -Text ([string]$InstanceId)
+    if ($digest) { return ($safe + '-' + $digest.Substring(0, 12)) }
+    return $safe
+}
+
 function Get-QuarantineDir {
-    param([string]$WorkDir)
+    param([string]$WorkDir, [switch]$Prepare)
     $q = Join-Path $WorkDir 'quarantine'
-    if (-not (Test-Path -LiteralPath $q)) {
+    if (-not (Test-PathContained -Root $WorkDir -Candidate $q)) {
+        throw "Quarantine path escaped WorkDir: $q"
+    }
+    if ($Prepare -and -not (Test-Path -LiteralPath $q)) {
         $null = New-Item -ItemType Directory -Path $q -Force
+    }
+    if (-not (Test-PathContained -Root $WorkDir -Candidate $q)) {
+        throw "Quarantine path escaped WorkDir after preparation: $q"
+    }
+
+    # Remove inherited write access. Keep SYSTEM, local Administrators, and the
+    # current elevated operator so evidence can be reviewed without exposing it
+    # to ordinary users or inheriting permissive parent ACLs.
+    if ($Prepare -and $env:OS -eq 'Windows_NT') {
+        try {
+            Protect-QuarantinePathAcl -Path $q
+        } catch {
+            throw "Could not apply/verify restrictive quarantine ACL: $($_.Exception.Message)"
+        }
     }
     return $q
 }
@@ -294,6 +484,66 @@ if ($plan.Decision -ne 'ALL_REMOVE' -and $plan.Decision -ne 'PARTIAL_REMOVE') {
     exit 0
 }
 
+# Destructive mode accepts only a plan produced by this tool's review gate.
+# Dry-runs remain useful for fixture testing, but -Execute requires an explicit
+# approval marker, a current findings file, a matching hash, and a run binding.
+if ($Execute) {
+    $provenanceErrors = @()
+    $confirmedProp = $plan.PSObject.Properties['RemovalConfirmed']
+    if (-not $confirmedProp -or $confirmedProp.Value -ne $true) {
+        $provenanceErrors += 'RemovalConfirmed=true is required'
+    }
+    $schemaProp = $plan.PSObject.Properties['PlanSchemaVersion']
+    if (-not $schemaProp -or [int]$schemaProp.Value -lt 2) {
+        $provenanceErrors += 'PlanSchemaVersion 2 or newer is required'
+    }
+    $sourceProp = $plan.PSObject.Properties['SourceFindings']
+    $sourceHashProp = $plan.PSObject.Properties['SourceFindingsSha256']
+    $runProp = $plan.PSObject.Properties['RunId']
+    $source = if ($sourceProp) { [string]$sourceProp.Value } else { '' }
+    if (-not $source -or -not (Test-Path -LiteralPath $source -PathType Leaf)) {
+        $provenanceErrors += 'SourceFindings must reference an existing findings.json'
+    } else {
+        $actualHash = Get-Sha256File $source
+        if (-not $sourceHashProp -or [string]$sourceHashProp.Value -ne $actualHash) {
+            $provenanceErrors += 'SourceFindingsSha256 does not match the findings file'
+        }
+        $sourceRun = Split-Path -Leaf (Split-Path -Parent $source)
+        if (-not $runProp -or [string]$runProp.Value -ne $sourceRun) {
+            $provenanceErrors += 'RunId does not match the findings directory'
+        }
+        try {
+            $sourceObj = Get-Content -LiteralPath $source -Raw | ConvertFrom-Json -ErrorAction Stop
+            $hostProp = $plan.PSObject.Properties['ComputerName']
+            $sourceHostProp = $sourceObj.PSObject.Properties['ComputerName']
+            if ($hostProp -and $hostProp.Value -and $env:COMPUTERNAME -and [string]$hostProp.Value -ne [string]$env:COMPUTERNAME) {
+                $provenanceErrors += 'Plan ComputerName does not match the current computer'
+            }
+            if ($sourceHostProp -and $sourceHostProp.Value -and $env:COMPUTERNAME -and [string]$sourceHostProp.Value -ne [string]$env:COMPUTERNAME) {
+                $provenanceErrors += 'Findings ComputerName does not match the current computer'
+            }
+            if ($hostProp -and $sourceHostProp -and $hostProp.Value -and $sourceHostProp.Value -and
+                [string]$hostProp.Value -ne [string]$sourceHostProp.Value) {
+                $provenanceErrors += 'Plan ComputerName does not match findings ComputerName'
+            }
+            $toolProp = $sourceObj.PSObject.Properties['Tool']
+            if (-not $toolProp -or [string]$toolProp.Value -ne 'detect-remote-access.ps1') {
+                $provenanceErrors += 'SourceFindings is not produced by detect-remote-access.ps1'
+            }
+            $sourceRunProp = $sourceObj.PSObject.Properties['RunId']
+            if (-not $sourceRunProp -or [string]$sourceRunProp.Value -ne $sourceRun) {
+                $provenanceErrors += 'Findings RunId does not match its containing directory'
+            }
+        } catch {
+            $provenanceErrors += 'SourceFindings could not be parsed'
+        }
+    }
+    if ($provenanceErrors.Count -gt 0) {
+        Write-Host ('ERROR: refusing -Execute with untrusted plan: ' + ($provenanceErrors -join '; ')) -ForegroundColor Red
+        exit 2
+    }
+}
+
 # Filter to ScreenConnect-only instances (owner policy binding)
 $scInstances = @()
 if ($plan.ScreenConnectInstances) {
@@ -379,6 +629,26 @@ function Get-PlanInstanceId {
     return 'unknown'
 }
 
+function Get-PathBinaryPath {
+    # Extract the executable path from a Windows service ImagePath/command
+    # string. Gate D must verify the file itself, not the command line with
+    # quotes and arguments still attached.
+    param([string]$PathString)
+    if (-not $PathString) { return '' }
+    $s = [string]$PathString
+    if ($s.StartsWith('"')) {
+        $endQ = $s.IndexOf('"', 1)
+        if ($endQ -gt 0) { return $s.Substring(1, $endQ - 1) }
+        return $s.Trim('"')
+    }
+    $quote = $s.IndexOf('"')
+    if ($quote -gt 0) { return $s.Substring(0, $quote).Trim() }
+    $rxOpts = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    $exeMatch = [regex]::Match($s, '^(?<path>.+?\.(?:exe|com))(?:\s|$)', $rxOpts)
+    if ($exeMatch.Success) { return $exeMatch.Groups['path'].Value }
+    return $s.Trim()
+}
+
 function Get-PathBinaryLeaf {
     # Platform-neutral final-path-segment extraction for Windows image/paths.
     # Handles quoted paths ("C:\...\x.exe" /args), unquoted paths with
@@ -429,7 +699,7 @@ function Test-ScreenConnectInstance {
     # Collect evidence defensively (plan entry may be malformed)
     $svcName = [string](Get-EntryPropertySafe -Instance $Instance -PropertyName 'ServiceName')
     $pathStrings = New-Object System.Collections.ArrayList
-    foreach ($pn in @('ImagePath', 'ServiceImagePath', 'InstallDir')) {
+    foreach ($pn in @('ImagePath', 'ServiceImagePath', 'InstallDir', 'MainExe', 'File')) {
         $raw = Get-EntryPropertySafe -Instance $Instance -PropertyName $pn
         if ($raw) {
             $exp = Expand-Env ([string]$raw)
@@ -487,10 +757,82 @@ function Test-ScreenConnectInstance {
         }
     }
 
+    # Gate D: execute mode requires a real signed binary. Name/path matches are
+    # useful for discovery but are not sufficient authorization for removal.
+    if ($Execute) {
+        $signedExe = $null
+        foreach ($p in $pathStrings) {
+            $candidate = Get-PathBinaryPath -PathString $p
+            if ($candidate -match '\.(exe|com)$' -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+                $signedExe = $candidate
+                break
+            }
+        }
+        if (-not $signedExe) {
+            [void]$reasons.Add('execute mode requires an existing ScreenConnect executable')
+        } else {
+            try {
+                $sig = Get-AuthenticodeSignature -LiteralPath $signedExe -ErrorAction Stop
+                $subject = if ($sig.SignerCertificate) { [string]$sig.SignerCertificate.Subject } else { '' }
+                if ([string]$sig.Status -ne 'Valid') {
+                    [void]$reasons.Add("executable signature status is not Valid: $($sig.Status)")
+                } elseif ($subject -notmatch '(?i)ConnectWise|ScreenConnect') {
+                    [void]$reasons.Add("executable signer is not identified as ConnectWise/ScreenConnect: $subject")
+                }
+            } catch {
+                [void]$reasons.Add("could not verify executable Authenticode signature: $($_.Exception.Message)")
+            }
+        }
+    }
+
     return [PSCustomObject]@{
         Verified = ($reasons.Count -eq 0)
         Reasons  = @($reasons.ToArray())
     }
+}
+
+function ConvertTo-RegistryProviderPath {
+    # Normalize the raw Win32 registry path emitted by the detector and accept
+    # only the provider forms needed by the uninstall-root allowlist below.
+    param([string]$RegistryKeyPath)
+    if ([string]::IsNullOrWhiteSpace($RegistryKeyPath)) { return '' }
+    $p = $RegistryKeyPath.Trim()
+    foreach ($prefix in @('Microsoft.PowerShell.Core\Registry::', 'Registry::')) {
+        if ($p.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $p = $p.Substring($prefix.Length)
+            break
+        }
+    }
+    $win32Prefixes = @(
+        @{ Prefix = 'HKEY_LOCAL_MACHINE\'; Provider = 'HKLM:\' },
+        @{ Prefix = 'HKEY_CURRENT_USER\'; Provider = 'HKCU:\' },
+        @{ Prefix = 'HKLM\'; Provider = 'HKLM:\' },
+        @{ Prefix = 'HKCU\'; Provider = 'HKCU:\' }
+    )
+    foreach ($item in $win32Prefixes) {
+        if ($p.StartsWith($item.Prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $item.Provider + $p.Substring($item.Prefix.Length)
+        }
+    }
+    return $p
+}
+
+function Test-AllowedUninstallRegistryPath {
+    param([string]$RegistryKeyPath)
+    $normalized = ConvertTo-RegistryProviderPath -RegistryKeyPath $RegistryKeyPath
+    if ([string]::IsNullOrWhiteSpace($normalized)) { return $false }
+    $roots = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+    )
+    foreach ($root in $roots) {
+        if ($normalized.Equals($root, [System.StringComparison]::OrdinalIgnoreCase) -or
+            $normalized.StartsWith($root + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+    return $false
 }
 
 function Get-VerifiedUninstallEntry {
@@ -504,13 +846,11 @@ function Get-VerifiedUninstallEntry {
 
     if ([string]::IsNullOrWhiteSpace($RegistryKeyPath)) { return $null }
 
-    # The detector reports the key in raw Win32 form
-    # (HKEY_LOCAL_MACHINE\SOFTWARE\...), which Get-ItemProperty cannot open -
-    # it needs a PSDrive (HKLM:\) or provider (Registry::) path. Without this
-    # the plan's own uninstall key was always "unreadable" and discarded.
-    $resolvedKeyPath = $RegistryKeyPath
-    if ($resolvedKeyPath -match '^HKEY_') {
-        $resolvedKeyPath = 'Registry::' + $resolvedKeyPath
+    $resolvedKeyPath = ConvertTo-RegistryProviderPath -RegistryKeyPath $RegistryKeyPath
+    if (-not (Test-AllowedUninstallRegistryPath -RegistryKeyPath $resolvedKeyPath)) {
+        Write-Log "  Plan UninstallRegistryKey rejected: path is outside approved uninstall roots" 'Warn'
+        Add-ManifestEntry -InstanceId $InstanceId -Action 'ValidateUninstallKey' -Target $RegistryKeyPath -Result 'Rejected' -Details 'Registry key is outside approved HKLM/HKCU uninstall roots'
+        return $null
     }
 
     $entry = $null
@@ -584,7 +924,7 @@ if (-not (Test-Path -LiteralPath $WorkDir)) {
     throw "WorkDir not found: $WorkDir"
 }
 
-$quarantineDir = Get-QuarantineDir $WorkDir
+$quarantineDir = Get-QuarantineDir -WorkDir $WorkDir -Prepare:$Execute
 $manifestPath = Join-Path $WorkDir 'removal-manifest.json'
 $masterLogPath = Join-Path $WorkDir 'master.log'
 $resumeMarkerPath = Join-Path $WorkDir 'resume-marker.json'
@@ -605,10 +945,15 @@ Write-Log "Execute mode: $($Execute.IsPresent)"
 $script:ResumeStatuses = New-Object System.Collections.ArrayList
 $script:CompletedInstanceIds = New-Object System.Collections.ArrayList
 $script:RebootPendingInstanceIds = New-Object System.Collections.ArrayList
+$script:DeferredQuarantineInstanceIds = New-Object System.Collections.ArrayList
+$script:DeferredQuarantineRecords = New-Object System.Collections.ArrayList
+$script:PriorVerifiedInstanceIds = New-Object System.Collections.ArrayList
+$script:ResumeMarkerWriteFailed = $false
+$script:ResumeMarkerIdentityFailed = $false
 
 function Write-ResumeMarker {
     param([string]$Phase)
-    if (-not $Execute) { return }
+    if (-not $Execute) { return $true }
     try {
         $markerObj = [PSCustomObject]@{
             Script     = $ScriptName
@@ -616,14 +961,18 @@ function Write-ResumeMarker {
             PlanFile   = $PlanFile
             Phase      = $Phase
             UpdatedUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+            ScriptHash = Get-Sha256File -Path $PSCommandPath
+            PlanHash   = Get-Sha256File -Path $PlanFile
             Instances  = @($script:ResumeStatuses.ToArray())
         }
         $markerJson = $markerObj | ConvertTo-Json -Depth 5
         # UTF8 without BOM (Set-Content -Encoding UTF8 would emit a BOM on 5.1)
         $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
         [System.IO.File]::WriteAllText($resumeMarkerPath, $markerJson, $utf8NoBom)
+        return $true
     } catch {
-        Write-Log "Could not update resume marker: $($_.Exception.Message)" 'Warn'
+        Write-Log "Could not update resume marker: $($_.Exception.Message)" 'Error'
+        return $false
     }
 }
 
@@ -650,7 +999,10 @@ function Initialize-ResumeMarker {
             UpdatedUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
         })
     }
-    Write-ResumeMarker -Phase 'session-start'
+    $markerOk = Write-ResumeMarker -Phase 'session-start'
+    if (-not $markerOk) {
+        throw 'Cannot establish resume marker; refusing to begin execute-mode removal'
+    }
 }
 
 function Update-ResumeStatus {
@@ -663,14 +1015,64 @@ function Update-ResumeStatus {
             break
         }
     }
-    Write-ResumeMarker -Phase ('instance:' + $InstanceId + ' -> ' + $Status)
+    $markerOk = Write-ResumeMarker -Phase ('instance:' + $InstanceId + ' -> ' + $Status)
+    if (-not $markerOk) {
+        $script:ResumeMarkerWriteFailed = $true
+        return
+    }
 }
 
 if ($Resume) {
     Write-Log "RESUME mode: continuing after reboot" 'Warn'
+    $resumeScriptPath = (Resolve-Path -LiteralPath $PSCommandPath -ErrorAction Stop).Path
+    $resumePlanPath = (Resolve-Path -LiteralPath $PlanFile -ErrorAction Stop).Path
+    if (-not (Test-ResumeMaterialsTrusted -Paths @($resumeScriptPath, $resumePlanPath, $WorkDir))) {
+        throw 'Resume materials or their parent paths are writable by an untrusted identity'
+    }
+    $currentScriptHash = Get-Sha256File -Path $resumeScriptPath
+    $currentPlanHash = Get-Sha256File -Path $resumePlanPath
+    if (Test-Path -LiteralPath $manifestPath) {
+        try {
+            $oldManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+            foreach ($oldEntry in @($oldManifest.Entries)) {
+                $oldAction = Get-EntryPropertySafe -Instance $oldEntry -PropertyName 'Action'
+                $oldResult = Get-EntryPropertySafe -Instance $oldEntry -PropertyName 'Result'
+                $oldId = [string](Get-EntryPropertySafe -Instance $oldEntry -PropertyName 'InstanceId')
+                if ($oldAction -eq 'ProductVerification' -and $oldResult -eq 'Passed' -and $oldId) {
+                    if ($script:PriorVerifiedInstanceIds -notcontains $oldId) {
+                        [void]$script:PriorVerifiedInstanceIds.Add($oldId)
+                    }
+                }
+                if ($oldAction -eq 'Quarantine' -and $oldResult -eq 'Deferred') {
+                    if ($script:DeferredQuarantineInstanceIds -notcontains $oldId) {
+                        [void]$script:DeferredQuarantineInstanceIds.Add($oldId)
+                    }
+                    $oldSource = [string](Get-EntryPropertySafe -Instance $oldEntry -PropertyName 'SourcePath')
+                    $oldDestination = [string](Get-EntryPropertySafe -Instance $oldEntry -PropertyName 'DestinationPath')
+                    $oldIdentity = [string](Get-EntryPropertySafe -Instance $oldEntry -PropertyName 'SourceIdentity')
+                    [void]$script:DeferredQuarantineRecords.Add([PSCustomObject]@{
+                        InstanceId = $oldId
+                        SourcePath = $oldSource
+                        DestinationPath = $oldDestination
+                        SourceIdentity = $oldIdentity
+                    })
+                }
+            }
+        } catch {
+            $script:ResumeMarkerIdentityFailed = $true
+            Write-Log "Could not inspect prior manifest for deferred quarantine moves: $($_.Exception.Message)" 'Error'
+        }
+    }
     if (Test-Path -LiteralPath $resumeMarkerPath) {
         try {
             $marker = Get-Content -LiteralPath $resumeMarkerPath -Raw | ConvertFrom-Json
+            $markerScriptHash = [string](Get-EntryPropertySafe -Instance $marker -PropertyName 'ScriptHash')
+            $markerPlanHash = [string](Get-EntryPropertySafe -Instance $marker -PropertyName 'PlanHash')
+            if (-not $markerScriptHash -or -not $markerPlanHash -or
+                $markerScriptHash -ne $currentScriptHash -or $markerPlanHash -ne $currentPlanHash) {
+                $script:ResumeMarkerIdentityFailed = $true
+                throw 'Resume marker script/plan identity does not match current files'
+            }
             foreach ($mi in @($marker.Instances)) {
                 $markerStatus = [string](Get-EntryPropertySafe -Instance $mi -PropertyName 'Status')
                 if ($markerStatus -eq 'Completed') {
@@ -681,10 +1083,15 @@ if ($Resume) {
             }
             Write-Log ("Resume marker found: " + $script:CompletedInstanceIds.Count + " completed instance(s) will be skipped, " + $script:RebootPendingInstanceIds.Count + " reboot-pending instance(s) will finish post-reboot cleanup")
         } catch {
-            Write-Log "Could not read resume marker: $($_.Exception.Message)" 'Warn'
+            $script:ResumeMarkerIdentityFailed = $true
+            Write-Log "Could not read resume marker: $($_.Exception.Message)" 'Error'
         }
     } else {
-        Write-Log "No resume marker found at: $resumeMarkerPath" 'Warn'
+        $script:ResumeMarkerIdentityFailed = $true
+        Write-Log "No resume marker found at: $resumeMarkerPath" 'Error'
+    }
+    if ($script:ResumeMarkerIdentityFailed) {
+        throw 'Resume marker identity proof failed; refusing reboot resume'
     }
     # Pending quarantine moves deferred via MoveFileEx are still retried below
 }
@@ -780,11 +1187,15 @@ function Kill-ProcessesForInstance {
     param([string]$InstallDir, [string]$ServiceName, [string]$InstanceId)
     try {
         $pids = @()
-        # Find processes by executable path
-        $procs = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop |
-            Where-Object { $_.ExecutablePath -and $_.ExecutablePath -like "$InstallDir\*" }
-        foreach ($p in $procs) {
-            $pids += $p.ProcessId
+        # Find processes by executable path only when the plan supplied an
+        # install directory. An empty directory must never become a wildcard.
+        if ($InstallDir) {
+            $expandedInstallDir = Expand-Env $InstallDir
+            $procs = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop |
+                Where-Object { $_.ExecutablePath -and (Test-PathContained -Root $expandedInstallDir -Candidate $_.ExecutablePath) }
+            foreach ($p in $procs) {
+                $pids += $p.ProcessId
+            }
         }
         # Also by service name if no install dir
         if ($pids.Count -eq 0 -and $ServiceName) {
@@ -793,23 +1204,9 @@ function Kill-ProcessesForInstance {
                 $pids += $svc.ProcessId
             }
         }
-        # Also scan for ScreenConnect client/service processes.
-        # DANGER: matching on CommandLine used to be part of this filter, which
-        # matched THIS VERY SCRIPT - powershell.exe running
-        # "...\screenconnect-cleanup\remove-screenconnect.ps1" contains the
-        # string "ScreenConnect", so the tool killed its own host process and
-        # died with exit -1 partway through removal. Match only on the
-        # executable's own name/path, never on the command line.
-        if ($pids.Count -eq 0) {
-            $scProcs = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop |
-                Where-Object {
-                    $_.Name -like 'ScreenConnect*' -or
-                    ($_.ExecutablePath -and $_.ExecutablePath -like '*\ScreenConnect Client*')
-                }
-            foreach ($p in $scProcs) {
-                $pids += $p.ProcessId
-            }
-        }
+        # Do not fall back to global name/path matching. A host may contain
+        # multiple legitimate ScreenConnect instances; only a process proven by
+        # this plan's install directory or service PID belongs to this instance.
         $pids = @($pids | Sort-Object -Unique)
 
         # Hard self-protection: never terminate this process or any of its
@@ -1019,7 +1416,7 @@ function Run-VendorUninstaller {
             if ($bareExe) { $leaf = [System.IO.Path]::GetFileName($bareExe) }
             $leafOk = ($leaf -match '^(?i)(ScreenConnect|App_)') -or ($leaf -match '^(?i)unins[0-9]*\.exe$')
             $underInstall = $false
-            if ($installDir) { $underInstall = ($bareExe -and $bareExe.StartsWith($installDir, [System.StringComparison]::OrdinalIgnoreCase)) }
+            if ($installDir) { $underInstall = ($bareExe -and (Test-PathContained -Root $installDir -Candidate $bareExe)) }
             if ($leafOk -and $underInstall -and (Test-Path -LiteralPath $bareExe)) {
                 $psi.FileName = $bareExe
                 $psi.Arguments = ''   # ScreenConnect uninstallers take no args / aren't trusted from registry
@@ -1097,19 +1494,33 @@ function Move-ToQuarantine {
     # artifact, defeating the whole point of the forensic record. Hash every
     # file inside instead and write them to a sidecar CSV.
     $isDirectory = $false
-    try { $isDirectory = (Get-Item -LiteralPath $SourcePath -Force).PSIsContainer } catch { }
+    $sourceItem = Get-Item -LiteralPath $SourcePath -Force -ErrorAction Stop
+    if (($sourceItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Refusing to quarantine reparse-point source: $SourcePath"
+    }
+    $isDirectory = $sourceItem.PSIsContainer
+    $sourceIdentity = Get-PathIdentityHash -Path $SourcePath
+    if (-not $sourceIdentity) { throw "Could not establish source identity: $SourcePath" }
     $hashNote = ''
     $sha256 = ''
     if ($isDirectory) {
-        # FIX (safety): never blindly recurse through reparse points (junctions /
-        # symlinks) inside the install tree. A junction pointing at C:\Windows
-        # (planted by an attacker, or left by a benign misinstall) would otherwise
-        # be walked, hashed, and on Move-Item -Force potentially followed/copied.
-        # Detect reparse points and hash only legitimate non-reparse children.
-        $hashCsv = Join-Path $WorkDir ('quarantine-hashes-' + $InstanceId + '.csv')
+        # A whole-tree move must not carry a junction/symlink across the
+        # containment boundary. Fail closed instead of merely skipping it while
+        # moving the rest of the tree.
+        $reparseItems = @(Get-ChildItem -LiteralPath $SourcePath -Recurse -Force -Attributes ReparsePoint -ErrorAction Stop)
+        if ($reparseItems.Count -gt 0) {
+            foreach ($rp in $reparseItems) {
+                Add-ManifestEntry -InstanceId $InstanceId -Action 'Quarantine' -Target $rp.FullName -Result 'Failed' -Details 'Reparse point (junction/symlink) blocks whole-tree quarantine'
+            }
+            throw "Refusing to quarantine tree containing $($reparseItems.Count) reparse point(s): $SourcePath"
+        }
+        $safeInstanceFileStem = Get-SafeInstanceFileStem -InstanceId $InstanceId
+        $hashCsv = Join-Path $WorkDir ('quarantine-hashes-' + $safeInstanceFileStem + '.csv')
+        if (-not (Test-PathContained -Root $WorkDir -Candidate $hashCsv)) {
+            throw "Refusing quarantine hash sidecar outside WorkDir: $hashCsv"
+        }
         $rows = New-Object System.Collections.ArrayList
-        $reparseSkipped = @()
-        foreach ($f in @(Get-ChildItem -LiteralPath $SourcePath -File -Recurse -Force -Attributes !ReparsePoint -ErrorAction SilentlyContinue)) {
+        foreach ($f in @(Get-ChildItem -LiteralPath $SourcePath -File -Recurse -Force -ErrorAction Stop)) {
             $h = Get-Sha256File $f.FullName
             [void]$rows.Add([PSCustomObject]@{
                 Path   = $f.FullName
@@ -1117,30 +1528,26 @@ function Move-ToQuarantine {
                 SHA256 = $h
             })
         }
-        # Record any reparse points we declined to follow, so the forensic record
-        # notes them rather than silently omitting them.
-        $reparseItems = @(Get-ChildItem -LiteralPath $SourcePath -Recurse -Force -Attributes ReparsePoint -ErrorAction SilentlyContinue)
-        foreach ($rp in $reparseItems) {
-            $reparseSkipped += $rp.FullName
-            Add-ManifestEntry -InstanceId $InstanceId -Action 'Quarantine' -Target $rp.FullName -Result 'Skipped' -Details 'Reparse point (junction/symlink) not followed or moved'
-        }
         try {
             $rows | Export-Csv -LiteralPath $hashCsv -NoTypeInformation -Encoding UTF8 -ErrorAction Stop
             $hashNote = "directory, " + $rows.Count + " file(s) hashed -> " + $hashCsv
-            if ($reparseSkipped.Count -gt 0) { $hashNote += "; " + $reparseSkipped.Count + " reparse point(s) skipped" }
         } catch {
-            $hashNote = "directory, " + $rows.Count + " file(s); hash CSV failed: " + $_.Exception.Message
+            throw "Directory hash CSV failed: $($_.Exception.Message)"
         }
         $sha256 = $hashNote
     } else {
         $sha256 = Get-Sha256File $SourcePath
     }
     $destName = [System.IO.Path]::GetFileName($SourcePath)
-    # Windows PowerShell 5.1's Join-Path takes only -Path and -ChildPath; a
-    # third positional part (PS 7+ only) fails with "A positional parameter
-    # cannot be found that accepts argument ...", which aborted manual surgery
-    # before anything was ever quarantined. Nest the calls instead.
-    $destPath = Join-Path (Join-Path $quarantineDir "$InstanceId") "$destName"
+    $instanceDirName = Get-SafeInstanceDirectoryName -InstanceId $InstanceId
+    $instanceQDir = Join-Path $quarantineDir $instanceDirName
+    if (-not (Test-PathContained -Root $quarantineDir -Candidate $instanceQDir)) {
+        throw "Refusing quarantine destination outside quarantine root: $instanceQDir"
+    }
+    $destPath = Join-Path $instanceQDir $destName
+    if (-not (Test-PathContained -Root $quarantineDir -Candidate $destPath)) {
+        throw "Refusing quarantine destination outside quarantine root: $destPath"
+    }
 
     # FIX (safety): make the quarantine destination collision-safe. Move-Item
     # -Force on a directory-vs-directory collision MERGES the sources on top of
@@ -1152,12 +1559,17 @@ function Move-ToQuarantine {
     if (Test-Path -LiteralPath $destPath) {
         $unique = (Get-Sha256Hex -Text $SourcePath)
         if ($unique) { $unique = $unique.Substring(0, 8) } else { $unique = [Guid]::NewGuid().ToString('N').Substring(0, 8) }
-        $destPath = Join-Path (Join-Path $quarantineDir "$InstanceId") ($unique + '-' + $destName)
-        Write-Log "  Quarantine destination already exists; using unique path: $destPath"
+        $destPath = Join-Path $instanceQDir ($unique + '-' + $destName)
+        if (-not (Test-PathContained -Root $quarantineDir -Candidate $destPath)) {
+            throw "Refusing collision-safe quarantine destination outside quarantine root: $destPath"
+        }
     }
 
     # Ensure quarantine subdirectory exists
     $qSubDir = Split-Path -Parent $destPath
+    if (-not (Test-PathContained -Root $quarantineDir -Candidate $qSubDir)) {
+        throw "Refusing quarantine subdirectory outside quarantine root: $qSubDir"
+    }
     if (-not (Test-Path -LiteralPath $qSubDir)) {
         $null = New-Item -ItemType Directory -Path $qSubDir -Force
     }
@@ -1184,22 +1596,46 @@ function Move-ToQuarantine {
             if ($isLocked) {
                 Write-Log "  File in use, scheduling move on reboot via MoveFileEx" 'Warn'
                 # Use MoveFileEx with MOVEFILE_DELAY_UNTIL_REBOOT
-                $kernel32 = Add-Type -MemberDefinition @'
+                $kernelType = 'Win32.Kernel32' -as [type]
+                if (-not $kernelType) {
+                    $kernelType = Add-Type -MemberDefinition @'
                     [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Auto)]
                     public static extern bool MoveFileEx(string lpExistingFileName, string lpNewFileName, int dwFlags);
 '@ -Name 'Kernel32' -Namespace 'Win32' -PassThru
+                }
                 $MOVEFILE_DELAY_UNTIL_REBOOT = 4
-                $result = $kernel32::MoveFileEx($SourcePath, $destPath, $MOVEFILE_DELAY_UNTIL_REBOOT)
+                $result = $kernelType::MoveFileEx($SourcePath, $destPath, $MOVEFILE_DELAY_UNTIL_REBOOT)
                 if (-not $result) {
                     $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
                     throw "MoveFileEx failed with error $err"
                 }
-                # Set RunOnce to resume
-                Set-RunOnceResume -InstanceId $InstanceId -WorkDir $WorkDir
-                Add-ManifestEntry -InstanceId $InstanceId -Action 'Quarantine' -Target $SourcePath -Result 'Deferred' -Details "File in use, scheduled for reboot move. SHA256: $sha256. Original: $SourcePath`nQuarantine: $destPath`nDescription: $Description"
+                # Set RunOnce to resume; inability to register a resume path is
+                # a safety failure, not a warning that can be ignored.
+                if (-not (Set-RunOnceResume -InstanceId $InstanceId -WorkDir $WorkDir)) {
+                    # Cancel the already-queued delayed move before returning
+                    # failure; otherwise Windows may still move the payload at
+                    # reboot without any resume cleanup attached.
+                    $cancelled = $kernelType::MoveFileEx($SourcePath, $null, $MOVEFILE_DELAY_UNTIL_REBOOT)
+                    if (-not $cancelled) {
+                        $cancelError = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                        throw "Could not register reboot-resume action and could not cancel pending MoveFileEx (error $cancelError)"
+                    }
+                    throw 'Could not register an elevated reboot-resume action; pending move cancelled'
+                }
+                if (-not ($script:DeferredQuarantineInstanceIds -contains $InstanceId)) {
+                    [void]$script:DeferredQuarantineInstanceIds.Add($InstanceId)
+                }
+                Add-ManifestEntry -InstanceId $InstanceId -Action 'Quarantine' -Target $SourcePath -Result 'Deferred' -Details "File in use, scheduled for reboot move. SHA256: $sha256. Original: $SourcePath`nQuarantine: $destPath`nDescription: $Description" -SourcePath $SourcePath -DestinationPath $destPath -SourceIdentity $sourceIdentity
             } else {
+                $destinationIdentity = Get-PathIdentityHash -Path $destPath
+                if ($destinationIdentity -ne $sourceIdentity) {
+                    throw "Post-move identity mismatch for $SourcePath; quarantine content changed during move"
+                }
+                # Verify destination ACLs after the move; the source ACL is not
+                # trusted to inherit the protected quarantine policy.
+                Protect-QuarantinePathAcl -Path $destPath
                 # Already moved by the attempt above - just record it.
-                Add-ManifestEntry -InstanceId $InstanceId -Action 'Quarantine' -Target $SourcePath -Result 'Success' -Details "Moved to quarantine. SHA256: $sha256. Original: $SourcePath`nQuarantine: $destPath`nDescription: $Description"
+                Add-ManifestEntry -InstanceId $InstanceId -Action 'Quarantine' -Target $SourcePath -Result 'Success' -Details "Moved to quarantine. SHA256: $sha256. Original: $SourcePath`nQuarantine: $destPath`nDescription: $Description" -SourcePath $SourcePath -DestinationPath $destPath -SourceIdentity $sourceIdentity
             }
             return $true
         } catch {
@@ -1218,27 +1654,40 @@ function Move-ToQuarantine {
 function Set-RunOnceResume {
     param([string]$InstanceId, [string]$WorkDir)
     try {
-        $runOncePath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce'
-        $scriptPath = Join-Path $PSScriptRoot 'remove-screenconnect.ps1'
-        # Resolve to absolute paths: RunOnce executes from the system context
-        # (working directory is not the tool folder), so a relative PlanFile or
-        # WorkDir would break the post-reboot resume run.
-        $planPath = $PlanFile
-        $workPath = $WorkDir
-        if ($PlanFile -and (Test-Path -LiteralPath $PlanFile)) {
-            $planPath = (Resolve-Path -LiteralPath $PlanFile).Path
+        $scriptPath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot 'remove-screenconnect.ps1')).Path
+        $planPath = (Resolve-Path -LiteralPath $PlanFile).Path
+        $workPath = (Resolve-Path -LiteralPath $WorkDir).Path
+        if (-not (Test-ResumeMaterialsTrusted -Paths @($scriptPath, $planPath, $workPath))) {
+            throw 'Resume materials or their parent paths are writable by an untrusted identity'
         }
-        if ($WorkDir -and (Test-Path -LiteralPath $WorkDir)) {
-            $workPath = (Resolve-Path -LiteralPath $WorkDir).Path
-        }
-        $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -PlanFile `"$planPath`" -WorkDir `"$workPath`" -Execute -Resume"
-        if (-not (Test-Path -LiteralPath $runOncePath)) {
-            $null = New-Item -Path $runOncePath -Force
-        }
-        Set-ItemProperty -LiteralPath $runOncePath -Name "SCCleanup_Resume_$InstanceId" -Value $cmd -Force -ErrorAction Stop
-        Write-Log "  RunOnce resume key set for $InstanceId"
+        $safeTaskId = Get-SafeInstanceFileStem -InstanceId $InstanceId
+        $taskName = 'SCCleanup-Resume-' + $safeTaskId
+        $taskArgs = '-NoProfile -ExecutionPolicy Bypass -File "' + $scriptPath + '" -PlanFile "' + $planPath + '" -WorkDir "' + $workPath + '" -Execute -Resume'
+
+        # Task Scheduler is used instead of a plain RunOnce command so the
+        # continuation receives SYSTEM/highest privileges without depending on
+        # the interactive user's token or a UAC prompt at logon.
+        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $taskArgs -ErrorAction Stop
+        $trigger = New-ScheduledTaskTrigger -AtLogOn -ErrorAction Stop
+        $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest -ErrorAction Stop
+        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force -ErrorAction Stop | Out-Null
+        Write-Log "  Highest-privilege scheduled resume task registered: $taskName"
+        return $true
     } catch {
-        Write-Log "  Failed to set RunOnce key: $($_.Exception.Message)" 'Warn'
+        Write-Log "  Failed to register highest-privilege resume task: $($_.Exception.Message)" 'Error'
+        return $false
+    }
+}
+
+function Remove-ResumeTask {
+    param([string]$InstanceId)
+    try {
+        $taskName = 'SCCleanup-Resume-' + (Get-SafeInstanceFileStem -InstanceId $InstanceId)
+        if (Get-Command Unregister-ScheduledTask -ErrorAction SilentlyContinue) {
+            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+        }
+    } catch {
+        Write-Log "  Could not remove completed resume task: $($_.Exception.Message)" 'Warn'
     }
 }
 
@@ -1247,12 +1696,13 @@ function Set-RunOnceResume {
 # -----------------------------------------------------------------------------
 function Clean-Persistence {
     param([string]$InstallDir, [string]$InstanceId)
+    $InstallDir = Expand-Env $InstallDir
     $cleaned = 0
     $failed = $false
 
     # 1. Scheduled Tasks referencing the install directory
     try {
-        $tasks = Get-ScheduledTask -ErrorAction SilentlyContinue
+        $tasks = Get-ScheduledTask -ErrorAction Stop
         if ($tasks) {
             foreach ($task in $tasks) {
                 try {
@@ -1264,7 +1714,11 @@ function Clean-Persistence {
                         # non-execute action does not throw under StrictMode.
                         $path = Get-EntryPropertySafe -Instance $action -PropertyName 'Execute'
                         $args = Get-EntryPropertySafe -Instance $action -PropertyName 'Arguments'
-                        if (($path -and $path -like "$InstallDir\*") -or ($args -and $args -like "*$InstallDir*")) {
+                        if ($path) { $path = Expand-Env ([string]$path) }
+                        if ($args) { $args = Expand-Env ([string]$args) }
+                        $pathReferences = $path -and (Test-PathContained -Root $InstallDir -Candidate $path)
+                        $argsReferences = $args -and (Test-LiteralPathReference -Text $args -Path $InstallDir)
+                        if ($pathReferences -or $argsReferences) {
                             $taskName = $task.TaskName
                             $taskPath = $task.TaskPath
                             Write-Log "  Found scheduled task referencing install dir: $taskPath$taskName"
@@ -1287,7 +1741,11 @@ function Clean-Persistence {
                 }
             }
         }
-    } catch { Write-Log "  Scheduled task enumeration failed: $($_.Exception.Message)" 'Warn' }
+    } catch {
+        $failed = $true
+        Write-Log "  Scheduled task enumeration failed: $($_.Exception.Message)" 'Error'
+        Add-ManifestEntry -InstanceId $InstanceId -Action 'EnumerateScheduledTasks' -Target 'N/A' -Result 'Failed' -Details $_.Exception.Message
+    }
 
     # 2. Registry Run/RunOnce keys
     $runKeys = @(
@@ -1306,7 +1764,8 @@ function Clean-Persistence {
                 foreach ($prop in $vals.PSObject.Properties) {
                     if ($prop.Name -eq 'PSPath' -or $prop.Name -eq 'PSParentPath' -or $prop.Name -eq 'PSChildName' -or $prop.Name -eq 'PSDrive' -or $prop.Name -eq 'PSProvider') { continue }
                     $val = $prop.Value
-                    if ($val -and $val -like "*$InstallDir*") {
+                    $expandedVal = if ($val) { Expand-Env ([string]$val) } else { $val }
+                    if ($expandedVal -and (Test-LiteralPathReference -Text ([string]$expandedVal) -Path $InstallDir)) {
                         Write-Log "  Found Run key referencing install dir: $rk\$($prop.Name) = $val"
                         if ($Execute) {
                             Remove-ItemProperty -LiteralPath $rk -Name $prop.Name -Force -ErrorAction Stop
@@ -1335,7 +1794,8 @@ function Clean-Persistence {
             try {
                 $filter = Get-CimInstance -Namespace 'root\subscription' -ClassName '__EventFilter' -Filter "Name='$($b.Filter)'" -ErrorAction SilentlyContinue
                 $consumer = Get-CimInstance -Namespace 'root\subscription' -ClassName 'CommandLineEventConsumer' -Filter "Name='$($b.Consumer)'" -ErrorAction SilentlyContinue
-                if ($consumer -and $consumer.CommandLineTemplate -and $consumer.CommandLineTemplate -like "*$InstallDir*") {
+                $consumerTemplate = if ($consumer -and $consumer.CommandLineTemplate) { Expand-Env ([string]$consumer.CommandLineTemplate) } else { $null }
+                if ($consumerTemplate -and (Test-LiteralPathReference -Text ([string]$consumerTemplate) -Path $InstallDir)) {
                     Write-Log "  Found WMI subscription referencing install dir: $($filter.Name) -> $($consumer.Name)"
                     if ($Execute) {
                         Remove-CimInstance -CimInstance $b -ErrorAction Stop
@@ -1356,9 +1816,13 @@ function Clean-Persistence {
                 Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteWmiSubscription' -Target 'N/A' -Result 'Failed' -Details $_.Exception.Message
             }
         }
-    } catch { Write-Log "  WMI subscription enumeration failed: $($_.Exception.Message)" 'Warn' }
+    } catch {
+        $failed = $true
+        Write-Log "  WMI subscription enumeration failed: $($_.Exception.Message)" 'Error'
+        Add-ManifestEntry -InstanceId $InstanceId -Action 'EnumerateWmiSubscriptions' -Target 'N/A' -Result 'Failed' -Details $_.Exception.Message
+    }
 
-    if ($cleaned -eq 0) {
+    if ($cleaned -eq 0 -and -not $failed) {
         Write-Log "  No persistence artifacts found referencing $InstallDir"
         Add-ManifestEntry -InstanceId $InstanceId -Action 'CleanPersistence' -Target $InstallDir -Result 'Skipped' -Details 'No artifacts found'
     }
@@ -1370,10 +1834,9 @@ function Clean-Persistence {
 # -----------------------------------------------------------------------------
 Write-Section "Processing ScreenConnect instances"
 
-Initialize-ResumeMarker
+$null = Initialize-ResumeMarker
 
 $overallSuccess = $true
-
 $scInstancesArray = @($scInstances)
 foreach ($inst in $scInstancesArray) {
 
@@ -1392,24 +1855,36 @@ foreach ($inst in $scInstancesArray) {
             continue
         }
 
-        # FIX 1: verify this entry really is ScreenConnect BEFORE acting on it
-        $verification = Test-ScreenConnectInstance -Instance $inst
-        if (-not $verification.Verified) {
-            $why = ($verification.Reasons -join '; ')
-            Write-Log "  PRODUCT VERIFICATION FAILED for ${instanceId}: $why" 'Error'
-            Add-ManifestEntry -InstanceId $instanceId -Action 'ProductVerification' -Target 'N/A' -Result 'PRODUCT_VERIFICATION_FAILED' -Details "Entry skipped, never uninstalled. Reasons: $why"
-            Update-ResumeStatus -InstanceId $instanceId -Status 'PRODUCT_VERIFICATION_FAILED'
-            continue
+        $isRebootPendingResume = ($Resume -and
+            ($script:RebootPendingInstanceIds -contains $instanceId) -and
+            ($script:PriorVerifiedInstanceIds -contains $instanceId))
+        if ($isRebootPendingResume) {
+            # The prior run already passed product verification. On a 3010
+            # reboot, the vendor may have removed the install directory before
+            # this continuation starts, so a fresh on-disk identity check would
+            # incorrectly block the persistence-only cleanup. Require both the
+            # marker status and prior manifest proof; a marker alone is not
+            # enough to bypass the current identity gate.
+            Write-Log "  RebootPending resume: prior ProductVerification passed; current payload may already be absent"
+            Add-ManifestEntry -InstanceId $instanceId -Action 'ProductVerification' -Target 'N/A' -Result 'Passed' -Details 'Inherited from prior run; RebootPending resume is limited to post-reboot cleanup'
+        } else {
+            # FIX 1: verify this entry really is ScreenConnect BEFORE acting on it
+            $verification = Test-ScreenConnectInstance -Instance $inst
+            if (-not $verification.Verified) {
+                $why = ($verification.Reasons -join '; ')
+                Write-Log "  PRODUCT VERIFICATION FAILED for ${instanceId}: $why" 'Error'
+                Add-ManifestEntry -InstanceId $instanceId -Action 'ProductVerification' -Target 'N/A' -Result 'PRODUCT_VERIFICATION_FAILED' -Details "Entry skipped, never uninstalled. Reasons: $why"
+                Update-ResumeStatus -InstanceId $instanceId -Status 'PRODUCT_VERIFICATION_FAILED'
+                continue
+            }
+            Write-Log "  Product verification passed"
+            Add-ManifestEntry -InstanceId $instanceId -Action 'ProductVerification' -Target 'N/A' -Result 'Passed' -Details 'Entry identity and Authenticode signer confirmed against ScreenConnect patterns'
+            # The execute gate confirms a known binary name and a valid
+            # ConnectWise/ScreenConnect Authenticode signer. Review the full
+            # manifest before removal; signature proof does not replace operator
+            # approval or the current-run plan binding.
+            Write-Log "  NOTE: identity and Authenticode signer verified; review the instance before removal." 'Warn'
         }
-        Write-Log "  Product verification passed"
-        Add-ManifestEntry -InstanceId $instanceId -Action 'ProductVerification' -Target 'N/A' -Result 'Passed' -Details 'Entry identity confirmed against ScreenConnect patterns'
-        # FIX (transparency): this confirmation is NAME-BASED identity (directory
-        # segment + binary name + service name). It does NOT check an
-        # Authenticode signature or a ConnectWise certificate. A technician must
-        # eyeball the entry, because a look-alike folder/binary named
-        # "ScreenConnect..." would pass these gates. See docs/03 (key map is
-        # UNVERIFIED against a live install).
-        Write-Log "  NOTE: identity is name-based, not signature-verified. Review the instance before removal." 'Warn'
 
         $serviceName = Get-EntryPropertySafe -Instance $inst -PropertyName 'ServiceName'
         $installDir = Get-EntryPropertySafe -Instance $inst -PropertyName 'InstallDir'
@@ -1436,8 +1911,43 @@ foreach ($inst in $scInstancesArray) {
         # vendor uninstaller pass (exit 3010). On -Resume after reboot, do NOT
         # re-run the vendor uninstaller or manual surgery - finish only the
         # deferred persistence cleanup, then close the instance status.
-        if (($script:RebootPendingInstanceIds.Count -gt 0) -and ($script:RebootPendingInstanceIds -contains $instanceId)) {
+        if ($isRebootPendingResume) {
             Write-Log "  RebootPending resume: vendor uninstaller already succeeded; running post-reboot persistence cleanup only"
+            if ($script:DeferredQuarantineInstanceIds -contains $instanceId) {
+                $deferredRecord = @($script:DeferredQuarantineRecords | Where-Object { $_.InstanceId -eq $instanceId } | Select-Object -First 1)
+                $resumeSource = if ($deferredRecord.Count -gt 0) { [string]$deferredRecord[0].SourcePath } else { '' }
+                $resumeDest = if ($deferredRecord.Count -gt 0) { [string]$deferredRecord[0].DestinationPath } else { '' }
+                $expectedIdentity = if ($deferredRecord.Count -gt 0) { [string]$deferredRecord[0].SourceIdentity } else { '' }
+                $resumeFailure = $null
+                if (-not $resumeSource -or -not $resumeDest -or -not $expectedIdentity) {
+                    $resumeFailure = 'Deferred manifest lacks structured source, destination, or source identity proof'
+                } elseif (-not (Test-PathContained -Root $quarantineDir -Candidate $resumeDest)) {
+                    $resumeFailure = 'Deferred quarantine destination failed canonical containment/reparse validation'
+                } elseif (Test-Path -LiteralPath $resumeSource) {
+                    $resumeFailure = 'Deferred quarantine source still exists after reboot'
+                } elseif (-not (Test-Path -LiteralPath $resumeDest)) {
+                    $resumeFailure = 'Deferred quarantine destination is missing after reboot'
+                } else {
+                    try {
+                        $actualIdentity = Get-PathIdentityHash -Path $resumeDest
+                        if ($actualIdentity -ne $expectedIdentity) {
+                            $resumeFailure = "Deferred destination identity mismatch (expected $expectedIdentity, got $actualIdentity)"
+                        } else {
+                            Protect-QuarantinePathAcl -Path $resumeDest
+                        }
+                    } catch {
+                        $resumeFailure = "Deferred destination identity/ACL verification failed: $($_.Exception.Message)"
+                    }
+                }
+                if ($resumeFailure) {
+                    Add-ManifestEntry -InstanceId $instanceId -Action 'ResumeVerify' -Target $resumeDest -Result 'Failed' -Details $resumeFailure
+                    Update-ResumeStatus -InstanceId $instanceId -Status 'Failed'
+                    Write-Log "  Deferred quarantine verification failed; instance remains incomplete: $resumeFailure" 'Error'
+                    $overallSuccess = $false
+                    continue
+                }
+                Add-ManifestEntry -InstanceId $instanceId -Action 'ResumeVerify' -Target $resumeDest -Result 'Success' -Details "Deferred quarantine source is absent and destination identity matches $expectedIdentity; ACLs verified"
+            }
             Add-ManifestEntry -InstanceId $instanceId -Action 'ResumeSkip' -Target 'N/A' -Result 'RebootPending' -Details 'Vendor uninstaller already succeeded (3010); skipping uninstall and manual surgery'
             $instanceFailed = $false
             if ($installDir) {
@@ -1462,12 +1972,21 @@ foreach ($inst in $scInstancesArray) {
                     if (-not (Clean-Persistence -InstallDir $resumeSvcDir -InstanceId $instanceId)) { $instanceFailed = $true }
                 }
             }
+            $resumeResidual = @()
+            if ($installDir -and (Test-Path -LiteralPath $installDir)) { $resumeResidual += 'install directory remains after reboot' }
+            if ($serviceName -and (Get-Service -Name $serviceName -ErrorAction SilentlyContinue)) { $resumeResidual += "service '$serviceName' remains after reboot" }
+            if ($resumeResidual.Count -gt 0) {
+                Add-ManifestEntry -InstanceId $instanceId -Action 'ResumePostcondition' -Target $installDir -Result 'Failed' -Details ($resumeResidual -join '; ')
+                Write-Log ("  RebootPending postcondition failed: " + ($resumeResidual -join '; ')) 'Error'
+                $instanceFailed = $true
+            }
             if ($instanceFailed) {
                 Update-ResumeStatus -InstanceId $instanceId -Status 'Failed'
                 Write-Log "  RebootPending post-reboot cleanup failed for: $instanceId" 'Error'
                 $overallSuccess = $false
             } else {
                 Update-ResumeStatus -InstanceId $instanceId -Status 'Completed'
+                Remove-ResumeTask -InstanceId $instanceId
                 Write-Log "  RebootPending post-reboot cleanup finished for: $instanceId"
             }
             continue
@@ -1526,18 +2045,37 @@ foreach ($inst in $scInstancesArray) {
             Add-ManifestEntry -InstanceId $instanceId -Action 'Uninstall' -Target 'N/A' -Result 'Skipped' -Details 'No uninstall registry entry found'
         }
 
+        $uninstallPostconditionFailed = $false
+        if ($Execute -and $uninstallSucceeded -and -not $rebootRequired) {
+            $residual = @()
+            if ($installDir -and (Test-Path -LiteralPath $installDir)) { $residual += 'install directory remains' }
+            if ($serviceName -and (Get-Service -Name $serviceName -ErrorAction SilentlyContinue)) { $residual += "service '$serviceName' remains" }
+            if ($residual.Count -gt 0) {
+                $uninstallPostconditionFailed = $true
+                $uninstallSucceeded = $false
+                $instanceFailed = $true
+                $postconditionText = ($residual -join '; ')
+                Write-Log "  Vendor uninstaller reported success but postcondition failed: $postconditionText" 'Error'
+                Add-ManifestEntry -InstanceId $instanceId -Action 'UninstallPostcondition' -Target $installDir -Result 'Failed' -Details $postconditionText
+            }
+        }
+
         # 3. Manual surgery fallback ONLY if uninstall failed or no uninstaller
         # Do NOT run manual surgery if uninstall succeeded (exit 0 or 3010)
         if (-not $uninstallSucceeded -and $installDir -and (Test-Path -LiteralPath $installDir)) {
             Write-Log "  Proceeding with manual surgery for: $installDir"
 
-            # Quarantine the entire install directory
-            if (-not (Move-ToQuarantine -SourcePath $installDir -InstanceId $instanceId -Description 'Install directory')) { $instanceFailed = $true }
+            # Quarantine the entire install directory. No destructive metadata
+            # surgery is allowed unless containment succeeded first.
+            $quarantineSucceeded = Move-ToQuarantine -SourcePath $installDir -InstanceId $instanceId -Description 'Install directory'
+            if (-not $quarantineSucceeded) { $instanceFailed = $true }
 
-            # Delete service registration
-            if ($serviceName) {
-                if (-not (Delete-ServiceRegistration -ServiceName $serviceName -InstanceId $instanceId)) { $instanceFailed = $true }
-            }
+            if ($quarantineSucceeded) {
+                # Delete service registration only after the payload is safely
+                # in quarantine (or was already absent and recorded as skipped).
+                if ($serviceName) {
+                    if (-not (Delete-ServiceRegistration -ServiceName $serviceName -InstanceId $instanceId)) { $instanceFailed = $true }
+                }
 
             # Remove the now-orphaned Uninstall registry entry. When the vendor
             # uninstaller runs, MSI clears this itself; after MANUAL SURGERY it
@@ -1551,7 +2089,11 @@ foreach ($inst in $scInstancesArray) {
                     $regPath = $orphanPath -replace '^Microsoft\.PowerShell\.Core\\Registry::', ''
                     $regPath = $regPath -replace '^HKEY_LOCAL_MACHINE', 'HKLM'
                     $regPath = $regPath -replace '^HKEY_CURRENT_USER', 'HKCU'
-                    $backup = Join-Path $WorkDir ('uninstall-key-' + $instanceId + '.reg')
+                    $safeInstanceFileStem = Get-SafeInstanceFileStem -InstanceId $instanceId
+                    $backup = Join-Path $WorkDir ('uninstall-key-' + $safeInstanceFileStem + '.reg')
+                    if (-not (Test-PathContained -Root $WorkDir -Candidate $backup)) {
+                        throw "Refusing uninstall-key backup outside WorkDir: $backup"
+                    }
                     if ($Execute) {
                         try {
                             # Export FIRST and verify the backup landed before
@@ -1586,6 +2128,30 @@ foreach ($inst in $scInstancesArray) {
                         Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'DryRun' -Details 'Would export then delete the orphaned uninstall key'
                     }
                 }
+            }
+            } else {
+                Write-Log "  Quarantine failed; leaving service and uninstall registry metadata in place for safety" 'Error'
+                if ($serviceName) {
+                    Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteService' -Target $serviceName -Result 'Skipped' -Details 'Quarantine failed; service registration left in place'
+                }
+                if ($uninstallEntry) {
+                    Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteUninstallKey' -Target 'N/A' -Result 'Skipped' -Details 'Quarantine failed; uninstall registry key left in place'
+                }
+            }
+        } elseif ($uninstallPostconditionFailed) {
+            Write-Log "  Vendor uninstaller postcondition failed; leaving service and uninstall metadata in place" 'Error'
+            if ($serviceName) {
+                Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteService' -Target $serviceName -Result 'Skipped' -Details 'Uninstaller postcondition failed; service registration left in place'
+            }
+            if ($uninstallEntry) {
+                Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteUninstallKey' -Target 'N/A' -Result 'Skipped' -Details 'Uninstaller postcondition failed; uninstall registry key left in place'
+            }
+        } elseif ($uninstallSucceeded) {
+            if ($rebootRequired) {
+                Write-Log "  Vendor uninstaller requested reboot; skipping service and persistence surgery until resume" 'Warn'
+                Add-ManifestEntry -InstanceId $instanceId -Action 'PostUninstall' -Target $installDir -Result 'RebootPending' -Details 'Exit 3010; no manual service/registry/persistence surgery before reboot'
+            } else {
+                Write-Log "  Vendor uninstaller postconditions passed; no manual surgery required"
             }
         } else {
             Write-Log "  Install directory not found or empty: $installDir" 'Warn'
@@ -1639,15 +2205,23 @@ foreach ($inst in $scInstancesArray) {
             Update-ResumeStatus -InstanceId $instanceId -Status 'Failed'
             Write-Log "  Instance had one or more failed actions; marked Failed (will be re-attempted on -Resume)" 'Error'
             $overallSuccess = $false
-        } elseif ($rebootRequired) {
-            if ($Execute) {
+        } elseif ($rebootRequired -or ($script:DeferredQuarantineInstanceIds -contains $instanceId)) {
+            if ($rebootRequired) {
                 # Schedule the post-reboot continuation so persistence cleanup
                 # actually happens without operator intervention.
-                Set-RunOnceResume -InstanceId $instanceId -WorkDir $WorkDir
+                if ($Execute -and -not (Set-RunOnceResume -InstanceId $instanceId -WorkDir $WorkDir)) {
+                    $instanceFailed = $true
+                }
             }
-            Update-ResumeStatus -InstanceId $instanceId -Status 'RebootPending'
-            Write-Log "  Uninstall succeeded, reboot required (3010); marked RebootPending for resume" 'Warn'
-            $overallSuccess = $false  # Overall run incomplete until reboot
+            if ($instanceFailed) {
+                Update-ResumeStatus -InstanceId $instanceId -Status 'Failed'
+                Write-Log "  Resume registration failed; instance remains incomplete" 'Error'
+                $overallSuccess = $false
+            } else {
+                Update-ResumeStatus -InstanceId $instanceId -Status 'RebootPending'
+                Write-Log "  Removal is deferred until reboot; marked RebootPending for resume" 'Warn'
+                $overallSuccess = $false
+            }
         } else {
             Update-ResumeStatus -InstanceId $instanceId -Status 'Completed'
         }
@@ -1662,7 +2236,14 @@ foreach ($inst in $scInstancesArray) {
     }
 }
 
-Write-ResumeMarker -Phase 'session-complete'
+$finalMarkerOk = Write-ResumeMarker -Phase 'session-complete'
+if ($Execute -and -not $finalMarkerOk) {
+    $script:ResumeMarkerWriteFailed = $true
+}
+if ($Execute -and $script:ResumeMarkerWriteFailed) {
+    $overallSuccess = $false
+    Write-Log 'One or more resume-marker writes failed; removal remains incomplete for safe resume.' 'Error'
+}
 
 # -----------------------------------------------------------------------------
 # Write removal manifest
@@ -1796,7 +2377,7 @@ if ($failedCount -gt 0) {
 }
 
 if ($deferredCount -gt 0) {
-    Write-Log "Some file moves deferred to reboot. RunOnce key set." 'Warn'
+    Write-Log "Some file moves deferred to reboot. Highest-privilege scheduled resume task set." 'Warn'
 }
 
 if (-not $Execute) {

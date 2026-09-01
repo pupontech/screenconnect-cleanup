@@ -16,12 +16,13 @@ sc-cleanup.ps1  [flags]          <- top-level runner, BUILT (wires Stages 0-9)
 |    System Restore point + registry hive export   [skip: -np]
 |    tool pack: verify hashes (tools/Get-ToolPack.ps1)
 |
-+- STAGE 1  SNAPSHOT (BEFORE)          <- read-only, always runs, NEVER skippable
++- STAGE 1  SNAPSHOT (BEFORE)          <- read-mostly, always runs, NEVER skippable
 |    collect-snapshot.ps1 -Label before
 |    services . scheduled tasks . registry autoruns . startup folders
 |    processes (PPID + cmdline) . TCP connections . installed programs
 |    local accounts . firewall . RDP state . hosts . WMI persistence
 |    incident-window recent files
+|    Amcache: temporary hive mount/unmount exception; ShimCache raw metadata only
 |
 +- STAGE 2  REMOTE-ACCESS DETECTION    <- BUILT: detect-remote-access.ps1
 |    ScreenConnect: enumerate instances, extract RELAY IDENTITY
@@ -69,7 +70,9 @@ sc-cleanup.ps1  [flags]          <- top-level runner, BUILT (wires Stages 0-9)
      + credential-reset checklist for the client
 
 Reboot-resume (e.g. vendor uninstaller exit 3010) is handled inside
-remove-screenconnect.ps1 via a RunOnce key, not by the orchestrator.
+remove-screenconnect.ps1 via a highest-privilege Task Scheduler logon task,
+not by the orchestrator. The task is removed only after post-reboot verification
+succeeds.
 ```
 
 ---
@@ -143,7 +146,9 @@ technician drives the UI:
   "IsAdmin": true,
   "OSCaption": "...",
   "IncidentWindowDays": 0,
+  "CollectionComplete": true,
   "CollectionErrors": [ { "Section": "...", "Error": "..." } ],
+  "CollectionWarnings": [ { "Section": "...", "Warning": "..." } ],
   "Sections": {
     "Services": [ { "Key": "...", "...": "..." } ],
     "ScheduledTasks": [], "RegistryAutoruns": [], "StartupFolders": [],
@@ -167,8 +172,11 @@ compared, not the identity.
 Arrays must be **sorted by Key** before emitting, so a diff of two files is not full of
 ordering noise.
 
-Every section wrapped so a failure records an entry in `CollectionErrors` and collection
-continues. One inaccessible section must never abort the run.
+Every section wrapped so a failure records an entry in `CollectionErrors`, sets
+`CollectionComplete` to false, and collection continues. Intentional limitations and
+absent optional artifacts are recorded in `CollectionWarnings`. A hard parallel-group
+timeout does not run an unbounded fallback; it records incomplete sections so the diff
+returns `INCOMPLETE` rather than treating empty placeholders as clean.
 
 ---
 

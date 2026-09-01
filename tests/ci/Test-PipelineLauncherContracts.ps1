@@ -180,11 +180,11 @@ foreach ($name in $launchers) {
 # and the report itself (default browser). Both the guided runner (START-HERE
 # Step 10) and the orchestrator (sc-cleanup.ps1 Stage 9) must do it.
 $startHereBat = Read-AsciiText (Join-Path $repoRoot 'START-HERE.bat')
-if ($startHereBat -notmatch 'explorer /select,"%~dp0report\.html"') {
-    Add-Failure 'C5' "START-HERE.bat Step 10 does not open the report folder (explorer /select)."
+if ($startHereBat -notmatch '(?i)explorer /select,[^\r\n]*report\.html') {
+    Add-Failure 'C5' "START-HERE.bat Step 10 does not open the current-run report folder (explorer /select)."
 }
-if ($startHereBat -notmatch 'start "" "%~dp0report\.html"') {
-    Add-Failure 'C5' "START-HERE.bat Step 10 does not open the report itself (start \"\" report.html)."
+if ($startHereBat -notmatch '(?i)start "" [^\r\n]*report\.html') {
+    Add-Failure 'C5' "START-HERE.bat Step 10 does not open the current-run report itself (start report.html)."
 }
 if ($cleanup -notmatch 'explorer\.exe') {
     Add-Failure 'C5' "sc-cleanup.ps1 Stage 9 does not open the report folder via explorer.exe."

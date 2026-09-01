@@ -456,8 +456,13 @@ if ($skipRestore) {
             Write-StageFail 'Aborting: proceeding without a restore point is forbidden.'
             exit 1
         }
-        if (-not (Export-RegistryHives -DestDir (Join-Path $workDir 'registry'))) {
-            Write-StageWarn 'Some critical hives failed to export (see above); continuing.'
+        $hivesOk = Export-RegistryHives -DestDir (Join-Path $workDir 'registry')
+        if (-not $hivesOk) {
+            # Registry exports are the rollback/audit boundary for removal.
+            # Never report preflight success when that boundary is incomplete.
+            Write-StageFail 'Critical registry hive export failed. Removal is blocked.'
+            "[FAILED] registry hive export" | Out-File $masterLog -Append -Encoding ascii
+            exit 1
         }
         "[OK] restore point + hive export" | Out-File $masterLog -Append -Encoding ascii
     } else {

@@ -20,6 +20,7 @@ Run-DetectRemoteAccess.bat
 targets.json
 New-InvestigationReport.ps1
 Invoke-GUIScanner.ps1          <- launches KVRT/ESET GUI scanners (and Malwarebytes via winget) and waits (Stage 5)
+Get-MalwarebytesDownloadDiagnostics.ps1 <- read-only Malwarebytes filter/proxy failure diagnostics (Stage 5)
 Invoke-AVUninstaller.ps1        <- opens installed-AV uninstallers, attended (Stage 6)
 tools\Get-ToolPack.ps1          <- downloader ONLY; do NOT copy tools\* exes
 tools\Get-AVTools.ps1           <- KVRT/ESET stager (Malwarebytes via winget since v1.7.3)
@@ -57,6 +58,15 @@ powershell -ExecutionPolicy Bypass -File .\Invoke-GUIScanner.ps1 -Scanner Malwar
 Each launch is visible and waits until you close it (4-hour safety cap; on
 timeout the process is left running). Run them during Stage 5 so the later
 after-snapshot captures whatever the GUI scans cleaned.
+
+If the Malwarebytes winget install fails, `Invoke-GUIScanner.ps1` does not
+pretend a scan happened. It probes the official Malwarebytes download endpoint,
+checks DNS/proxy/hosts evidence, and looks for Techloq and other common
+web-filter indicators. A possible block is printed as an operator alert and
+returns exit code 6. The Stage 5 pipeline writes the detailed result to
+`logs\scanner-Malwarebytes-result.json` and carries the warning into the HTML
+report. Product/proxy presence is evidence only, not proof that it caused the
+failure; review the listed endpoints with the network/filter administrator.
 
 ## 2. First run on a Windows machine
 

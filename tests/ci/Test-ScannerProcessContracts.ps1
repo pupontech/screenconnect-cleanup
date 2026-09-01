@@ -27,6 +27,8 @@ $ErrorActionPreference = 'Stop'
 $repoRoot  = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $avTools   = Join-Path $repoRoot 'tools\Get-AVTools.ps1'
 $guiScanner = Join-Path $repoRoot 'Invoke-GUIScanner.ps1'
+$cleanup = Join-Path $repoRoot 'sc-cleanup.ps1'
+$downloadDiagnostics = Join-Path $repoRoot 'Get-MalwarebytesDownloadDiagnostics.ps1'
 
 $script:failures = @()
 function Add-Failure { param([string]$Message) $script:failures += $Message }
@@ -91,10 +93,41 @@ else {
     if ($text -notmatch 'Scanner file is corrupt/truncated') { Add-Failure 'Invoke-GUIScanner.ps1 missing the corrupt-scanner error message.' }
     if ($text -notmatch '\$graceMs = 60000') { Add-Failure 'Invoke-GUIScanner.ps1 missing the 60s launch-grace probe - an instantly-exiting scanner would be reported as Completed.' }
     if ($text -notmatch 'ExitedEarly') { Add-Failure 'Invoke-GUIScanner.ps1 missing the ExitedEarly status - an early-exiting scanner must never count as a completed scan.' }
+    if (-not (Test-Path -LiteralPath $downloadDiagnostics)) {
+        Add-Failure 'Get-MalwarebytesDownloadDiagnostics.ps1 is missing.'
+    } else {
+        $diagText = [System.IO.File]::ReadAllText($downloadDiagnostics)
+        if ($diagText -notmatch 'function Get-MalwarebytesDownloadDiagnostics') { Add-Failure 'Download diagnostics helper does not expose Get-MalwarebytesDownloadDiagnostics.' }
+        if ($diagText -notmatch 'downloads\.malwarebytes\.com/file/mb-windows') { Add-Failure 'Download diagnostics do not probe the official Malwarebytes download endpoint.' }
+        if ($diagText -notmatch '(?i)Techloq') { Add-Failure 'Download diagnostics do not identify Techloq evidence.' }
+        if ($diagText -notmatch '(?i)Zscaler|Netskope|Cisco Umbrella|DNSFilter|Forcepoint') { Add-Failure 'Download diagnostics do not identify other common web-filter evidence.' }
+        if ($diagText -notmatch 'ProxyEnable|DefaultWebProxy|winhttp') { Add-Failure 'Download diagnostics do not inspect configured proxy evidence.' }
+        if ($diagText -notmatch 'hosts') { Add-Failure 'Download diagnostics do not inspect hosts-file blocking evidence.' }
+    }
+    if ($text -notmatch 'Get-MalwarebytesDownloadDiagnostics') { Add-Failure 'Invoke-GUIScanner.ps1 does not call the Malwarebytes download diagnostic helper.' }
+    if ($text -notmatch 'FilterSuspected') { Add-Failure 'Invoke-GUIScanner.ps1 does not preserve whether a filter/proxy block is suspected.' }
+    if ($text -notmatch 'Malwarebytes installation failed') { Add-Failure 'Invoke-GUIScanner.ps1 does not notify the technician when the Malwarebytes install fails.' }
+    if ($text -notmatch 'ResultPath') { Add-Failure 'Invoke-GUIScanner.ps1 does not support persisting the Malwarebytes failure diagnostics.' }
+    if ($text -notmatch 'exit 6') { Add-Failure 'Invoke-GUIScanner.ps1 does not expose a distinct nonzero exit code for a failed Malwarebytes install.' }
     if ($text -notmatch "Join-Path \`$scriptRoot \('tools\\AV\\' \+ \`$name\)") {
         Add-Failure 'Invoke-GUIScanner.ps1 does not search tools\\AV\\ (Get-AVTools.ps1 default staging sibling).'
     }
     if ($script:failures.Count -eq 0) { Write-Host '  OK Invoke-GUIScanner.ps1: ValidateSet = KVRT/ESET/Malwarebytes; Malwarebytes via winget + GUI launch.' }
+}
+
+# --- Contract 2b: pipeline preserves Malwarebytes diagnostics --------------
+Write-Host 'Section 2b: sc-cleanup.ps1 forwards scanner result artifacts'
+if (-not (Test-Path -LiteralPath $cleanup)) {
+    Add-Failure 'sc-cleanup.ps1 missing.'
+} else {
+    $pipelineText = [System.IO.File]::ReadAllText($cleanup)
+    if ($pipelineText -notmatch "'-ResultPath'") { Add-Failure 'sc-cleanup.ps1 does not pass a per-scanner -ResultPath artifact.' }
+    if ($pipelineText -notmatch "\$rc -eq 6.*InstallFailed") { Add-Failure 'sc-cleanup.ps1 does not preserve the distinct Malwarebytes install-failure status.' }
+    if ($pipelineText -notmatch 'FilterSuspected') { Add-Failure 'sc-cleanup.ps1 does not forward filter-suspected state into scanner_results.json.' }
+    if ($pipelineText -notmatch 'FilterNames') { Add-Failure 'sc-cleanup.ps1 does not forward named filter evidence into scanner_results.json.' }
+    if ($pipelineText -notmatch 'DownloadDiagnostics') { Add-Failure 'sc-cleanup.ps1 does not forward Malwarebytes download diagnostics into scanner_results.json.' }
+    if ($pipelineText -notmatch 'ConvertTo-Json -Depth 10') { Add-Failure 'sc-cleanup.ps1 scanner summary depth is too shallow for endpoint diagnostics.' }
+    if ($script:failures.Count -eq 0) { Write-Host '  OK sc-cleanup.ps1: per-scanner result artifacts and Malwarebytes diagnostics are preserved.' }
 }
 
 # --- Contract 3: AV-uninstaller is attended-only (never silent) ----------
@@ -126,7 +159,14 @@ else {
     $text = [System.IO.File]::ReadAllText($startHere)
     if ($text -notmatch 'winget install -e --id Malwarebytes\.Malwarebytes') { Add-Failure 'START-HERE.bat Step 6c does not run winget install for Malwarebytes.' }
     if ($text -notmatch 'accept-package-agreements') { Add-Failure 'START-HERE.bat Step 6c winget install does not pass --accept-package-agreements - the install would stall on an agreement prompt.' }
-    if ($text -notmatch 'start "" "%MBAMEXE%"') { Add-Failure 'START-HERE.bat Step 6c does not launch Malwarebytes (start "" "%MBAMEXE%") after install.' }
+    if ($text -match 'MBSetup\.exe') { Add-Failure 'START-HERE.bat still advertises the removed MBSetup.exe fallback.' }
+    if ($text -notmatch 'DiagnosticsOnly') { Add-Failure 'START-HERE.bat does not run the read-only Malwarebytes diagnostics after a failed install.' }
+    if ($text -notmatch 'InstallerExitCode') { Add-Failure 'START-HERE.bat does not pass the failed winget exit code into the diagnostics wrapper.' }
+    if ($text -notmatch 'scanner-Malwarebytes-result\.json') { Add-Failure 'START-HERE.bat does not persist Malwarebytes diagnostics in the current-run logs.' }
+    if ($text -notmatch ':mbam_install_failed') { Add-Failure 'START-HERE.bat is missing the dedicated failed-winget diagnostic label.' }
+    if ($text -notmatch 'mbam\.exe not found[\s\S]*goto :skip_6c[\s\S]*:mbam_install_failed') { Add-Failure 'START-HERE.bat can fall through from a successful install with missing mbam.exe into the failed-winget diagnostic label.' }
+    if ($text -notmatch 'Invoke-GUIScanner\.ps1.*-ToolPath "%MBAMEXE%"') { Add-Failure 'START-HERE.bat Step 6c does not use the waited/validated GUI wrapper for Malwarebytes.' }
+    if ($text -match 'start "" "%MBAMEXE%"') { Add-Failure 'START-HERE.bat Step 6c launches Malwarebytes asynchronously; it must wait for the attended GUI to close.' }
     if ($text -notmatch ':mbam_found') { Add-Failure 'START-HERE.bat Step 6c missing the :mbam_found launch label.' }
     if ($text -notmatch '%ProgramFiles\(x86\)%\\Malwarebytes') { Add-Failure 'START-HERE.bat Step 6c missing the Program Files (x86) mbam.exe fallback path.' }
     if ($script:failures.Count -eq 0) { Write-Host '  OK START-HERE.bat: Step 6c installs Malwarebytes via winget, then launches the GUI.' }

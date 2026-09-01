@@ -529,9 +529,11 @@ Design:
 - PS 5.1 constructs only; pure ASCII, no BOM (verified byte-level).
 
 Verification on pwsh 7.6.5 (Linux):
-1. Real run pair: two live snapshots (-Label before / -Label after,
+1. Historical pre-v1.7.32 pair: two live snapshots (-Label before / -Label after,
    IncidentWindowDays 0), both rc=0; diff verdict CLEAN rc=0 with all
-   sections 0/0/0 (Windows collectors empty on this host - expected).
+   sections 0/0/0 (Windows collectors empty on this host - expected). This
+   predates the v1.7.32 CollectionComplete fail-closed contract; new runs with
+   collection errors must report INCOMPLETE instead of CLEAN.
 2. Synthetic end-to-end test (tests/test_diff_synthetic.py): injects into
    real snapshot JSONs a removed service, a resurrected scheduled task, a
    changed registry autorun value, and volatile process churn. All checks
@@ -563,12 +565,13 @@ a sibling would have duplicated the JSON emitter and schema.
 | Section | Source | Key (stable diff identity) |
 |---|---|---|
 | Prefetch | `%WINDIR%\Prefetch\*.pf` inventory (name, exec name parsed from `<NAME>-<HASH>.pf`, timestamps). Binary .pf body deliberately NOT parsed (format varies by Windows version; version-proof approach). Absent dir is not an error. | .pf file name |
-| ShimCache | `HKLM\SYSTEM\...\AppCompatCache` REG_BINARY decoded in-script for Win8.1/10 entry layouts (types 0x30/0x10 behind a 48-byte '10ts' header). Unrecognized signature -> explicit CollectionError + empty section (never wrong paths); pre-Win8 formats not supported. | lower-cased cached path |
-| BamDam | `bam`/`dam` `State\UserSettings\<SID>` values; "when" read via key last-write time through a small advapi32 P/Invoke (`SCC.RegKeyTimes`) that degrades to blank timestamp if Add-Type is unavailable. | service|SID|value-name |
-| UserAssist | HKCU `...\UserAssist\<GUID>\Count`: ROT13-decoded value names + RunCount from payload offset 4. Unknown GUIDs still collected as `UnknownGuid`. | GUID|decoded name |
+| ShimCache | `HKLM\SYSTEM\...\AppCompatCache` REG_BINARY raw metadata only (blob length, SHA-256, first 16-byte header preview). Path decoding is disabled until Windows 8.1/10/11 fixtures are cross-checked against a trusted parser; a CollectionWarning makes the limitation explicit. | `__raw__` |
+| BamDam | `bam`/`dam` `State\UserSettings\<SID>` values; the value name is the executable path, while the REG_BINARY value data carries a FILETIME decoded into `LastExecutionUtc`. Raw value bytes/length are retained; key last-write time remains as separate provenance metadata. | service|SID|value-name |
+| Amcache | Temporary `reg.exe` mount of `Amcache.hve` under `HKLM\Amcache`; existing mounts are reused, owned mounts are unloaded with exit-code verification, and unload failures are CollectionErrors. `LowerCaseLongPath`/`RootDirPath` and modern version fields are used with legacy fallbacks. Application inventory is not definitive execution proof. | AF:<FileId> / AP:<AppId> |
+| UserAssist | HKCU `...\UserAssist\<GUID>\Count`: ROT13-decoded value names + RunCount from payload offset 4, plus last-run FILETIME from bytes 60-67 as `LastExecutionUtc` and `InIncidentWindow`. Unknown GUIDs still collected as `UnknownGuid`. | GUID|decoded name |
 | Srum | NOT an identity-diffed array: single object with SRUDB.dat presence, SHA-256 (diffable between snapshots), file inventory, best-effort READ-ONLY offline copy beside the snapshot, and an explicit Limitations list. The ESE DB itself is NOT parsed (held exclusively open by Windows; parsing requires VSS/offline copy + an ESE reader) - recorded, never silently skipped. | n/a (diff on DatabaseSha256) |
 
-**IncidentWindowDays now consumed:** Prefetch, ShimCache and BamDam rows carry
+**IncidentWindowDays now consumed:** Prefetch, BamDam and UserAssist rows carry
 an `InIncidentWindow` bool computed against the window ending at collection
 time. Rows are never filtered out (keys must stay stable across before/after);
 the flag only marks what matters to the incident.
@@ -584,9 +587,9 @@ full run x3        rc=0 each (-IncidentWindowDays 0 and 7)
 unit tests         ROT13 round-trip correct (URYYB.EXE <-> HELLO.RKR)
                    Test-InIncidentWindow: True(now,7) False(8d ago,7) False(w=0) False(null ts)
                    Get-FileSha256Safe("abc") = ba7816bf...15ad (correct)
-                   ShimCache decoder against synthetic Win10 blob ('10ts' hdr,
-                     one 0x30 entry w/ filetime + one 0x10 entry): both paths
-                     decoded correctly, filetime round-trips exactly
+                   ShimCache decoder against synthetic Win10 blob - HISTORICAL
+                   claim superseded in v1.7.32; current collector is raw-only
+                   pending trusted Windows 8.1/10/11 fixture cross-check
                    Get-SrumSection against fake WINDIR tree: inventory=2 files,
                      sha256 correct, offline copy byte-identical (hash match),
                      Limitations emitted

@@ -1,4 +1,4 @@
-# Windows Live-Test Matrix (validation checklist, current for v1.7.31)
+# Windows Live-Test Matrix (validation checklist, current for v1.7.32)
 
 This document is the exact validation checklist for the ScreenConnect Cleanup
 Tool. All items run on a dedicated, disposable Windows lab VM under Windows
@@ -54,7 +54,9 @@ no-NAS assertions), removal runtime contracts OK, integration OK,
       so the pipeline reports INCOMPLETE rather than success.
 2.4 Failed uninstaller (exit 1603 or similar)
     - Expected: manifest Failed + manual surgery + quarantine fallback executes;
-      status can never become Completed when any required action failed.
+      if quarantine fails, service and uninstall registry metadata remain in place
+      and the instance is incomplete. A vendor exit 0 requires payload/service
+      postconditions; a false success must not be recorded.
 2.5 PS 5.1 parse gate
     - `powershell.exe -NoProfile -Command "[System.Management.Automation.Language.Parser]::ParseFile('...\remove-screenconnect.ps1',[ref]$null,[ref]$e); $e.Count"`
       must print 0 (no parse errors).
@@ -69,7 +71,8 @@ no-NAS assertions), removal runtime contracts OK, integration OK,
     `echo %ERRORLEVEL%` -> 1 (not 0).
 3.3 Restore-point gate: with -ExecuteRemoval and confirmed plan but restore point
     creation failing and NO -np -> destructive Stage 4 is blocked; with -np ->
-    removal proceeds. Dry-run/-sr behavior unchanged.
+    removal may proceed only when registry exports succeeded (a registry-export
+    failure always blocks). Dry-run/-sr behavior unchanged.
 3.4 Non-admin console run: preflight must NOT log "Admin check: PASSED" when the
     shell is not elevated.
 
@@ -92,10 +95,17 @@ no-NAS assertions), removal runtime contracts OK, integration OK,
     capture path and the resurrected paths to filter on. Without `-procmon`
     Stage 7 logs "SKIPPED (not requested via -procmon)".
 3.8 Amcache: the snapshot's `Sections.Amcache` is present (progress ticks to
-    18/18); on a non-admin run the section is empty with a `CollectionError`
-    entry and the snapshot still completes. `diff-snapshots.ps1` treats Amcache
-    as a stable section.
-
+    18/18); if the artifact is absent, the section is empty with a
+    `CollectionWarning`. A mount/read/unload failure is a `CollectionError` and
+    sets `CollectionComplete=false`. `diff-snapshots.ps1` treats Amcache as a
+    stable section. The implementation temporarily mounts the hive with
+    `reg.exe load`; it reuses a pre-existing mount without unloading it, and
+    checks unload status for mounts it owns. Confirm those paths on Windows
+    before release.
+3.8a ShimCache: the candidate records only raw blob metadata (length/hash/header)
+    plus an explicit decoder limitation; it must not claim decoded cached paths.
+    A future parser needs Windows 8.1/10/11 fixtures and cross-checks against a
+    trusted parser before the section can emit path rows.
 **[NEW v1.7.26]**
 3.9 Debug logger: run `sc-cleanup.ps1 -Debug -sr ...` (and `preflight.ps1
     -Debug`). Expected: "DEBUG LOGGER ACTIVE - transcript: ..." on the
@@ -116,7 +126,9 @@ no-NAS assertions), removal runtime contracts OK, integration OK,
 
 **[NEW v1.7.24]**
 4.4 Preflight always runs: START-HERE.bat Step 2 runs preflight.ps1 with NO
-    prompt. Steps 4+5 also run automatically (owner directive 2026-08-27).
+    prompt. Step 4 runs detection automatically; Step 5 requires typed per-instance
+    review plus a final confirmation. Detection and removal artifacts are bound to
+    a fresh run directory, and a failed detection cannot fall back to older findings.
 4.5 UAC-disabled prompt-and-wait: on a machine with EnableLUA=0 (or a test that
     fakes it), run sc-cleanup.ps1 and preflight.ps1. Expected: prominent red
     banner with the `reg add ... EnableLUA ... /d 1` command, then a WAIT for
@@ -182,8 +194,8 @@ no-NAS assertions), removal runtime contracts OK, integration OK,
 
 ## 6b. FIELD VALIDATION (2026-08-26, machine INPIRON4SANITY2, real install) - historical record
 
-A real removal ran on live Windows with ExecuteMode=true (manifest 2026-08-26
-15:39 UTC). Evidence-backed results:
+A prior owner-reported real removal (2026-08-26, before the v1.7.32
+identity/signature and deferred-hash hardening) recorded the following evidence:
 
 - ProductVerification Passed; ValidateUninstallKey Accepted (instance id
   763257a7941a63ef confirmed from DisplayName + install dir) -> M0 key-map
@@ -221,11 +233,14 @@ MOVES them (never deletes) to `<LogDir>\av-uninstall-quarantine`.
 7.1 Install ScreenConnect, confirm detection, run the cleanup pipeline with
     -ExecuteRemoval, and verify: approved plan contract honored, no cmd.exe shell
     execution of registry uninstall strings (log shows direct exe/msiexec
-    invocation), quarantine-not-delete behavior, post-removal snapshot/diff/report
-    produced, truthful final exit code.
+    invocation), reparse-point rejection, recursive quarantine ACL verification,
+    quarantine-not-delete behavior, post-removal snapshot/diff/report produced,
+    truthful final exit code, and no false completion when a vendor uninstaller
+    leaves a payload or service behind.
 7.2 Reboot case: force 3010 via /norestart msiexec semantics; after reboot the
-    scheduled resume must complete persistence cleanup WITHOUT re-running the
-    vendor uninstaller on a RebootPending instance.
+    scheduled resume must validate script/plan hashes, deferred source/destination
+    identity, containment, and destination ACLs, then complete persistence cleanup
+    WITHOUT re-running the vendor uninstaller on a RebootPending instance.
 
 ## 7b. Installer (install-latest.ps1) **[NEW v1.7.20]**
 

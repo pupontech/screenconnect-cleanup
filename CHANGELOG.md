@@ -3,6 +3,68 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.32] - 2026-08-31
+Safety and correctness hardening from the read-only audit:
+- Bound the guided runner to a fresh per-run artifact directory; failed detection,
+  preflight, and removal now stop the destructive path instead of using stale
+  findings. Automatic `-Yes` approval is rejected.
+- Added plan schema/provenance checks: explicit confirmation, detector tool/run
+  identity, source hash, and current-computer binding are required for execute mode.
+- Registry export failures and non-elevated destructive execution now fail closed.
+- Quarantine paths are canonicalized and contained; the quarantine root receives
+  restrictive Windows ACLs. Deferred moves remain `RebootPending` until a later
+  run verifies source disappearance and destination existence; resume uses a
+  highest-privilege scheduled task.
+- Removed global process-kill fallback and made persistence enumeration failures
+  visible failures. Added Authenticode identity checks for execute-mode binaries.
+- AV uninstall strings are parsed and launched directly without `cmd.exe /c`,
+  registry-derived AV cleanup paths are constrained to product roots, Malwarebytes
+  launch failures are no longer reported as completed scans, and stale tool
+  manifests are revalidated.
+- Forensic-history snapshot additions are informational, missing sections count as
+  zero, and duplicate keys are reported instead of overwritten.
+- Diff field comparison preserves nested/array values under PowerShell 5.1;
+  BAM/DAM timestamps use native full registry paths; parallel snapshot groups have
+  a bounded timeout; and the report receives the removal manifest plus normalized
+  singleton/empty summary counts.
+- The guided runner aborts when the baseline snapshot is missing and waits through
+  the Malwarebytes GUI using the common validated scanner wrapper.
+- Malwarebytes install failures now run read-only diagnostics against the official
+  download endpoint and collect DNS, proxy, hosts-file, installed-filter, and
+  block-page evidence. Techloq and common web filters are named when indicated;
+  possible blocking is shown to the technician, persisted in the per-scanner JSON,
+  surfaced in the HTML report, and returns distinct exit code 6. No scan is claimed
+  when winget fails.
+- Added focused safety regression contracts and updated version identifiers.
+- Fixed child-process initialization and native `reg.exe` stderr handling under
+  Windows PowerShell `Stop`; execute-mode identity checks now consume the
+  detector's `MainExe` and quoted service command lines.
+- Reboot resume now requires prior manifest identity proof and uses the same
+  guard for its post-reboot branch; scheduled-task names and plan uninstall
+  registry paths are collision-safe/root-constrained. Resume-marker write
+  failures now abort the initial execute path or force an incomplete result.
+- Stage 0 now runs tool-pack and AV staging helpers in isolated Windows
+  PowerShell child processes so helper `exit` codes cannot terminate the main
+  orchestrator; nonzero staging remains a visible nonfatal warning.
+- ShimCache is conservatively recorded as raw metadata (length/hash/header)
+  with an explicit decoder limitation until Windows 8.1/10/11 fixtures validate
+  a format-specific parser.
+- Amcache's temporary hive mount now reuses a pre-existing mount, unloads only mounts
+  owned by this collector, checks unload status, and records modern field-name
+  fallbacks; application inventory is not described as execution proof.
+- `-np` waives only a failed restore point; registry-export failure always blocks
+  destructive removal. Manual service/uninstall-key surgery is skipped when
+  quarantine fails, and process matching uses literal canonical containment.
+- BAM/DAM uses the registry value name as `ProgramPath`, decodes the REG_BINARY
+  FILETIME into `LastExecutionUtc`, and retains raw value bytes/length.
+- Collection errors now mark snapshots incomplete while intentional limitations are
+  warnings; timed-out sections cannot produce a false-clean diff. Srum comparison
+  ignores timestamped offline-copy paths, targeted Srum/Amcache collection is
+  supported, and the diff status is rendered in the HTML report and final pipeline
+  outcome.
+- The guided review wrapper runs the removal engine in a child PowerShell host so
+  the remover's exit code cannot terminate the wrapper before its status report.
+
 ## [1.7.31] - 2026-08-30
 Fixed a preflight startup failure introduced by the debug logger:
 - `preflight.ps1` uses `[CmdletBinding()]`, which already supplies PowerShell's

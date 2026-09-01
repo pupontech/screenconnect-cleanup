@@ -28,7 +28,7 @@ $findings | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $findingsJson -En
 $scannerResults = @(
     @{ Tool = 'KVRT.exe'; Scanner = 'KVRT'; Status = 'Completed'; ExitCode = 0 },
     @{ Tool = 'esetonlinescanner.exe'; Scanner = 'ESET'; Status = 'Timeout'; ExitCode = 4 },
-    @{ Tool = 'Malwarebytes.Malwarebytes (winget install)'; Scanner = '<script>alert(1)</script>'; Status = 'Failed'; ExitCode = 1 }
+    @{ Tool = 'Malwarebytes.Malwarebytes (winget install)'; Scanner = '<script>alert(1)</script>'; Status = 'InstallFailed'; ExitCode = 6; FilterSuspected = $true; FilterClassification = 'FilterOrProxySuspected'; FilterNames = @('Techloq'); ResultPath = 'C:\\logs\\scanner-Malwarebytes-result.json' }
 )
 $scannerJson = Join-Path $tmp 'scanner_results.json'
 $scannerResults | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $scannerJson -Encoding UTF8 -NoNewline
@@ -48,6 +48,8 @@ Check 'report1 renders KVRT Completed' ($html1.Contains('>KVRT</td><td>KVRT.exe<
 Check 'report1 renders ESET Timeout' ($html1.Contains('>ESET</td><td>esetonlinescanner.exe</td><td>Timeout</td><td>4</td>'))
 Check 'report1 has 0 raw <script>' (-not $html1.Contains('<script>'))
 Check 'report1 hostile scanner escaped' ($html1.Contains('&lt;script&gt;alert(1)&lt;/script&gt;'))
+Check 'report1 surfaces suspected download filter interference' ($html1.Contains('possible web-filter/proxy interference') -and $html1.Contains('scanner-Malwarebytes-result.json'))
+Check 'report1 names suspected filter evidence' ($html1.Contains('Named filter evidence: Techloq'))
 
 # 2. With -ScannersSkipped: explicit skip line, no table
 $out2 = Join-Path $tmp 'report2.html'
@@ -70,6 +72,36 @@ $out4 = Join-Path $tmp 'report4.html'
 $html4 = Get-Content -LiteralPath $out4 -Raw
 Check 'report4 written' (Test-Path -LiteralPath $out4)
 Check 'report4 missing-file error shown' ($html4.Contains('Could not load scanner results'))
+
+# 5. A removal manifest is rendered when the orchestrator forwards it.
+$manifestJson = Join-Path $tmp 'removal-manifest.json'
+@{
+    Entries = @(@{ InstanceId = 'synth-instance'; Action = 'Quarantine'; Target = 'C:\\ScreenConnect'; Result = 'Success'; Details = 'moved' })
+} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestJson -Encoding UTF8 -NoNewline
+$out5 = Join-Path $tmp 'report5.html'
+& $reportScript -FindingsJson $findingsJson -OutputPath $out5 -RemovalManifest $manifestJson *> $null
+$html5 = Get-Content -LiteralPath $out5 -Raw
+Check 'report5 has removal section' ($html5.Contains('<section id="removal">'))
+Check 'report5 renders manifest entry' ($html5.Contains('synth-instance') -and $html5.Contains('moved'))
+
+# 6. A diff is rendered with its fail-closed verdict and escaped collection error.
+$diffJson = Join-Path $tmp 'snapshot_diff.json'
+@{
+    Verdict = 'INCOMPLETE'
+    BeforeCollectionComplete = $true
+    AfterCollectionComplete = $false
+    BeforeCollectionErrors = @()
+    AfterCollectionErrors = @(@{ Section = 'Services'; Error = '<script>alert(3)</script>' })
+    AfterCollectionWarnings = @(@{ Section = 'ShimCache'; Warning = 'decoder disabled' })
+    Sections = @(@{ Section = 'Services'; Kind = 'stable'; Removed = @(); Added = @(); Changed = @() })
+} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $diffJson -Encoding UTF8 -NoNewline
+$out6 = Join-Path $tmp 'report6.html'
+& $reportScript -FindingsJson $findingsJson -OutputPath $out6 -DiffPath $diffJson *> $null
+$html6 = Get-Content -LiteralPath $out6 -Raw
+Check 'report6 has snapshot diff section' ($html6.Contains('<section id="snapshot-diff">'))
+Check 'report6 renders incomplete verdict' ($html6.Contains('>INCOMPLETE</span>'))
+Check 'report6 renders collection warning' ($html6.Contains('Collection warnings') -and $html6.Contains('decoder disabled'))
+Check 'report6 escapes diff error' ($html6.Contains('&lt;script&gt;alert(3)&lt;/script&gt;') -and (-not $html6.Contains('<script>')))
 
 Write-Host ""
 if ($failures -eq 0) { Write-Host "ALL REPORT TESTS PASSED" } else { Write-Host "$failures REPORT TEST(S) FAILED"; exit 1 }

@@ -1,4 +1,4 @@
-# Agent Handoff — ScreenConnect Cleanup Tool (2026-08-30, state at v1.7.31)
+# Agent Handoff — ScreenConnect Cleanup Tool (unreleased v1.7.32 worktree; latest release v1.7.31)
 
 Handoff for a NEW agent taking over this project. Read this first, then the
 docs listed. Absolute paths, no assumptions. **PROVEN vs WRITTEN-BUT-UNVERIFIED
@@ -10,9 +10,10 @@ is distinguished throughout — trust only what the notes say was executed.**
 - Local checkout (NOTE: **path contains spaces** — always quote shell paths):
   `/root/screenconnect cleanup tool/repo/screenconnect-cleanup`
 - `gh` authenticated as **pupontech** (verified). Releases published from here.
-- Latest release: **v1.7.31** (sha256 `2a3b7d48…`, byte-verified, Windows CI
-  green on win-2022 + win-2025). HEAD on main: `a9a4ced`.
-- Deploy bundle: `/root/screenconnect cleanup tool/repo/screenconnect-cleanup-v1.7.31.zip`
+- Latest released version: **v1.7.31** (sha256 `2a3b7d48…`, byte-verified, Windows CI
+  green on win-2022 + win-2025). Current main HEAD: `06dbf0b`; the worktree
+  contains unreleased v1.7.32 hardening changes.
+- Deploy bundle for the latest release: `/root/screenconnect cleanup tool/repo/screenconnect-cleanup-v1.7.31.zip`
 
 ## What this tool is
 
@@ -29,12 +30,14 @@ DOCUMENT what needs live Windows testing.
 
 ```bash
 cd "/root/screenconnect cleanup tool/repo/screenconnect-cleanup"
-pwsh -NoProfile -File ./tests/ci/Test-HouseRules.ps1            # 46 files ASCII/no-BOM/JSON
-pwsh -NoProfile -File ./tests/ci/Test-Parse.ps1                 # 20 scripts parse
-pwsh -NoProfile -File ./tests/ci/Test-PipelineLauncherContracts.ps1  # C1-C7 (incl. debug logger C7)
-pwsh -NoProfile -File ./tests/ci/Test-ScannerProcessContracts.ps1   # scanner line-up + UAC/reparent guards
-pwsh -NoProfile -File ./tests/ci/Test-RemovalRuntimeContracts.ps1   # 32 removal runtime checks
+pwsh -NoProfile -File ./tests/ci/Test-HouseRules.ps1            # ASCII/no-BOM/JSON
+pwsh -NoProfile -File ./tests/ci/Test-Parse.ps1                 # 23 scripts parse
+pwsh -NoProfile -File ./tests/ci/Test-SafetyRegressionContracts.ps1 # safety/provenance contracts
+pwsh -NoProfile -File ./tests/ci/Test-PipelineLauncherContracts.ps1  # launcher contracts
+pwsh -NoProfile -File ./tests/ci/Test-ScannerProcessContracts.ps1   # scanner/UAC contracts
+pwsh -NoProfile -File ./tests/ci/Test-RemovalRuntimeContracts.ps1   # removal runtime checks
 pwsh -NoProfile -File ./tests/test_report_scanner_section.ps1       # report scanner-status section
+python3 ./tests/test_diff_synthetic.py                               # synthetic diff behavior
 ```
 Linux e2e of sc-cleanup.ps1 dies at Stage 2 (no CIM on Linux) — documented
 limitation, NOT a regression. Bundle: `bash make-deploy-bundle.sh` → reads
@@ -66,6 +69,36 @@ FASTER than old IWR method in owner's VMs). 1.7.30 **scanner prompts
 default-NO prompt, NOT UAC logic). 1.7.31 fixed the duplicate preflight
 `-Debug` parameter; owner field confirmation also established that KVRT works
 with UAC disabled.
+
+## Unreleased v1.7.32 worktree changes
+
+The current worktree adds safety/correctness hardening: fresh-run artifact
+binding and plan provenance checks, fail-closed registry/elevation handling,
+quarantine containment and ACLs, bounded child/scanner execution, normalized
+snapshot/diff/report shapes, and focused Windows PowerShell 5.1 contracts.
+The current audit also fixes child-process initialization, quoted executable
+identity checks, guarded 3010 resume, collision-safe resume task names,
+uninstall-root allowlisting, isolated Stage 0 helper execution, and fail-closed
+resume-marker persistence. Manual service/uninstall-key surgery now stops when
+quarantine fails; process targeting uses literal canonical containment. Source trees
+with reparse points are refused, moved payload hashes are rechecked, and quarantine
+ACLs are applied/verified recursively. Deferred moves carry source/destination
+identity fields; resume validates those plus script/plan hashes and trusted ACLs.
+BAM/DAM
+uses value-name paths plus decoded binary FILETIME metadata. Collection errors
+mark snapshots incomplete while intentional forensic limitations are warnings;
+Srum diff ignores timestamped copy paths, targeted Srum/Amcache collection is
+supported, and the diff status is rendered in the HTML report and final pipeline
+outcome. The guided review wrapper runs the remover out of process. ShimCache is
+intentionally raw-only pending a cross-version decoder fixture set; Amcache's
+temporary hive mount remains a live release-gate decision. Malwarebytes install
+failures now call `Get-MalwarebytesDownloadDiagnostics.ps1`: it probes the official
+endpoint, DNS/proxy/hosts evidence, and installed filter names (Techloq plus common
+alternatives), preserves the result under `logs\scanner-Malwarebytes-result.json`,
+and reports possible blocking without claiming causation. The helper is included
+in `make-deploy-bundle.sh`; the guided batch path uses `-DiagnosticsOnly` after a
+failed or missing winget command. These changes are not a release until the owner
+runs the Windows matrix below and a clean release bundle is built.
 
 ## Windows VM probe (scanner-launch-probe.yml — reusable diagnostic)
 
@@ -121,5 +154,5 @@ lane policy, Ghost/Echo setup, weekly backups (unrelated projects).
 docs/01 brief+decisions · docs/02 architecture (flags, stages, schema) ·
 docs/05 scanners/Tron · docs/06 safety model (rules 9-10: skipped/failed
 scanners must appear in report) · docs/07 roadmap+open questions (Q1-Q7) ·
-docs/09 Windows live-test matrix (current for v1.7.31) · docs/10 field-test
-pack (owner items) · CHANGELOG.md (1.7.18-1.7.31 entries).
+docs/09 Windows live-test matrix (current for unreleased v1.7.32) · docs/10
+field-test pack (owner items) · CHANGELOG.md (1.7.18-1.7.32 WIP entries).

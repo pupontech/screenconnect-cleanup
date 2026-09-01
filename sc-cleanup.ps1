@@ -51,7 +51,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Constants & script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.7.31'
+$ScriptVersion = '1.7.32'
 $ScriptName = 'sc-cleanup.ps1'
 $PipelineStages = @(
     @{ Id = 0; Name = 'Preflight';            SkipFlag = '' },
@@ -159,6 +159,7 @@ function Get-JsonItems {
     # $result.Count then blows up with "property 'Count' cannot be found".
     param($Value)
     if ($null -eq $Value) { return , @() }
+    if ($Value -is [pscustomobject] -and @($Value.PSObject.Properties).Count -eq 0) { return , @() }
     if ($Value -is [System.Array]) { return , @($Value) }
     if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) { return , @($Value) }
     return , @($Value)
@@ -188,14 +189,29 @@ function Invoke-ChildScript {
         return 1
     }
 
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $runner = Get-Command pwsh -ErrorAction SilentlyContinue
-    if (-not $runner) { $runner = Get-Command powershell.exe -ErrorAction SilentlyContinue }
+    $runner = $null
+    # The field workflow's compatibility baseline is Windows PowerShell 5.1.
+    # On Windows, prefer powershell.exe even when the orchestrator itself was
+    # started from pwsh; use pwsh first only on non-Windows CI/dev hosts.
+    $isWindowsHost = ($env:OS -eq 'Windows_NT') -or ($PSVersionTable.PSEdition -eq 'Desktop')
+    if ($isWindowsHost) {
+        $runner = Get-Command powershell.exe -ErrorAction SilentlyContinue
+        if (-not $runner) { $runner = Get-Command pwsh -ErrorAction SilentlyContinue }
+    } else {
+        $runner = Get-Command pwsh -ErrorAction SilentlyContinue
+        if (-not $runner) { $runner = Get-Command powershell.exe -ErrorAction SilentlyContinue }
+    }
     if (-not $runner) {
         Write-StageLog "No PowerShell child-process host found." 'Error'
         return 1
     }
-    $psi.FileName = $runner.Source
+    $runnerPath = if ($runner.Source) { $runner.Source } else { $runner.Path }
+    if (-not $runnerPath) {
+        Write-StageLog "PowerShell child-process host has no executable path." 'Error'
+        return 1
+    }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $runnerPath
     $psi.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $ScriptPath + '"'
     foreach ($a in $ArgumentList) {
         if ($null -eq $a) { $a = '' }
@@ -396,6 +412,13 @@ if (-not $IncidentDate) {
 
 Write-StageLog "Incident window anchor: $IncidentDate"
 
+# Destructive mode must fail closed before any stage can mutate the host.
+# Read-only and -WhatIf runs may still execute on a non-elevated dev host.
+if ($ExecuteRemoval -and -not $isAdmin) {
+    Write-StageLog "ERROR: -ExecuteRemoval requires an elevated Administrator shell. Aborting before Stage 0." 'Error'
+    exit 2
+}
+
 # Preflight checks
 if (-not $isAdmin) {
     Write-StageLog "WARNING: Not running as admin. On Windows, re-run elevated. Continuing on non-Windows test host." 'Warn'
@@ -444,6 +467,7 @@ if (-not $uacEnabled -and -not $force) {
 # -----------------------------------------------------------------------------
 # Stage 0: Preflight
 # -----------------------------------------------------------------------------
+$script:RegistryExportFailed = $false
 $stage0Result = Invoke-Stage -StageId 0 -StageName 'Preflight' -SkipFlag '' -StageBlock {
     # Admin check - report the truth. Non-admin is tolerated (non-Windows
     # test host / read-only runs), but it must never be logged as PASSED.
@@ -489,20 +513,22 @@ $stage0Result = Invoke-Stage -StageId 0 -StageName 'Preflight' -SkipFlag '' -Sta
     $hiveExportDir = Join-Path $WorkDir 'registry_hives'
     $null = New-Item -ItemType Directory -Path $hiveExportDir -Force
     Write-StageLog "Exporting registry hives to $hiveExportDir..."
-    # reg.exe takes HKLM\SOFTWARE, NOT the PowerShell PSDrive form HKLM:\SOFTWARE
-    # ("ERROR: Invalid key name"), which silently skipped every hive export.
+    # Registry backup is a second rollback/audit boundary. A failed export blocks
+    # confirmed removal just like a failed restore point.
     $hives = @('HKLM\SOFTWARE', 'HKLM\SYSTEM', 'HKCU\SOFTWARE')
     foreach ($hive in $hives) {
         $hiveName = ($hive -replace '\\', '_').Trim('_')
         $exportPath = Join-Path $hiveExportDir "$hiveName.reg"
         try {
-            $regOutput = & reg.exe export $hive $exportPath /y 2>&1
+            $regOutput = & reg.exe export $hive $exportPath /y 2>$null
             if ($LASTEXITCODE -ne 0) {
-                throw (($regOutput | Out-String).Trim())
+                throw ("reg.exe export failed with exit code " + $LASTEXITCODE)
             }
             Write-StageLog "  Exported $hive -> $exportPath"
         } catch {
+            $script:RegistryExportFailed = $true
             Write-StageLog ("  Failed to export " + $hive + ": " + $_.Exception.Message) 'Warn'
+            Add-Content -Path $MasterLogPath -Value ("Registry export FAILED: " + $hive) -Encoding UTF8
         }
     }
 
@@ -510,19 +536,20 @@ $stage0Result = Invoke-Stage -StageId 0 -StageName 'Preflight' -SkipFlag '' -Sta
     Write-StageLog "Verifying tool pack at $ToolDir..."
     $getToolPack = Join-Path $ScriptRoot 'tools/Get-ToolPack.ps1'
     if (Test-Path $getToolPack) {
-        # Get-ToolPack.ps1 signals failure with 'exit 1', which does NOT throw
-        # into this scope - PASSED used to be logged unconditionally.
-        $global:LASTEXITCODE = 0
+        # Get-ToolPack.ps1 uses top-level exit codes. Run it in its own process
+        # so exit 0/1 cannot terminate the orchestrator host.
+        $toolPackArgs = @('-ToolDir', $ToolDir, '-Quiet')
         if (-not $offline) {
             Write-StageLog "Downloading/updating tool pack..."
-            & $getToolPack -ToolDir $ToolDir -Quiet
+            $toolPackExit = Invoke-ChildScript -ScriptPath $getToolPack -ArgumentList $toolPackArgs -LogTag 'ToolPack'
         } else {
             Write-StageLog "Offline mode: verifying existing tool pack..."
-            & $getToolPack -ToolDir $ToolDir -Verify -Quiet
+            $toolPackArgs += '-Verify'
+            $toolPackExit = Invoke-ChildScript -ScriptPath $getToolPack -ArgumentList $toolPackArgs -LogTag 'ToolPack'
         }
-        if ($LASTEXITCODE -ne 0) {
-            Write-StageLog ("Tool pack verification: FAILED (Get-ToolPack.ps1 exit code " + $LASTEXITCODE + "). Procmon/Autoruns stages will be unavailable.") 'Warn'
-            Add-Content -Path $MasterLogPath -Value ("Tool pack: FAILED (exit " + $LASTEXITCODE + ")") -Encoding UTF8
+        if ($toolPackExit -ne 0) {
+            Write-StageLog ("Tool pack verification: FAILED (Get-ToolPack.ps1 exit code " + $toolPackExit + "). Procmon/Autoruns stages will be unavailable.") 'Warn'
+            Add-Content -Path $MasterLogPath -Value ("Tool pack: FAILED (exit " + $toolPackExit + ")") -Encoding UTF8
         } else {
             Write-StageLog "Tool pack verification: PASSED"
             Add-Content -Path $MasterLogPath -Value "Tool pack: VERIFIED" -Encoding UTF8
@@ -540,9 +567,9 @@ $stage0Result = Invoke-Stage -StageId 0 -StageName 'Preflight' -SkipFlag '' -Sta
     $getAvTools = Join-Path $ScriptRoot 'tools/Get-AVTools.ps1'
     if ((Test-Path $getAvTools) -and -not $offline) {
         Write-StageLog "Staging AV scanners (KVRT / ESET Online Scanner; Malwarebytes via winget)..."
-        $global:LASTEXITCODE = 0
-        & $getAvTools -ToolDir (Join-Path $ToolDir 'AV') -Quiet
-        if ($LASTEXITCODE -ne 0) {
+        $avToolDir = Join-Path $ToolDir 'AV'
+        $avToolsExit = Invoke-ChildScript -ScriptPath $getAvTools -ArgumentList @('-ToolDir', $avToolDir, '-Quiet') -LogTag 'AVToolStaging'
+        if ($avToolsExit -ne 0) {
             Write-StageLog "AV scanner staging: some tools unavailable (see above)." 'Warn'
         } else {
             Write-StageLog "AV scanner staging: done."
@@ -696,12 +723,16 @@ $stage3Result = Invoke-Stage -StageId 3 -StageName 'Review Gate' -SkipFlag '' -S
     $decision = 'KEEP_ALL'
     if ($removeInstances.Count -eq $instances.Count -and $instances.Count -gt 0) { $decision = 'ALL_REMOVE' }
     elseif ($removeInstances.Count -gt 0) { $decision = 'PARTIAL_REMOVE' }
-    # OWNER POLICY: only ScreenConnectInstances is serialized as a removal surface.
+    $sourceFindingsHash = (Get-FileHash -LiteralPath $findingsJson -Algorithm SHA256 -ErrorAction Stop).Hash
+    $sourceRunId = Split-Path -Leaf (Split-Path -Parent $findingsJson)
     $plan = [ordered]@{
+        PlanSchemaVersion = 2
+        RunId = $sourceRunId
         GeneratedUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
         ComputerName = $env:COMPUTERNAME
         Decision = $decision
         SourceFindings = $findingsJson
+        SourceFindingsSha256 = $sourceFindingsHash
         RemovalConfirmed = $removalConfirmed
         ScreenConnectInstances = $removeInstances.ToArray()
     }
@@ -732,9 +763,10 @@ $stage4Result = Invoke-Stage -StageId 4 -StageName 'Contain + Remove' -SkipFlag 
     # Do NOT throw here - Invoke-Stage rethrows and would abort Stages 5-8 before
     # any post-removal evidence is produced. Record a blocked result instead so
     # the snapshot/diff/report still run and the pipeline ends nonzero.
-    if ($confirmed -and -not $sr -and $script:RestorePointFailed -and -not $np) {
-        Write-StageLog "Stage 4 BLOCKED: the System Restore point failed in Stage 0 and -np was not specified. Destructive removal refused (fail closed)." 'Error'
-        Add-Content -Path $MasterLogPath -Value "Removal: BLOCKED - no restore point and no -np" -Encoding UTF8
+    if ($confirmed -and -not $sr -and ($script:RegistryExportFailed -or ($script:RestorePointFailed -and -not $np))) {
+        $rollbackReason = if ($script:RegistryExportFailed) { 'registry hive export failed' } else { 'System Restore point failed' }
+        Write-StageLog "Stage 4 BLOCKED: $rollbackReason in Stage 0. Destructive removal refused (fail closed)." 'Error'
+        Add-Content -Path $MasterLogPath -Value ("Removal: BLOCKED - $rollbackReason") -Encoding UTF8
         return @{ Skipped = $false; ManifestPath = $null; Executed = $false; ExitCode = 2; RestorePointBlocked = $true }
     }
 
@@ -783,14 +815,42 @@ $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 'sa' -St
         )
         foreach ($launch in $scannerLaunches) {
             Write-StageLog ("Launching " + $launch.Scanner + " for attended scan (technician drives the GUI)...")
-            $rc = Invoke-ChildScript -ScriptPath $guiScanner -ArgumentList @('-Scanner', $launch.Scanner, '-TimeoutMinutes', '240') -LogTag ("Scanner(" + $launch.Scanner + ")")
+            $scannerResultPath = Join-Path $logsDir ('scanner-' + $launch.Scanner + '-result.json')
+            $scannerArgs = @('-Scanner', $launch.Scanner, '-TimeoutMinutes', '240', '-ResultPath', $scannerResultPath)
+            $rc = Invoke-ChildScript -ScriptPath $guiScanner -ArgumentList $scannerArgs -LogTag ("Scanner(" + $launch.Scanner + ")")
             $status = 'Completed'
             if ($rc -eq 2) { $status = 'LaunchFailed' }
             elseif ($rc -eq 3) { $status = 'NotInstalled' }
             elseif ($rc -eq 4) { $status = 'Timeout' }
             elseif ($rc -eq 5) { $status = 'ExitedEarly' }
+            elseif ($rc -eq 6) { $status = 'InstallFailed' }
             elseif ($rc -ne 0) { $status = 'Failed' }
-            $scannerResults += @{ Tool = $launch.Tool; Scanner = $launch.Scanner; Status = $status; ExitCode = $rc }
+            $record = @{ Tool = $launch.Tool; Scanner = $launch.Scanner; Status = $status; ExitCode = $rc; ResultPath = $scannerResultPath }
+            if (Test-Path -LiteralPath $scannerResultPath) {
+                try {
+                    $childResult = Get-Content -LiteralPath $scannerResultPath -Raw | ConvertFrom-Json
+                    $childStatus = Get-PropertyValue $childResult 'Status'
+                    if ($childStatus) { $record['ChildStatus'] = [string]$childStatus }
+                    $childFilterSuspected = Get-PropertyValue $childResult 'FilterSuspected'
+                    if ($null -ne $childFilterSuspected) { $record['FilterSuspected'] = [bool]$childFilterSuspected }
+                    $childClassification = Get-PropertyValue $childResult 'FilterClassification'
+                    if ($childClassification) { $record['FilterClassification'] = [string]$childClassification }
+                    $childDiagnostics = Get-PropertyValue $childResult 'DownloadDiagnostics'
+                    if ($childDiagnostics) {
+                        $record['DownloadDiagnostics'] = $childDiagnostics
+                        $childFilterNames = Get-PropertyValue $childDiagnostics 'FilterNames'
+                        if ($childFilterNames) { $record['FilterNames'] = @($childFilterNames) }
+                        $childStrongEvidence = Get-PropertyValue $childDiagnostics 'StrongEvidence'
+                        if ($childStrongEvidence) { $record['StrongEvidence'] = @($childStrongEvidence) }
+                    }
+                } catch {
+                    $record['ResultReadError'] = $_.Exception.Message
+                    Write-StageLog ("Could not read " + $launch.Scanner + " result artifact: " + $_.Exception.Message) 'Warn'
+                }
+            } else {
+                Write-StageLog ($launch.Scanner + " did not write its result artifact: " + $scannerResultPath) 'Warn'
+            }
+            $scannerResults += $record
             Write-StageLog ($launch.Scanner + " session recorded: Status=" + $status + " ExitCode=" + $rc) 'Cyan'
         }
     } else {
@@ -798,7 +858,7 @@ $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 'sa' -St
     }
 
     $scannerSummary = Join-Path $WorkDir 'scanner_results.json'
-    $scannerResults | ConvertTo-Json -Depth 5 | Set-Content -Path $scannerSummary -Encoding UTF8 -NoNewline
+    $scannerResults | ConvertTo-Json -Depth 10 | Set-Content -Path $scannerSummary -Encoding UTF8 -NoNewline
     Write-StageLog "Scanner results summary: $scannerSummary"
 
     return @{ ScannerResults = $scannerResults; SummaryPath = $scannerSummary }
@@ -946,20 +1006,26 @@ $stage8Result = Invoke-Stage -StageId 8 -StageName 'Snapshot (After)+Diff' -Skip
     Write-StageLog "Computing diff between before/after snapshots..."
     $diffScript = Join-Path $ScriptRoot 'diff-snapshots.ps1'
     $diffPath = Join-Path $WorkDir 'snapshot_diff.json'
+    $diffVerdict = 'INCOMPLETE'
 
     if (Test-Path $diffScript) {
         $diffArgs = @('-Before', $beforeSnapshot, '-After', $afterSnapshot, '-OutFile', $diffPath)
         $rc = Invoke-ChildScript -ScriptPath $diffScript -ArgumentList $diffArgs -LogTag 'Diff'
-        # diff-snapshots.ps1: 0 = CLEAN, 1 = RESURRECTION detected, 2 = failure.
-        # Exit code 1 is a FINDING, not an error - treating it as fatal killed
-        # the pipeline before Stage 8 in exactly the case the tool exists for.
-        if ($rc -eq 1) {
-            Write-StageLog "diff-snapshots.ps1 reports RESURRECTION (exit 1) - continuing to report." 'Warn'
-        } elseif ($rc -ne 0) {
+        # diff-snapshots.ps1: 0 = CLEAN, 1 = RESURRECTION or INCOMPLETE,
+        # 2 = failure. Exit code 1 is a finding, not a launcher error.
+        if ($rc -ne 0 -and $rc -ne 1) {
             throw ("diff-snapshots.ps1 exited with code " + $rc)
         }
         Write-StageLog ("Diff saved: " + $diffPath)
         $diffResult = Get-Content $diffPath -Raw | ConvertFrom-Json
+        $diffVerdict = [string](Get-PropertyValue $diffResult 'Verdict')
+        if ($rc -eq 1) {
+            if ($diffVerdict -eq 'INCOMPLETE') {
+                Write-StageLog "diff-snapshots.ps1 reports INCOMPLETE collection evidence (exit 1) - continuing to report." 'Error'
+            } else {
+                Write-StageLog "diff-snapshots.ps1 reports RESURRECTION (exit 1) - continuing to report." 'Warn'
+            }
+        }
     } else {
         Write-StageLog "diff-snapshots.ps1 not found - performing basic diff in-line" 'Warn'
         $before = Get-Content $beforeSnapshot -Raw | ConvertFrom-Json
@@ -997,8 +1063,9 @@ $stage8Result = Invoke-Stage -StageId 8 -StageName 'Snapshot (After)+Diff' -Skip
                 foreach ($entry in $manifestEntries) {
                     $target = [string](Get-PropertyValue $entry 'Target')
                     $instanceId = [string](Get-PropertyValue $entry 'InstanceId')
-                    if (($target -and ([string]$added -like ('*' + $target + '*'))) -or
-                        ($instanceId -and ([string]$added -like ('*' + $instanceId + '*')))) {
+                    $targetMatch = $target -and ([string]$added).IndexOf($target, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+                    $instanceMatch = $instanceId -and ([string]$added).IndexOf($instanceId, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+                    if ($targetMatch -or $instanceMatch) {
                         $resurrectionMatches += [string]$added
                         $resurrected = $true
                     }
@@ -1029,6 +1096,8 @@ $stage8Result = Invoke-Stage -StageId 8 -StageName 'Snapshot (After)+Diff' -Skip
         DiffPath = $diffPath
         Resurrected = $resurrected
         DiffResult = $diffResult
+        DiffVerdict = $diffVerdict
+        DiffIncomplete = ($diffVerdict -eq 'INCOMPLETE')
         RemovalManifest = $removalManifest
         RemovalManifestData = $manifest
     }
@@ -1049,6 +1118,8 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
 
     Write-StageLog ("Generating HTML report from " + $findingsJson)
     $repArgs = @('-FindingsJson', $findingsJson, '-OutputPath', $reportHtml)
+    $reportDiffPath = if ($stage8Result -and $stage8Result.Result -and $stage8Result.Result.DiffPath) { [string]$stage8Result.Result.DiffPath } else { $null }
+    if ($reportDiffPath) { $repArgs += @('-DiffPath', $reportDiffPath) }
     $avUninstallResults = if ($stage6Result -and $stage6Result.Result -and $stage6Result.Result.ResultsPath) { $stage6Result.Result.ResultsPath } else { $null }
     if ($avUninstallResults -and (Test-Path -LiteralPath $avUninstallResults)) { $repArgs += @('-AVUninstall', $avUninstallResults) }
     # Scanner status into the report (docs/06 rules 9-10): pass the results
@@ -1057,6 +1128,13 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
     $scannerSummary = if ($stage5Result -and $stage5Result.Result -and $stage5Result.Result.SummaryPath) { $stage5Result.Result.SummaryPath } else { $null }
     if ($scannerSummary -and (Test-Path -LiteralPath $scannerSummary)) { $repArgs += @('-ScannerSummary', $scannerSummary) }
     elseif ($stage5Result -and $stage5Result.Skipped) { $repArgs += '-ScannersSkipped' }
+    $reportRemovalManifest = if ($stage8Result -and $stage8Result.Result -and $stage8Result.Result.RemovalManifest) { [string]$stage8Result.Result.RemovalManifest } else { $null }
+    if ($reportRemovalManifest -and $stage4Result -and -not $stage4Result.Skipped) {
+        # Pass the path even when the removal stage was blocked: the report then
+        # records that no manifest was produced instead of silently omitting the
+        # removal section. A skipped stage is intentionally omitted.
+        $repArgs += @('-RemovalManifest', $reportRemovalManifest)
+    }
     $rc = Invoke-ChildScript -ScriptPath $reportScript -ArgumentList $repArgs -LogTag 'Report'
     if ($rc -ne 0) { throw ("New-InvestigationReport.ps1 exited with code " + $rc) }
     Write-StageLog ("Report generated: " + $reportHtml)
@@ -1085,12 +1163,20 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
     $removalManifest = if ($stage8Result -and $stage8Result.Result) { $stage8Result.Result.RemovalManifest } else { $null }
     $scannerSummary = if ($stage5Result -and $stage5Result.Result) { $stage5Result.Result.SummaryPath } else { $null }
     $planJson = if ($stage3Result -and $stage3Result.Result) { $stage3Result.Result.PlanJson } else { $null }
+    $screenInstances = @()
+    if ($findings -and $findings.ScreenConnect) {
+        $screenInstances = Get-JsonItems (Get-PropertyValue $findings.ScreenConnect 'Instances')
+    }
     $scCount = 0
-    if ($findings -and $findings.ScreenConnect -and $findings.ScreenConnect.Instances) { $scCount = $findings.ScreenConnect.Instances.Count }
+    if ($findings -and $findings.ScreenConnect) {
+        $scCount = @($screenInstances).Count
+    }
     $otherTotal = 0
-    if ($findings -and $findings.OtherTargets) {
-        $otherTotal = ($findings.OtherTargets | ForEach-Object { if ($_.Hits) { $_.Hits.Count } else { 0 } } | Measure-Object -Sum).Sum
-        if ($null -eq $otherTotal) { $otherTotal = 0 }
+    if ($findings) {
+        $otherTargets = Get-JsonItems (Get-PropertyValue $findings 'OtherTargets')
+        foreach ($otherTarget in $otherTargets) {
+            $otherTotal += @(Get-JsonItems (Get-PropertyValue $otherTarget 'Hits')).Count
+        }
     }
     $summary = @{
         GeneratedUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
@@ -1132,9 +1218,25 @@ if ($stage4Result -and $stage4Result.Result) {
         if ($ecProp) { $removalExitCode = $ecProp.Value }
     }
 }
-$pipelineIncomplete = ($null -ne $removalExitCode -and $removalExitCode -ne 0)
+$diffIncomplete = $false
+if ($stage8Result -and $stage8Result.Result) {
+    $stage8Payload = $stage8Result.Result
+    if ($stage8Payload -is [System.Collections.IDictionary]) {
+        if ($stage8Payload.Contains('DiffIncomplete')) { $diffIncomplete = [bool]$stage8Payload['DiffIncomplete'] }
+    } else {
+        $diffIncompleteProp = $stage8Payload.PSObject.Properties['DiffIncomplete']
+        if ($diffIncompleteProp) { $diffIncomplete = [bool]$diffIncompleteProp.Value }
+    }
+}
+$pipelineIncomplete = (($null -ne $removalExitCode -and $removalExitCode -ne 0) -or $diffIncomplete)
 if ($pipelineIncomplete) {
-    Write-StageLog ("PIPELINE COMPLETED WITH ERRORS: Stage 4 removal did not complete cleanly (exit code " + $removalExitCode + "). Post-removal evidence was still produced.") 'Error'
+    if ($diffIncomplete -and $null -ne $removalExitCode -and $removalExitCode -ne 0) {
+        Write-StageLog ("PIPELINE COMPLETED WITH ERRORS: removal exit " + $removalExitCode + "; before/after collection was incomplete. Post-removal evidence was still produced.") 'Error'
+    } elseif ($diffIncomplete) {
+        Write-StageLog "PIPELINE COMPLETED WITH ERRORS: before/after collection was incomplete. Review the diff and collection errors." 'Error'
+    } else {
+        Write-StageLog ("PIPELINE COMPLETED WITH ERRORS: Stage 4 removal did not complete cleanly (exit code " + $removalExitCode + "). Post-removal evidence was still produced.") 'Error'
+    }
 } else {
     Write-StageLog "All stages executed successfully."
 }

@@ -3,9 +3,9 @@ rem ============================================================================
 rem  START-HERE.bat - one-by-one guided runner for the ScreenConnect Cleanup Tool
 rem  Walks the technician through each step in order, prompting before each one
 rem  that needs a decision. Steps 1-4 and 9-10 are read-only (steps 3, 4 and 9
-rem  run automatically). Step 5 REMOVES ScreenConnect automatically (owner
-rem  directive 2026-08-27: run + remove + log, no prompts). Step 7 is an
-rem  opt-in destructive tool. Self-elevates. Pure ASCII, no BOM.
+rem  run automatically). Step 5 requires typed review and confirmation before
+rem  ScreenConnect removal. Step 7 is an opt-in destructive tool. Self-elevates.
+rem  Pure ASCII, no BOM.
 rem ============================================================================
 
 setlocal EnableDelayedExpansion
@@ -32,6 +32,12 @@ if %errorlevel% neq 0 (
 set "SCC_SELF="
 
 cd /d "%~dp0"
+
+rem ---- Bind every artifact to a fresh run root -------------------------------
+for /f "delims=" %%R in ('powershell -NoProfile -Command "$p=Join-Path (Get-Location) ('runs/' + [guid]::NewGuid().ToString('N')); New-Item -ItemType Directory -Path $p -Force ^| Out-Null; $p"') do set "SCC_RUN_ROOT=%%R"
+if not defined SCC_RUN_ROOT goto :run_setup_failed
+
+echo     [i] Current run root: !SCC_RUN_ROOT!
 
 echo.
 echo  ============================================================
@@ -66,31 +72,33 @@ rem ---- Step 2: preflight (ALWAYS runs - owner directive 2026-08-28) ---------
 echo.
 echo  STEP 2 of 10: Preflight checks (admin, UAC, disk, working dir; restore point)
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0preflight.ps1"
+if errorlevel 1 goto :preflight_failed
 set GO=
 
 rem ---- Step 3: BEFORE snapshot -----------------------------------------------
 echo.
 echo  STEP 3 of 10: BEFORE snapshot (automatic - baseline for the step 9 diff)
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect-snapshot.ps1" -Label before -OutFile "%~dp0snapshot_before.json" -Quiet
-if errorlevel 1 echo     [WARN] Before-snapshot exited with errorlevel %errorlevel%
-if exist "%~dp0snapshot_before.json" (
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect-snapshot.ps1" -Label before -OutFile "!SCC_RUN_ROOT!\snapshot_before.json" -Quiet
+if errorlevel 1 goto :before_snapshot_failed
+if exist "!SCC_RUN_ROOT!\snapshot_before.json" (
     echo     [i] Baseline saved.
 ) else (
-    echo     [WARN] Baseline was NOT written - step 9 will skip the diff.
+    goto :before_snapshot_failed
 )
 set GO=
 
 rem ---- Step 4: detection -----------------------------------------------------
 echo.
 echo  STEP 4 of 10: Remote-access detection (read-only, automatic)
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0detect-remote-access.ps1" -All -NoPause
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0detect-remote-access.ps1" -All -NoPause -NoZip -OutRoot "!SCC_RUN_ROOT!\detect"
+if errorlevel 1 goto :detection_failed
 set GO=
 set "FINDINGS_JSON="
-rem dir /b prints only the bare filename, so walk the timestamped folders
-rem newest-first instead and keep the FULL path to the file.
-for /f "delims=" %%D in ('dir /b /ad /o-d "%USERPROFILE%\Desktop\RemoteAccessScan\*_*" 2^>nul') do (
-    if not defined FINDINGS_JSON if exist "%USERPROFILE%\Desktop\RemoteAccessScan\%%D\findings.json" (
-        set "FINDINGS_JSON=%USERPROFILE%\Desktop\RemoteAccessScan\%%D\findings.json"
+rem Only search the directory created for THIS run; historical findings are never
+rem eligible to authorize removal.
+for /f "delims=" %%D in ('dir /b /ad /o-d "!SCC_RUN_ROOT!\detect\*_*" 2^>nul') do (
+    if not defined FINDINGS_JSON if exist "!SCC_RUN_ROOT!\detect\%%D\findings.json" (
+        set "FINDINGS_JSON=!SCC_RUN_ROOT!\detect\%%D\findings.json"
     )
 )
 if not defined FINDINGS_JSON (
@@ -99,20 +107,21 @@ if not defined FINDINGS_JSON (
     echo     [i] Latest findings: !FINDINGS_JSON!
 )
 
-rem ---- Step 5: REMOVE (automatic) ----------------------------------------------
+rem ---- Step 5: REMOVE (typed confirmation) ----------------------------------
 echo.
-echo  STEP 5 of 10: Remove detected ScreenConnect (automatic - no prompts)
-echo    Every detected ScreenConnect instance is removed; files are quarantined,
-echo    never deleted; every action is logged to removal-manifest.json +
-echo    removal-report.txt. Owner directive 2026-08-27: run + remove + log only.
+echo  STEP 5 of 10: Remove detected ScreenConnect (typed confirmation required)
+echo    Every detected ScreenConnect instance is reviewed before removal; files
+echo    are quarantined, never deleted; every action is logged.
 if exist "%~dp0Invoke-ReviewAndRemove.ps1" (
     if defined FINDINGS_JSON (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-ReviewAndRemove.ps1" -FindingsJson "!FINDINGS_JSON!" -Yes
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-ReviewAndRemove.ps1" -FindingsJson "!FINDINGS_JSON!"
+        if errorlevel 1 goto :removal_failed
     ) else (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-ReviewAndRemove.ps1" -Yes
+        echo     [i] No current-run findings - removal is skipped.
     )
 ) else (
     echo     [WARN] Invoke-ReviewAndRemove.ps1 missing - cannot remove.
+    goto :removal_failed
 )
 set GO=
 
@@ -154,13 +163,17 @@ if /i "%GO%"=="n" goto :skip_6c
 where winget >nul 2>&1
 if errorlevel 1 (
     echo        [WARN] winget not found on this machine - install the App
-    echo        Installer first, or stage MBSetup.exe manually under tools\AV\.
+    echo        Installer first, then retry Malwarebytes.
+    if not exist "!SCC_RUN_ROOT!\logs" mkdir "!SCC_RUN_ROOT!\logs"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-GUIScanner.ps1" -DiagnosticsOnly -InstallerExitCode -1 -ResultPath "!SCC_RUN_ROOT!\logs\scanner-Malwarebytes-result.json"
+    if errorlevel 1 echo        [WARN] Malwarebytes diagnostic wrapper exited with errorlevel !errorlevel!
     goto :skip_6c
 )
 echo        Installing Malwarebytes via winget - id Malwarebytes.Malwarebytes
+set "MB_WINGET_RC="
 winget install -e --id Malwarebytes.Malwarebytes --accept-package-agreements --accept-source-agreements
-if errorlevel 1 echo        [WARN] winget install exited with errorlevel %errorlevel%
-if errorlevel 1 goto :skip_6c
+if errorlevel 1 set "MB_WINGET_RC=!errorlevel!"
+if defined MB_WINGET_RC goto :mbam_install_failed
 echo        Launching Malwarebytes UI...
 set "MBAMEXE="
 if exist "%ProgramFiles%\Malwarebytes\Anti-Malware\mbam.exe" set "MBAMEXE=%ProgramFiles%\Malwarebytes\Anti-Malware\mbam.exe"
@@ -169,9 +182,16 @@ if exist "%ProgramFiles(x86)%\Malwarebytes\Anti-Malware\mbam.exe" set "MBAMEXE=%
 if defined MBAMEXE goto :mbam_found
 echo        [WARN] mbam.exe not found at standard paths - launch Malwarebytes from the Start Menu.
 goto :skip_6c
+:mbam_install_failed
+echo        [WARN] Malwarebytes winget install failed with errorlevel !MB_WINGET_RC!.
+if not exist "!SCC_RUN_ROOT!\logs" mkdir "!SCC_RUN_ROOT!\logs"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-GUIScanner.ps1" -DiagnosticsOnly -InstallerExitCode !MB_WINGET_RC! -ResultPath "!SCC_RUN_ROOT!\logs\scanner-Malwarebytes-result.json"
+if errorlevel 1 echo        [WARN] Malwarebytes diagnostic wrapper exited with errorlevel !errorlevel!
+goto :skip_6c
 :mbam_found
-start "" "%MBAMEXE%"
-echo        Malwarebytes launched - drive a scan in the UI, then close it.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-GUIScanner.ps1" -ToolPath "%MBAMEXE%"
+if errorlevel 1 echo        [WARN] Malwarebytes GUI wrapper exited with errorlevel !errorlevel!
+echo        Malwarebytes session ended - continuing.
 :skip_6c
 set GO=
 
@@ -207,7 +227,7 @@ echo    uninstallers. Windows Defender is excluded (it is the OS, not
 echo    installed AV). Skips if none is detected. Type y to run it.
 set /p GO="    Run installed-AV uninstall now? [y/N] "
 if /i "%GO%"=="y" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-AVUninstaller.ps1" -LogDir "%~dp0logs"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-AVUninstaller.ps1" -LogDir "!SCC_RUN_ROOT!\logs"
 ) else (
     echo     Skipped. (To skip this in sc-cleanup.ps1 use -avu.)
 )
@@ -216,18 +236,17 @@ set GO=
 rem ---- Step 9: AFTER snapshot + diff ------------------------------------------
 echo.
 echo  STEP 9 of 10: After-snapshot and diff vs the before-snapshot (automatic)
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect-snapshot.ps1" -Label after -OutFile "%~dp0snapshot_after.json" -Quiet
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect-snapshot.ps1" -Label after -OutFile "!SCC_RUN_ROOT!\snapshot_after.json" -Quiet
 if errorlevel 1 echo     [WARN] After-snapshot exited with errorlevel %errorlevel%
-rem Only diff when the baseline from step 3 actually exists - otherwise
-rem diff-snapshots.ps1 dumps a raw PowerShell error at the technician.
-if not exist "%~dp0snapshot_before.json" (
+rem Only diff when the baseline from this run actually exists.
+if not exist "!SCC_RUN_ROOT!\snapshot_before.json" (
     echo     [WARN] No snapshot_before.json - step 3 was skipped, so there is
     echo         nothing to diff against. Skipping the diff.
 ) else (
-    if not exist "%~dp0snapshot_after.json" (
+    if not exist "!SCC_RUN_ROOT!\snapshot_after.json" (
         echo     [WARN] After-snapshot was not written - skipping the diff.
     ) else (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0diff-snapshots.ps1" -BeforeFile "%~dp0snapshot_before.json" -AfterFile "%~dp0snapshot_after.json" -OutFile "%~dp0snapshot_diff.json"
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0diff-snapshots.ps1" -BeforeFile "!SCC_RUN_ROOT!\snapshot_before.json" -AfterFile "!SCC_RUN_ROOT!\snapshot_after.json" -OutFile "!SCC_RUN_ROOT!\snapshot_diff.json"
         rem exit 1 from diff = RESURRECTION detected, a finding not a failure
         if errorlevel 2 (
             echo     [WARN] Diff failed to run.
@@ -244,23 +263,24 @@ rem ---- Step 10: report -------------------------------------------------------
 echo.
 echo  STEP 10 of 10: Generate the investigation report
 if not defined FINDINGS_JSON (
-    echo     [WARN] No findings.json available. Detection ^(step 4^) must run first,
-    echo         or enter the full path to an existing findings.json.
-    set /p FINDINGS_JSON="    Path to findings.json (blank = skip report): "
-)
-if defined FINDINGS_JSON (
+    echo     [WARN] No current-run findings.json available - skipping report.
+) else (
     if exist "!FINDINGS_JSON!" (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -OutputPath "%~dp0report.html"
-        if exist "%~dp0report.html" (
-            echo     [i] Report written to .\report.html
+    if exist "!SCC_RUN_ROOT!/removal-manifest.json" (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -RemovalManifest "!SCC_RUN_ROOT!/removal-manifest.json" -OutputPath "!SCC_RUN_ROOT!/report.html"
+    ) else (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -OutputPath "!SCC_RUN_ROOT!/report.html"
+    )
+        if exist "!SCC_RUN_ROOT!/report.html" (
+            echo     [i] Report written to !SCC_RUN_ROOT!/report.html
             rem Owner directive 2026-08-27: open the report folder + report.
-            explorer /select,"%~dp0report.html"
-            start "" "%~dp0report.html"
+            explorer /select,"!SCC_RUN_ROOT!/report.html"
+            start "" "!SCC_RUN_ROOT!/report.html"
         ) else (
             echo     [WARN] Report was not produced.
         )
     ) else (
-        echo     [WARN] File not found: !FINDINGS_JSON! - skipping report.
+        echo     [WARN] Current-run findings disappeared - skipping report.
     )
 )
 set GO=
@@ -275,3 +295,31 @@ echo   and send back raw\ + PARSE PROBLEMS so we can validate the
 echo   key map ^(see DEPLOY.md section 4^).
 echo  ============================================================
 pause
+goto :done
+
+:run_setup_failed
+echo [ERROR] Could not create a unique current-run directory. Aborting.
+pause
+exit /b 1
+
+:before_snapshot_failed
+echo [ERROR] Before-snapshot failed or was not written. No removal will run.
+pause
+exit /b 1
+
+:preflight_failed
+echo [ERROR] Preflight failed. No detection or removal will run.
+pause
+exit /b 1
+
+:detection_failed
+echo [ERROR] Detection failed. No removal will run and no historical findings will be used.
+pause
+exit /b 1
+
+:removal_failed
+echo [ERROR] Removal reported a failure. Review the current run artifacts.
+pause
+exit /b 1
+
+:done

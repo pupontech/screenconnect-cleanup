@@ -120,6 +120,68 @@ function Get-InstalledAv {
     return $out
 }
 
+function Test-PathContained {
+    param([string]$Root, [string]$Candidate)
+    try {
+        $rootFull = [System.IO.Path]::GetFullPath($Root).TrimEnd([char[]]@([char]92, [char]47)) + [System.IO.Path]::DirectorySeparatorChar
+        $candidateFull = [System.IO.Path]::GetFullPath($Candidate)
+        return $candidateFull.StartsWith($rootFull, [System.StringComparison]::OrdinalIgnoreCase)
+    } catch { return $false }
+}
+
+function Test-AllowedAvPath {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    $candidate = [System.Environment]::ExpandEnvironmentVariables($Path).Trim().Trim('"')
+    $roots = @()
+    if ($env:ProgramFiles) { $roots += $env:ProgramFiles }
+    if (${env:ProgramFiles(x86)}) { $roots += ${env:ProgramFiles(x86)} }
+    if ($env:ProgramData) { $roots += $env:ProgramData }
+    foreach ($root in $roots) {
+        if (Test-PathContained -Root $root -Candidate $candidate) { return $true }
+    }
+    return $false
+}
+
+function Resolve-UninstallCommand {
+    param([string]$CommandLine)
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) { return $null }
+    $s = $CommandLine.Trim()
+    # Shell metacharacters are never accepted. The command is started directly
+    # with ProcessStartInfo, so a registry value cannot chain another command.
+    if ($s -match '[&|<>^`\r\n]') { return $null }
+    $m = [regex]::Match($s, '^\s*"([^"]+)"\s*(.*)$')
+    if ($m.Success) {
+        $exe = $m.Groups[1].Value
+        $args = $m.Groups[2].Value
+    } else {
+        $m = [regex]::Match($s, '^\s*(.+?\.exe)(?:\s+(.*))?$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if (-not $m.Success) { return $null }
+        $exe = $m.Groups[1].Value
+        $args = if ($m.Groups[2].Success) { $m.Groups[2].Value } else { '' }
+    }
+    $resolved = $null
+    if ([System.IO.Path]::IsPathRooted($exe)) {
+        if (Test-Path -LiteralPath $exe -PathType Leaf) { $resolved = (Resolve-Path -LiteralPath $exe).Path }
+    } else {
+        $cmd = Get-Command $exe -ErrorAction SilentlyContinue
+        if ($cmd) { $resolved = $cmd.Source }
+    }
+    if (-not $resolved) { return $null }
+    $resolvedLeaf = [System.IO.Path]::GetFileName($resolved)
+    $isSystemMsi = $false
+    if ($resolvedLeaf -ieq 'msiexec.exe' -and $env:windir) {
+        $systemRoot = Join-Path $env:windir 'System32'
+        $isSystemMsi = Test-PathContained -Root $systemRoot -Candidate $resolved
+    }
+    if (-not (Test-AllowedAvPath -Path $resolved) -and -not $isSystemMsi) {
+        # A registry value may resolve to a real executable outside the product
+        # roots. It is still untrusted and must not run during AV cleanup.
+        return $null
+    }
+    return [pscustomobject]@{ FileName = $resolved; Arguments = $args }
+}
+
 # --- launch + wait --------------------------------------------------------
 function Open-Uninstaller {
     param($Product)
@@ -189,10 +251,22 @@ function Open-Uninstaller {
     $us = $Product.UninstallString
     Say ("  Opening uninstaller for: " + $Product.DisplayName) 'Cyan'
     Say ("    command: " + $us) 'DarkGray'
+    $parsed = Resolve-UninstallCommand -CommandLine $us
+    if (-not $parsed) {
+        return [pscustomobject]@{
+            DisplayName = $Product.DisplayName
+            UninstallString = $us
+            OpenedAt = $start.ToString('o')
+            ClosedAt = $null
+            Status = 'LaunchRejected'
+            Error = 'UninstallString was not a safe, resolvable executable command'
+            Method = 'direct-process'
+        }
+    }
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.UseShellExecute = $true
-    $psi.FileName = 'cmd.exe'
-    $psi.Arguments = "/c $us"
+    $psi.FileName = $parsed.FileName
+    $psi.Arguments = $parsed.Arguments
     $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Normal
     $proc = $null
     try {
@@ -259,10 +333,13 @@ function Clear-ProductLeftovers {
         }
     }
 
-    # 2) Install folder: registry InstallLocation when present, otherwise a
-    #    *<kw>* folder directly under Program Files / Program Files (x86).
-    if ($Product.InstallLocation -and (Test-Path -LiteralPath $Product.InstallLocation)) {
-        [void]$targets.Add($Product.InstallLocation)
+    # 2) Install folder: trust a registry InstallLocation only when it is
+    #    below a standard product root. Never move an arbitrary registry path.
+    $registryInstall = if ($Product.InstallLocation) { [System.Environment]::ExpandEnvironmentVariables([string]$Product.InstallLocation).Trim().Trim('"') } else { $null }
+    if ($registryInstall -and (Test-Path -LiteralPath $registryInstall) -and (Test-AllowedAvPath -Path $registryInstall)) {
+        [void]$targets.Add($registryInstall)
+    } elseif ($registryInstall -and (Test-Path -LiteralPath $registryInstall)) {
+        Say ("  Refusing registry InstallLocation outside Program Files/ProgramData: " + $registryInstall) 'Yellow'
     } else {
         $pfRoots = @()
         if ($env:ProgramFiles) { $pfRoots += $env:ProgramFiles }
@@ -286,15 +363,20 @@ function Clear-ProductLeftovers {
 
     $safeName = ($Product.DisplayName -replace '[^A-Za-z0-9 ._-]', '_').Trim()
     $destRoot = Join-Path $QuarantineRoot ($safeName + '-' + (Get-Date).ToString('yyyyMMdd_HHmmss'))
+    if (-not (Test-PathContained -Root $QuarantineRoot -Candidate $destRoot)) { throw "Refusing AV quarantine path outside root: $destRoot" }
     $null = New-Item -ItemType Directory -Path $destRoot -Force
 
     foreach ($t in $targets) {
         if (-not (Test-Path -LiteralPath $t)) { continue }
-        if ($t.TrimEnd('\') -eq $QuarantineRoot.TrimEnd('\')) { continue }   # never move the quarantine root
+        $separatorChars = [char[]]@([char]92, [char]47)
+        if ($t.TrimEnd($separatorChars) -eq $QuarantineRoot.TrimEnd($separatorChars)) { continue }   # never move the quarantine root
         $leaf = Split-Path -Leaf $t
         $dest = Join-Path $destRoot $leaf
         if (Test-Path -LiteralPath $dest) {
             $dest = Join-Path $destRoot ($leaf + '-' + [System.Guid]::NewGuid().ToString('N').Substring(0, 8))
+        }
+        if (-not (Test-PathContained -Root $QuarantineRoot -Candidate $dest)) {
+            throw "Refusing AV destination outside quarantine root: $dest"
         }
         try {
             Move-Item -LiteralPath $t -Destination $dest -Force -ErrorAction Stop

@@ -19,11 +19,12 @@ captured in this chat.
 
 ---
 
-## 1. M0 - relay-key map validation (the last detection unknown)
+## 1. M0 - relay-key map validation (historical recheck; owner reports fine)
 
 Goal: confirm the launch-parameter key map the detector relies on (`h` =
-relay host, `e` = session type, etc.). This is the ONLY remaining correctness
-unknown in Stage 2 detection.
+relay host, `e` = session type, etc.). The owner status update reports this
+as fine, but detailed run artifacts were not captured, so the procedure remains
+available as a targeted recheck rather than an open blocker.
 
 Setup (lab VM):
 1. Create a free ScreenConnect (ConnectWise Control) cloud/test instance, or
@@ -73,11 +74,12 @@ short version:
    pre-seed the resume marker - see remove-screenconnect.ps1 resume-marker
    support).
 3. Expected: manifest entry Result=Success with 3010 detail; NO manual
-   surgery on this pass; status RebootPending (never Completed); a RunOnce
-   resume key set under HKLM\...\RunOnce (SCCleanup_Resume_<id>).
-4. Reboot. Expected: the RunOnce resume completes persistence cleanup
-   WITHOUT re-running the vendor uninstaller; second manifest entry
-   completes the instance.
+   surgery on this pass; status RebootPending (never Completed); a highest-privilege
+   Task Scheduler logon task is registered for resume.
+4. Reboot. Expected: the scheduled resume validates script/plan hashes, the
+   exact deferred source/destination identity, no reparse points, and destination
+   ACLs before completing persistence cleanup. It must NOT re-run the vendor
+   uninstaller; then it removes the resume task.
 5. Send back: removal-manifest.json + resume-marker.json + master.log.
 
 ## 3. ESET + Malwarebytes scanner confirmation (attended GUIs)
@@ -101,8 +103,8 @@ Run docs/09-windows-live-test-matrix.md sections 1-8 in order on a lab VM
 (sections 1-6 + 7b are non-destructive; section 7 is destructive - dedicated
 lab VM only).
 with Windows PowerShell 5.1. The release gate summary (section 8) is the
-acceptance criterion. The highest-value items for the current release
-(v1.7.25; NEW items marked):
+acceptance criterion. The highest-value items for the current candidate
+(unreleased v1.7.32; latest release v1.7.31):
 
 - Section 3.1: clean read-only run `-sr` exits 0
 - Section 5.2/5.3/5.4: the three scanners (KVRT/ESET/Malwarebytes)
@@ -111,9 +113,15 @@ acceptance criterion. The highest-value items for the current release
 - NEW (v1.7.21): Stage 7 Procmon - run `sc-cleanup.ps1 -sr -procmon
   -ProcmonRuntime 60` and confirm a .pml appears under
   <WorkDir>\logs\Procmon\ and the stage reports its capture window
-- NEW (v1.7.21): Amcache - after any snapshot, confirm snapshot JSON has an
-  Amcache section (files + applications) and diff-snapshots.ps1 reports it
-  as a stable section
+- NEW (v1.7.21): Amcache - after any snapshot, confirm an Amcache section is
+  present and `diff-snapshots.ps1` reports it as stable. Also confirm the
+  temporary `reg.exe load HKLM\\Amcache` is unloaded after success and failure;
+  decide whether the mount is acceptable under the read-only contract or block
+  release pending an offline hive parser.
+- NEW (v1.7.32): ShimCache - confirm the snapshot records raw blob metadata and
+  an explicit decoder limitation, not guessed cached paths. Do not enable a
+  decoded-path parser until Windows 8.1/10/11 fixtures are cross-checked against
+  a trusted parser.
 - NEW (v1.7.19): ExitedEarly - a scanner that dies at launch reports exit 5
   and never Completed (Section 3.6)
 - NEW (v1.7.24): UAC-disabled prompt-and-wait (Section 4.5)

@@ -1,12 +1,12 @@
 # ScreenConnect Cleanup Tool
 
-> **Completely vibe coded.** This entire project — every script, the docs, the CI —
+> **Completely vibe coded.** This entire project - every script, the docs, the CI -
 > was created through AI-assisted ("vibe-coded") development across multiple agent
 > sessions. It has been parser-checked, ASCII/no-BOM checked, and Linux/pwsh
-> verified where possible, but **no part of it has ever been validated against a live
-> ScreenConnect install**, and the destructive Stage 4 removal path has **never been
-> run on real Windows hardware**. Read the caveats below and `docs/` before you trust
-> any of it on a client machine.
+> verified where possible. This worktree does **not** contain an artifact-backed live
+> ScreenConnect fixture or destructive Windows run; any owner-reported Windows notes
+> in `docs/` must be treated as reported evidence, not independently verified here.
+> Read the caveats below and `docs/` before you trust any of it on a client machine.
 
 Windows technician tool for investigating and cleaning up **unauthorized remote-access
 software** on client machines — typically after a tech-support scam, where the client
@@ -22,8 +22,8 @@ existing tool answers the question that actually matters.
 > plan and `-Execute`, it stops services, runs vendor uninstallers, moves files to
 > quarantine, and removes service/persistence registrations. It is dry-run by default
 > and gated behind a technician review in `sc-cleanup.ps1`; the **guided runner
-> (`START-HERE.bat` Step 5) removes automatically and logs everything** (owner
-> directive 2026-08-27 — no review prompts). **On live Windows, nothing beyond the dry-run has
+> (`START-HERE.bat` Step 5) requires typed per-instance approval and a final
+> confirmation** before removal. **On live Windows, nothing beyond the dry-run has
 > been validated** — see [Status](#status) and the caveats.
 
 ---
@@ -105,10 +105,10 @@ Two further consequences worth stating plainly:
 |---|---|---|
 | 0 — Preflight | admin check, restore point, working dir, tool pack | **built** (Linux-verified; Win-only paths unverified) |
 | 1 — Snapshot (before) | services, tasks, autoruns, processes, connections, + retro artifacts (Prefetch/ShimCache/BAM-DAM/UserAssist/SRUM/Amcache) | **built** (Linux-verified; Win-only content unverified) |
-| **2 — Detection** | **ScreenConnect instance identity + other RAT presence** | **PoC works** (verified on a real machine) |
-| 3 — Technician review | approval gate — nothing is removed without it | **built** (interactive y/n prompt in `sc-cleanup.ps1`; the guided runner skips it — Step 5 auto-removes + logs per owner directive 2026-08-27) |
+|| **2 — Detection** | **ScreenConnect instance identity + other RAT presence** | **PoC works** (owner-reported real-machine check; artifact not present in this worktree) |
+|| 3 — Technician review | approval gate - nothing is removed without it | **built** (interactive y/n prompt in `sc-cleanup.ps1` and the guided runner; lab-only `-ExecuteRemoval` is the separate automatic path) |
 | 4 — Remove / quarantine | stop, uninstall, quarantine, clean persistence | **built, dry-run default** (never run on live Windows; skipped by default via `-sr`) |
-| 5 — Scanners | KVRT, ESET Online Scanner (GUI, attended); Malwarebytes installed via winget (`winget install -e --id Malwarebytes.Malwarebytes --accept-package-agreements --accept-source-agreements`) | **built** (`Get-AVTools.ps1` downloads KVRT + ESET from official vendor URLs; `Invoke-GUIScanner` launches visible attended GUIs and runs the Malwarebytes winget install; AdwCleaner/Defender remain removed; real exec unverified) |
+| 5 — Scanners | KVRT, ESET Online Scanner (GUI, attended); Malwarebytes installed via winget (`winget install -e --id Malwarebytes.Malwarebytes --accept-package-agreements --accept-source-agreements`) | **built** (`Get-AVTools.ps1` downloads KVRT + ESET from official vendor URLs; `Invoke-GUIScanner` launches visible attended GUIs and runs the Malwarebytes winget install; on install failure it checks the official endpoint, DNS/proxy/hosts evidence, and Techloq/other filter indicators, then writes a result artifact, alerts the technician, and returns exit 6; AdwCleaner/Defender remain removed; real exec unverified) |
 | 6 — Uninstall installed AV | open each detected third-party AV uninstaller (attended GUI) + sweep leftovers into quarantine | **built** (Invoke-AVUninstaller; Windows Defender excluded; leftover sweep v1.7.5 moves remaining shortcuts/folders to av-uninstall-quarantine, never deletes; results in report) |
 | 7 — Procmon (targeted) | "something reinstalled it — what?" | **built** (v1.7.21: bounded live capture via `-procmon`, `.pml` to `logs\Procmon\`; boot-logging/PMF filters open) |
 | 8 — Snapshot (after) + diff | prove it is gone, catch resurrections | **built** (Linux-verified) |
@@ -226,13 +226,7 @@ The exceptions:
   it pre-authorizes every detected ScreenConnect instance for removal with no typed
   confirmation, prints a prominent red banner, and is intended **only** for a
   disposable, snapshotted VM.
-- **Guided runner (`START-HERE.bat` Steps 4 + 5)** — owner directive 2026-08-27
-  ("just run and remove and log"): detection and removal run automatically with **no
-  prompts**. Step 5 passes `-Yes` to `Invoke-ReviewAndRemove.ps1`, which marks every
-  detected ScreenConnect instance REMOVE, applies `-Execute`, and logs everything to
-  `removal-manifest.json` + `removal-report.txt`. Quarantine-never-delete and the
-  ScreenConnect-only policy still apply; a prominent red banner is printed before
-  removal runs.
+- **Guided runner (`START-HERE.bat` Steps 4 + 5)** - detection runs automatically, then Step 5 invokes the typed per-instance review and final confirmation in `Invoke-ReviewAndRemove.ps1`. It does not pass `-Yes`; pressing Enter keeps an instance by default. Quarantine-never-delete and the ScreenConnect-only policy still apply, and actions are logged to `removal-manifest.json` + `removal-report.txt`.
 
 ### Quarantine, never delete
 

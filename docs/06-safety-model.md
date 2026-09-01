@@ -11,17 +11,27 @@ rules that prevent that.
 Snapshot before you touch. It is also what makes the Stage 8 diff possible, so it pays
 for itself twice.
 
+> **Amcache exception in v1.7.32 candidate:** the current best-effort Amcache
+> collector temporarily mounts `Amcache.hve` with `reg.exe load`; it reuses a pre-existing
+> `HKLM\Amcache` mount without unloading it, and checks `reg.exe unload` status for mounts
+> it owns. This is not a strictly read-only operation. A Windows owner must verify cleanup
+> on both success and failure before release.
+
+A snapshot with `CollectionComplete=false` is evidence-incomplete. Stage 8 reports
+`INCOMPLETE` and exits nonzero; it must never interpret a timed-out or failed section
+as an empty, clean section. Intentional limitations such as raw-only ShimCache are
+`CollectionWarnings` and remain visible without falsely forcing failure.
+
 ### 2. Stage 3 is a hard approval gate
 Nothing is removed without a technician seeing the finding and its evidence. **There is
 no unattended removal mode, and no flag that detects and removes in one step.** This is
 the single rule that separates this tool from a destructive script.
 
-> **Owner-directive exception (2026-08-27):** the guided runner `START-HERE.bat`
-> Steps 4+5 no longer prompt — detection runs automatically and Step 5 removes every
-> detected ScreenConnect instance (`Invoke-ReviewAndRemove.ps1 -Yes`) and logs to
-> manifest + report. The interactive gate remains in `sc-cleanup.ps1` and in direct
-> runs of `Invoke-ReviewAndRemove.ps1` without `-Yes`. Quarantine-never-delete,
-> ScreenConnect-only targeting and the prominent red pre-removal banner all still apply.
+> **Guided-runner rule:** `START-HERE.bat` Step 4 runs detection automatically, but
+> Step 5 still requires typed per-instance review and final confirmation. The run uses
+> a fresh artifact directory; a failed detection never authorizes removal from an older
+> findings file. Quarantine-never-delete, ScreenConnect-only targeting and the
+> prominent red pre-removal banner all still apply.
 >
 > **Lab-only exception:** `sc-cleanup.ps1 -ExecuteRemoval` is a second unattended
 > detect-and-remove mode: it pre-authorizes Stage 4 (every detected ScreenConnect
@@ -34,6 +44,9 @@ the destructive code should not be reachable without that artifact existing.
 
 ### 3. Quarantine, never delete
 Move to an ACL-locked quarantine folder, preserve the original path, record the SHA-256.
+The path and every existing parent must pass canonical containment with no reparse
+points; a source tree containing a junction/symlink is refused. After a successful
+move, the quarantine ACL is applied and verified recursively on the moved payload.
 Deletion is a separate, later, explicitly-invoked operation. Costs nothing, covers the
 one time we are wrong.
 
@@ -44,8 +57,10 @@ one time we are wrong.
 > disables it.
 
 ### 4. Restore point + registry export before the first change
-Default on, `-np` to skip. **Check System Restore is actually enabled** — it frequently
-is not, and a silently-failed restore point is worse than none.
+Default on. `-np` waives only a failed System Restore-point creation; a failed
+registry export always blocks destructive removal. **Check System Restore is actually
+enabled** — it frequently is not, and a silently-failed restore point is worse than
+none.
 
 ### 5. Uninstall before surgery
 Always run the vendor's own uninstaller (from the registry `UninstallString` /

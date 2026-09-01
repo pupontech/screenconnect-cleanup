@@ -17,6 +17,10 @@
 param()
 
 $ErrorActionPreference = 'Stop'
+if ($env:OS -ne 'Windows_NT') {
+    Write-Host 'SKIP: Test-WindowsIntegration.ps1 requires Windows registry/CIM providers.'
+    exit 0
+}
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('scc-ci-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $tmp -Force | Out-Null
@@ -193,7 +197,7 @@ if (-not $hostExe) { $hostExe = (Get-Command pwsh -ErrorAction SilentlyContinue)
 if (-not $hostExe) { $hostExe = 'pwsh' }
 $whatIfArgs = @(
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-    '-File', $scCleanup,
+    '-File', ('"' + $scCleanup + '"'),
     '-WhatIf', '-force', '-np', '-offline',
     '-OutRoot', $tmp
 )

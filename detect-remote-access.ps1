@@ -1,5 +1,5 @@
 <#
-  detect-remote-access.ps1  -  PROOF OF CONCEPT (v0.1.0-poc)
+  detect-remote-access.ps1  -  ScreenConnect cleanup detector (v1.7.32)
 
   Read-only. Detects remote-access agents on this machine, with a deep module
   for ScreenConnect / ConnectWise Control that tries to extract the INSTANCE
@@ -7,8 +7,9 @@
   can tell an authorised install apart from a scammer's, since both are the
   same signed software.
 
-  THIS IS A PROOF OF CONCEPT. Its real job is to answer one question:
-  "can we reliably pull the relay identity out of a live install?"
+  This detector's identity output is deliberately evidence-first. Its real job is
+  to answer one question: "can we reliably pull the relay identity out of a live
+  install?"
   So it deliberately captures RAW EVIDENCE (service ImagePath, the .config
   files verbatim) even when parsing succeeds, and reports parse FAILURES
   loudly, so the parser can be corrected from real-world output.
@@ -50,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "0.1.0-poc"
+$ScriptVersion = "1.7.32"
 
 # ---------------------------------------------------------------------------
 # Embedded target defaults - keeps the script standalone if targets.json is
@@ -977,6 +978,7 @@ try {
     $result = [PSCustomObject]@{
         Tool            = "detect-remote-access.ps1"
         Version         = $ScriptVersion
+        RunId           = (Split-Path -Leaf $outDir)
         GeneratedUtc    = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss")
         ComputerName    = $env:COMPUTERNAME
         RunAsUser       = "$env:USERDOMAIN\$env:USERNAME"

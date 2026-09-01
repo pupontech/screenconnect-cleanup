@@ -52,7 +52,7 @@ before it.
 | **ESET Online Scanner** | On-demand scan | Staged from ESET's official Online Scanner URL and launched attended via `Invoke-GUIScanner.ps1` (`-Scanner ESET`). GUI-only in this workflow; no invented unattended flags. | **APPROVED (D3)** — the MSP's ESET license covers technician scans. |
 | **AdwCleaner** | PUP / adware / junk | **REMOVED from staging 2026-08-26 (owner decision):** not needed for this tool's workflow. Documented CLI existed (`/eula /scan /clean /noreboot /path`) but the policy is GUI-attended operation; AdwCleaner was dropped entirely rather than kept as a GUI tool. | Free. |
 | **MSERT** (Microsoft Safety Scanner) | Free Microsoft second opinion, self-expiring | Verify switches; log believed to be `%SystemRoot%\debug\msert.log`. | Likely none. Verify. |
-| **Malwarebytes** | Install via winget (`winget install -e --id Malwarebytes.Malwarebytes --accept-package-agreements --accept-source-agreements`); uninstall via winget (same agreement flags), fallback to the vendor uninstaller GUI when winget is absent (owner directive 2026-08-27). | Paid, per-endpoint. Not approved for automation. |
+| **Malwarebytes** | Install via winget (`winget install -e --id Malwarebytes.Malwarebytes --accept-package-agreements --accept-source-agreements`); uninstall via winget (same agreement flags), fallback to the vendor uninstaller GUI when winget is absent (owner directive 2026-08-27). | Paid, per-endpoint. Not approved for automation; the visible GUI remains technician-attended. If winget fails, `Invoke-GUIScanner.ps1` runs read-only endpoint/DNS/proxy/hosts checks and scans installed filter names (including Techloq and common alternatives), prints an operator alert when evidence suggests a block, writes a result artifact, and returns exit 6. |
 | **RKill** | Kill malware processes before scanning (Tron's stage-0 trick) | Minimal CLI documentation. | Verify commercial-use terms. |
 | **TDSSKiller** | **RECOMMEND EXCLUDING** | — | Deprecated by Kaspersky, and reportedly abused by threat actors in 2024 to disable EDR — meaning dropping it on a client machine may trip the client's own security stack. Bad trade. **[VERIFY the reporting, but the recommendation stands.]** |
 
@@ -130,7 +130,7 @@ staged batch script that orchestrates third-party tools for mass PC cleanup.
 | Single entry point + skip flags (`-sa`, `-np`, ...) | Techs must be able to skip the multi-hour scan stage. Non-negotiable. |
 | Numbered, self-contained stage folders | Add/remove/reorder a stage without touching the runner |
 | One master log + per-tool log subdirectory | Master log for the timeline, raw tool output kept for awkward cases |
-| Resume across reboots (RunOnce + stage marker) | Service removal and scanners both need reboots |
+| Resume across reboots (highest-privilege Task Scheduler logon task + stage marker) | Service removal and scanners both need reboots |
 | Restore point + registry backup before changes | Cheap insurance, correctly default-on |
 | Safe-mode-with-networking option | Useful when something will not die in normal mode |
 | Hash-verified tool pack | We verify downloads instead of a shipped pack, same principle |
