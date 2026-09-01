@@ -40,11 +40,11 @@ function Check {
 # the whole remover. Supply the same literal descendant check it needs, while
 # keeping the harness independent of production side effects.
 function Test-PathContained {
-    param([string]$BasePath, [string]$CandidatePath)
-    if ([string]::IsNullOrWhiteSpace($BasePath) -or [string]::IsNullOrWhiteSpace($CandidatePath)) { return $false }
+    param([string]$Root, [string]$Candidate)
+    if ([string]::IsNullOrWhiteSpace($Root) -or [string]::IsNullOrWhiteSpace($Candidate)) { return $false }
     try {
-        $baseFull = [System.IO.Path]::GetFullPath($BasePath).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
-        $candidateFull = [System.IO.Path]::GetFullPath($CandidatePath)
+        $baseFull = [System.IO.Path]::GetFullPath($Root).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+        $candidateFull = [System.IO.Path]::GetFullPath($Candidate)
         $prefix = $baseFull + [System.IO.Path]::DirectorySeparatorChar
         return $candidateFull.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)
     } catch {
