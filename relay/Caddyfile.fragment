@@ -1,0 +1,16 @@
+# Private authenticated ScreenConnect report relay.
+reports.aygross.xyz {
+    request_body {
+        max_size 50MB
+    }
+    reverse_proxy 127.0.0.1:9127
+
+    header {
+        -Server
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "camera=(), geolocation=(), microphone=()"
+        Cache-Control "no-store"
+    }
+}

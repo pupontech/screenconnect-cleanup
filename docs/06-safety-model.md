@@ -95,6 +95,17 @@ cookies, saved passwords, mail-forwarding rules, and new accounts. The report mu
 with a **credential-reset checklist**. Stage 1 already collects most of what it needs.
 This is a report section, not a module — keep it proportionate, but do not omit it.
 
+### 13. Automatic report upload is authenticated and minimized
+
+The default report relay may upload only the generated sanitized package to the configured
+HTTPS relay. Missing credentials fail closed: no unauthenticated fallback, public directory,
+or silent retry is allowed. The package excludes raw config contents, raw evidence, parameter
+blobs, account names, credentials, tokens, passwords, private keys, and connection strings;
+user-profile paths are normalized. The relay validates and size-limits the ZIP, encrypts it at
+rest, exposes no listing/download route, deduplicates retries by package hash, and applies a
+finite retention period. ConnectWise submission remains an operator-reviewed action through
+its official reporting workflow unless a documented official API is verified.
+
 ---
 
 ## Coding conventions

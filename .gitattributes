@@ -1,0 +1,2 @@
+# Windows batch files are intentionally CRLF; do not flag the CR as whitespace.
+*.bat whitespace=cr-at-eol

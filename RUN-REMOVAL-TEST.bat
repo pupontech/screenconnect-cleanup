@@ -84,3 +84,4 @@ echo     snapshot_diff.json     - before/after difference
 echo     report.html            - the investigation report
 echo  ============================================================
 pause
+exit /b %PIPE_RC%

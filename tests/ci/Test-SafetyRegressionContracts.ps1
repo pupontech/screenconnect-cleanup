@@ -22,6 +22,7 @@ function Read-Source {
 }
 
 $start = Read-Source 'START-HERE.bat'
+$lab = Read-Source 'RUN-REMOVAL-TEST.bat'
 $cleanup = Read-Source 'sc-cleanup.ps1'
 $preflight = Read-Source 'preflight.ps1'
 $remover = Read-Source 'remove-screenconnect.ps1'
@@ -39,6 +40,15 @@ Check 'guided launcher gates preflight failure before removal' (($start -match '
 Check 'guided launcher does not search historical findings for automatic removal' ($start -notmatch '(?i)dir /b /ad /o-d.*RemoteAccessScan')
 Check 'guided launcher disables automatic approval' (($start -notmatch '(?i)Invoke-ReviewAndRemove\.ps1[^\r\n]*-Yes') -and ($review -match 'automatic approval is disabled'))
 Check 'guided launcher binds removal to a current-run findings path' (($start -match 'SCC_RUN') -and ($start -match 'findings\.json'))
+Check 'guided launcher forwards current run root to review/removal' ($start -match '(?i)Invoke-ReviewAndRemove\.ps1[^\r\n]*-WorkDir[^\r\n]*SCC_RUN_ROOT')
+Check 'guided preflight receives current run root' ($start -match '(?i)preflight\.ps1[^\r\n]*-WorkingRoot[^\r\n]*SCC_RUN_ROOT')
+Check 'preflight checks the WorkingRoot volume' ($preflight -match '(?i)GetPathRoot')
+$guidedReviewBlock = [regex]::Match($start, '(?is)if defined FINDINGS_JSON.*?\) else \(').Value
+Check 'guided launcher preserves after-evidence after removal failure' (($guidedReviewBlock -match '(?i)REMOVE_RC') -and ($guidedReviewBlock -notmatch '(?i)goto :removal_failed'))
+Check 'lab removal launcher returns pipeline exit code' (($lab -match '(?i)set "PIPE_RC=%ERRORLEVEL%"') -and ($lab -match '(?i)exit /b %PIPE_RC%'))
+$blankUacToY = 'IsNullOrWhiteSpace\(\$uacInput\)\s*\}\s*\$uacInput\s*=\s*[''\"]Y'
+Check 'disabled-UAC blank input is not treated as affirmative' (($cleanup -notmatch $blankUacToY) -and ($preflight -notmatch $blankUacToY) -and ($cleanup -match '(?i)UAC confirmation') -and ($preflight -match '(?i)UAC confirmation'))
+Check 'low-space gates default to 10 GB' (($cleanup -match '(?m)\[int\]\$MinFreeGB\s*=\s*10') -and ($preflight -match '(?m)\[int\]\$MinFreeGB\s*=\s*10') -and ($review -match '(?m)\[int\]\$MinFreeGB\s*=\s*10'))
 Check 'preflight treats registry export failure as failure' (($preflight -match 'Export-RegistryHives') -and ($preflight -match 'Write-StageFail.*export'))
 Check 'direct destructive pipeline fails closed when not elevated' (($cleanup -match '(?s)if \(-not \$isAdmin\).*?ExecuteRemoval') -or ($cleanup -match '(?s)if \(-not \$isAdmin\).*?exit 1'))
 Check 'remover requires approved plan confirmation/provenance' (($remover -match 'RemovalConfirmed') -and ($remover -match 'SourceFindings') -and ($remover -match '(?i)provenance') -and ($remover -match 'SourceFindingsSha256') -and ($remover -match 'current computer'))

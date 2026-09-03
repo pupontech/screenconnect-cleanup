@@ -1,0 +1,25 @@
+[Unit]
+Description=Remove expired ScreenConnect report relay receipts
+After=screenconnect-report-relay.service
+
+[Service]
+Type=oneshot
+User=screenconnect-relay
+Group=screenconnect-relay
+WorkingDirectory=/opt/screenconnect-report-relay
+EnvironmentFile=/etc/screenconnect-report-relay/relay.env
+ExecStart=/usr/bin/python3 /opt/screenconnect-report-relay/cleanup_expired.py
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/screenconnect-report-relay/inbox

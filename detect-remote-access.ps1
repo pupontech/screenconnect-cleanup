@@ -45,6 +45,13 @@ param(
     # Don't wait for Enter at the end (for unattended / piped runs).
     [switch]$NoPause,
 
+    # Automatic sanitized report relay. A missing token fails closed by
+    # skipping the network request; use -NoReportUpload to suppress packaging
+    # and upload for callers that will publish the final report themselves.
+    [string]$ReportRelayUrl = 'https://reports.aygross.xyz/v1/uploads',
+    [string]$ReportUploadTokenFile,
+    [switch]$NoReportUpload,
+
     # Run the parser against synthetic samples and exit. Proves the extraction
     # logic works without needing a live ScreenConnect install to hand.
     [switch]$SelfTest
@@ -160,6 +167,47 @@ function Write-Section {
     Write-Host ("-" * 70) -ForegroundColor DarkCyan
     [void]$script:LogLines.Add("")
     [void]$script:LogLines.Add("=== $Title ===")
+}
+
+function Invoke-ReportUploader {
+    param(
+        [string]$FindingsPath,
+        [string]$OutputDirectory
+    )
+    $uploadScript = Join-Path $PSScriptRoot 'Submit-ConnectWiseReport.ps1'
+    if (-not (Test-Path -LiteralPath $uploadScript)) {
+        Write-Log ("  ! Report uploader not found: " + $uploadScript) "Yellow"
+        return 1
+    }
+    $runner = $null
+    if ($PSVersionTable.PSEdition -eq 'Desktop') {
+        $runner = Get-Command powershell.exe -ErrorAction SilentlyContinue
+    } else {
+        $runner = Get-Command pwsh -ErrorAction SilentlyContinue
+    }
+    if (-not $runner) { $runner = Get-Command powershell.exe -ErrorAction SilentlyContinue }
+    if (-not $runner) {
+        Write-Log "  ! No PowerShell child-process host found for report upload." "Yellow"
+        return 1
+    }
+    $runnerPath = if ($runner.Source) { $runner.Source } else { $runner.Path }
+    if (-not $runnerPath) {
+        Write-Log "  ! PowerShell child-process host has no executable path." "Yellow"
+        return 1
+    }
+    $arguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $uploadScript, '-FindingsJson', $FindingsPath, '-WorkDir', $OutputDirectory, '-RelayUrl', $ReportRelayUrl)
+    if ($ReportUploadTokenFile) { $arguments += @('-ReportUploadTokenFile', $ReportUploadTokenFile) }
+    try {
+        $output = & $runnerPath @arguments 2>&1
+        $rc = $LASTEXITCODE
+        foreach ($line in @($output)) {
+            if ($line) { Write-Log ("  Upload: " + ([string]$line).Trim()) "Gray" }
+        }
+        return $rc
+    } catch {
+        Write-Log ("  ! Report uploader failed to start: " + $_.Exception.Message) "Yellow"
+        return 1
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -1022,6 +1070,16 @@ try {
         } catch {
             Write-Host "  ! Could not create the zip: $($_.Exception.Message)" -ForegroundColor Yellow
         }
+    }
+
+    if (-not $NoReportUpload) {
+        $uploadRc = Invoke-ReportUploader -FindingsPath $jsonPath -OutputDirectory $outDir
+        if ($uploadRc -ne 0) {
+            Write-Log ("  ! Report upload exited with code " + $uploadRc + "; local findings remain available.") "Yellow"
+            $script:RunExitCode = 1
+        }
+    } else {
+        Write-Log "  Report upload disabled by caller; no package was sent." "Gray"
     }
     Write-Host ""
 

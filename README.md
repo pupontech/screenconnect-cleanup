@@ -166,6 +166,23 @@ RemoteAccessScan\<HOST>_<timestamp>\
 Plus a zip of the whole folder on the Desktop, matching the convention the
 `remote-diagnostics` log pullers already use.
 
+### Automatic sanitized report holding
+
+When the relay token is installed on the client, the runner also creates
+`connectwise-report.zip` and uploads it to `https://reports.aygross.xyz/v1/uploads`.
+The upload is authenticated with the token in
+`%ProgramData%\ScreenConnectCleanup\report-relay-token.txt` or the
+`SCREENCONNECT_REPORT_UPLOAD_TOKEN` environment variable. Without a token, no
+network request is made and the local package remains available.
+
+The package contains selected installation IDs, relay/domain details, session
+metadata, suspicious file names/hashes, connection indicators, parse issues,
+and delivery context. It omits raw config contents, raw evidence, parameter
+blobs, account names, credentials, and private keys; user-profile paths are
+normalized. The relay stores encrypted receipts for later root-only bulk export.
+It does not submit to ConnectWise automatically. Review the package and use the
+official Trust Center workflow when you are ready to send a batch.
+
 ### Choosing what to look for
 
 `targets.json` controls it. ScreenConnect is on by default; 14 other remote-access

@@ -2,3 +2,10 @@
 *.log
 Thumbs.db
 tools/_download/
+runs/
+connectwise-report*.zip
+report-relay-token.txt
+relay/inbox/
+relay/*.age
+__pycache__/
+*.py[cod]

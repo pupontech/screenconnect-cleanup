@@ -37,10 +37,14 @@ param(
     [string]$IncidentDate,   # incident window anchor (yyyy-MM-dd; never prompted - defaults to today)
     [string]$OutRoot,        # working directory root (default: C:\RIT-SCC)
     [string]$ToolDir,        # tool pack directory (default: <script dir>\tools)
+    [int]$MinFreeGB = 10,    # recommended free-space threshold; Y/Yes may override
 
     # Debug / development
     [switch]$WhatIf,         # show what would run, execute nothing
     [switch]$VerboseLog,     # verbose stage logging
+    [string]$ReportRelayUrl = 'https://reports.aygross.xyz/v1/uploads',
+    [string]$ReportUploadTokenFile,
+    [switch]$NoReportUpload,  # create the package but do not send it
     [switch]$Debug           # full debug logger: console transcript + debug
                              # detail to <WorkDir>\logs\debug.log (v1.7.26)
 )
@@ -138,6 +142,30 @@ function Get-AvailableDiskSpace {
     } catch {
         return -1
     }
+}
+
+function Confirm-LowDiskSpace {
+    param(
+        [int]$FreeGB,
+        [string]$Path,
+        [int]$MinFreeGB
+    )
+
+    Write-StageLog ("WARNING: Only {0} GB free on {1}; the recommended minimum is {2} GB." -f $FreeGB, $Path, $MinFreeGB) 'Warn'
+    try {
+        $answer = Read-Host 'Continue anyway? [y/N]'
+    } catch {
+        Write-StageLog ("Could not read the low-disk confirmation: {0}" -f $_.Exception.Message) 'Error'
+        return $false
+    }
+
+    if ($null -ne $answer -and $answer.Trim() -match '^(?i:y|yes)$') {
+        Write-StageLog 'Continuing despite the low-disk warning because the operator confirmed.' 'Warn'
+        return $true
+    }
+
+    Write-StageLog 'Low disk space was not approved; aborting before the pipeline.' 'Error'
+    return $false
 }
 
 function Resolve-WorkingDir {
@@ -344,10 +372,15 @@ if (-not (Test-Path $OutRoot)) {
     catch { throw "Cannot create output root '$OutRoot': $($_.Exception.Message)" }
 }
 
-# Check disk space
+# Check disk space. The default recommendation is 10 GB; an operator may
+# explicitly continue below it after seeing the measured free space.
 $freeGb = Get-AvailableDiskSpace $OutRoot
-if ($freeGb -lt 5) {
-    Write-StageLog ("WARNING: Only " + $freeGb + "GB free on " + $OutRoot + " (recommend 5GB+)") 'Warn'
+if ($freeGb -lt 0) {
+    Write-StageLog "WARNING: Could not determine free disk space on $OutRoot; continuing with a warning." 'Warn'
+} elseif ($freeGb -lt $MinFreeGB) {
+    if (-not (Confirm-LowDiskSpace -FreeGB $freeGb -Path $OutRoot -MinFreeGB $MinFreeGB)) {
+        exit 1
+    }
 }
 
 # Resolve working directory
@@ -361,7 +394,7 @@ Write-StageLog "Master log: $MasterLogPath"
 Add-Content -Path $MasterLogPath -Value "sc-cleanup.ps1 v$ScriptVersion - Master Log" -Encoding UTF8
 Add-Content -Path $MasterLogPath -Value "Started: $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))" -Encoding UTF8
 Add-Content -Path $MasterLogPath -Value "Host: $hostName  OS: $osCaption  PS: $psVersion  Admin: $isAdmin  Server: $isServer" -Encoding UTF8
-Add-Content -Path $MasterLogPath -Value "Flags: sa=$sa sr=$sr np=$np offline=$offline procmon=$procmon force=$force ExecuteRemoval=$ExecuteRemoval" -Encoding UTF8
+Add-Content -Path $MasterLogPath -Value "Flags: sa=$sa sr=$sr np=$np offline=$offline procmon=$procmon force=$force ExecuteRemoval=$ExecuteRemoval NoReportUpload=$NoReportUpload MinFreeGB=$MinFreeGB" -Encoding UTF8
 Add-Content -Path $MasterLogPath -Value "IncidentDate: $IncidentDate" -Encoding UTF8
 
 # --- Debug logger (v1.7.26): -Debug captures a full console transcript ---
@@ -377,7 +410,7 @@ if ($Debug) {
         Start-Transcript -Path $DebugLogPath -Force -ErrorAction Stop | Out-Null
         $DebugPreference = 'Continue'
         Write-StageLog ("DEBUG LOGGER ACTIVE - transcript: " + $DebugLogPath) 'Debug'
-        Write-Dbg ("sc-cleanup.ps1 v" + $ScriptVersion + " flags: sa=" + $sa + " sr=" + $sr + " avu=" + $avu + " np=" + $np + " offline=" + $offline + " procmon=" + $procmon + " force=" + $force + " ExecuteRemoval=" + $ExecuteRemoval + " IncidentDate=" + $IncidentDate + " OutRoot=" + $OutRoot + " ToolDir=" + $ToolDir)
+        Write-Dbg ("sc-cleanup.ps1 v" + $ScriptVersion + " flags: sa=" + $sa + " sr=" + $sr + " avu=" + $avu + " np=" + $np + " offline=" + $offline + " procmon=" + $procmon + " force=" + $force + " ExecuteRemoval=" + $ExecuteRemoval + " NoReportUpload=" + $NoReportUpload + " IncidentDate=" + $IncidentDate + " OutRoot=" + $OutRoot + " ToolDir=" + $ToolDir)
     } catch {
         Write-StageLog ("Could not start debug transcript: " + $_.Exception.Message) 'Warn'
         $DebugLogPath = $null
@@ -440,8 +473,19 @@ if (-not $uacEnabled -and -not $force) {
     $uacAnswer = ''
     do {
         $uacInput = Read-Host 'Type Y once UAC is enabled, or F to force-continue with UAC disabled'
-        if ([string]::IsNullOrWhiteSpace($uacInput)) { $uacInput = 'Y' }
-        $uacAnswer = $uacInput.Trim().Substring(0,1).ToUpperInvariant()
+        if ($null -eq $uacInput -or [string]::IsNullOrWhiteSpace($uacInput)) {
+            Write-StageLog 'UAC confirmation was not provided; aborting. Type Y after enabling UAC or F to force-continue.' 'Error'
+            exit 2
+        }
+        $uacValue = $uacInput.Trim()
+        if ($uacValue -match '^(?i:y|yes)$') {
+            $uacAnswer = 'Y'
+        } elseif ($uacValue -match '^(?i:f|force)$') {
+            $uacAnswer = 'F'
+        } else {
+            Write-StageLog 'Invalid UAC confirmation; aborting. Type Y after enabling UAC or F to force-continue.' 'Error'
+            exit 2
+        }
     } while ($uacAnswer -ne 'Y' -and $uacAnswer -ne 'F')
     if ($uacAnswer -eq 'F') {
         Write-StageLog "UAC still disabled - recording as finding." 'Warn'
@@ -619,7 +663,9 @@ $stage2Result = Invoke-Stage -StageId 2 -StageName 'Detect' -SkipFlag '' -StageB
     $null = New-Item -ItemType Directory -Path $detectOutRoot -Force
 
     Write-StageLog ("Running detect-remote-access.ps1 -OutRoot " + $detectOutRoot)
-    $detectArgs = @('-OutRoot', $detectOutRoot, '-NoPause', '-NoZip')
+    # The top-level runner uploads once, after the final report. Suppress the
+    # detector's standalone uploader to avoid duplicate receipts.
+    $detectArgs = @('-OutRoot', $detectOutRoot, '-NoPause', '-NoZip', '-NoReportUpload')
     $rc = Invoke-ChildScript -ScriptPath $detectScript -ArgumentList $detectArgs -LogTag 'Detect'
     if ($rc -ne 0) { throw ("detect-remote-access.ps1 exited with code " + $rc) }
     Write-StageLog ("Detection complete. Output in " + $detectOutRoot)
@@ -1105,6 +1151,8 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
     $findingsJson = $stage2Result.Result.FindingsJson
     $reportHtml = Join-Path $WorkDir 'report.html'
     $resultsJson = Join-Path $WorkDir 'results.json'
+    $reportUploadExitCode = 0
+    $reportUploadPackage = $null
 
     Write-StageLog ("Generating HTML report from " + $findingsJson)
     $repArgs = @('-FindingsJson', $findingsJson, '-OutputPath', $reportHtml)
@@ -1188,7 +1236,34 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
     $summary | ConvertTo-Json -Depth 5 | Set-Content -Path $resultsJson -Encoding UTF8 -NoNewline
     Write-StageLog "Results summary: $resultsJson"
 
-    return @{ ReportHtml = $reportHtml; ResultsJson = $resultsJson }
+    # Create/upload the sanitized ConnectWise holding package after the final
+    # report exists. A relay failure is visible and fail-closed, but does not
+    # discard the local evidence already produced by this run.
+    $uploadScript = Join-Path $ScriptRoot 'Submit-ConnectWiseReport.ps1'
+    if (-not (Test-Path -LiteralPath $uploadScript)) {
+        $reportUploadExitCode = 1
+        Write-StageLog ("Report uploader not found: " + $uploadScript) 'Error'
+    } else {
+        $uploadArgs = @('-FindingsJson', [string]$findingsJson, '-WorkDir', [string]$WorkDir, '-RelayUrl', [string]$ReportRelayUrl)
+        if ($ReportUploadTokenFile) { $uploadArgs += @('-ReportUploadTokenFile', [string]$ReportUploadTokenFile) }
+        if ($NoReportUpload) { $uploadArgs += '-NoUpload' }
+        $reportUploadExitCode = Invoke-ChildScript -ScriptPath $uploadScript -ArgumentList $uploadArgs -LogTag 'ReportUpload'
+        if ($reportUploadExitCode -ne 0) {
+            Write-StageLog ("Report upload exited with code " + $reportUploadExitCode + "; local package/evidence remain available.") 'Error'
+        }
+        $packageItem = Get-ChildItem -LiteralPath $WorkDir -Filter 'connectwise-report*.zip' -File -ErrorAction SilentlyContinue |
+                       Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($packageItem) {
+            $reportUploadPackage = $packageItem.FullName
+            Write-StageLog ("ConnectWise package: " + $reportUploadPackage)
+        }
+    }
+    $summary['ReportUploadExitCode'] = $reportUploadExitCode
+    $summary['ConnectWisePackage'] = $reportUploadPackage
+    $summary | ConvertTo-Json -Depth 5 | Set-Content -Path $resultsJson -Encoding UTF8 -NoNewline
+    Write-StageLog "Results summary updated with report-upload status."
+
+    return @{ ReportHtml = $reportHtml; ResultsJson = $resultsJson; FindingsJson = $findingsJson; ReportUploadExitCode = $reportUploadExitCode; ConnectWisePackage = $reportUploadPackage }
 }
 
 # -----------------------------------------------------------------------------
@@ -1217,31 +1292,51 @@ if ($stage8Result -and $stage8Result.Result) {
         if ($diffIncompleteProp) { $diffIncomplete = [bool]$diffIncompleteProp.Value }
     }
 }
-$pipelineIncomplete = (($null -ne $removalExitCode -and $removalExitCode -ne 0) -or $diffIncomplete)
+$reportUploadExitCode = $null
+if ($stage9Result -and $stage9Result.Result) {
+    $reportPayload = $stage9Result.Result
+    if ($reportPayload -is [System.Collections.IDictionary]) {
+        if ($reportPayload.Contains('ReportUploadExitCode')) { $reportUploadExitCode = $reportPayload['ReportUploadExitCode'] }
+    } else {
+        $reportUploadProp = $reportPayload.PSObject.Properties['ReportUploadExitCode']
+        if ($reportUploadProp) { $reportUploadExitCode = $reportUploadProp.Value }
+    }
+}
+$reportUploadFailed = ($null -ne $reportUploadExitCode -and $reportUploadExitCode -ne 0)
+$pipelineIncomplete = (($null -ne $removalExitCode -and $removalExitCode -ne 0) -or $diffIncomplete -or $reportUploadFailed)
 if ($pipelineIncomplete) {
     if ($diffIncomplete -and $null -ne $removalExitCode -and $removalExitCode -ne 0) {
         Write-StageLog ("PIPELINE COMPLETED WITH ERRORS: removal exit " + $removalExitCode + "; before/after collection was incomplete. Post-removal evidence was still produced.") 'Error'
     } elseif ($diffIncomplete) {
         Write-StageLog "PIPELINE COMPLETED WITH ERRORS: before/after collection was incomplete. Review the diff and collection errors." 'Error'
-    } else {
+    } elseif ($null -ne $removalExitCode -and $removalExitCode -ne 0) {
         Write-StageLog ("PIPELINE COMPLETED WITH ERRORS: Stage 4 removal did not complete cleanly (exit code " + $removalExitCode + "). Post-removal evidence was still produced.") 'Error'
+    } elseif ($reportUploadFailed) {
+        Write-StageLog ("PIPELINE COMPLETED WITH ERRORS: sanitized report upload failed (exit code " + $reportUploadExitCode + "). Local package/evidence remain available.") 'Error'
     }
 } else {
     Write-StageLog "All stages executed successfully."
 }
 $reportHtml = $null
 $resultsJson = $null
+$connectwisePackage = $null
 if ($stage9Result -and $stage9Result.ContainsKey('Result') -and $stage9Result.Result -and $stage9Result.Result.ContainsKey('ReportHtml')) {
     $reportHtml = $stage9Result.Result.ReportHtml
 }
 if ($stage9Result -and $stage9Result.ContainsKey('Result') -and $stage9Result.Result -and $stage9Result.Result.ContainsKey('ResultsJson')) {
     $resultsJson = $stage9Result.Result.ResultsJson
 }
+if ($stage9Result -and $stage9Result.ContainsKey('Result') -and $stage9Result.Result -and $stage9Result.Result.ContainsKey('ConnectWisePackage')) {
+    $connectwisePackage = $stage9Result.Result.ConnectWisePackage
+}
 if ($reportHtml) {
     Write-StageLog ("HTML report: " + $reportHtml)
 }
 if ($resultsJson) {
     Write-StageLog ("Results JSON: " + $resultsJson)
+}
+if ($connectwisePackage) {
+    Write-StageLog ("ConnectWise package: " + $connectwisePackage)
 }
 
 Add-Content -Path $MasterLogPath -Value "" -Encoding UTF8
@@ -1261,6 +1356,9 @@ if ($reportHtml) {
 if ($resultsJson) {
     Write-Host ("Results (JSON):   " + $resultsJson)
 }
+if ($connectwisePackage) {
+    Write-Host ("ConnectWise ZIP:  " + $connectwisePackage)
+}
 if ($DebugLogPath) {
     try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch { }
     Write-Host ("Debug log:        " + $DebugLogPath)
@@ -1270,7 +1368,13 @@ Write-Host "====================================================================
 # Truthful exit: a nonzero remove-screenconnect exit (or any recorded Stage 4
 # problem) must propagate so launchers and operators see the incomplete run.
 $finalOutcome = 'SUCCESS'
-if ($pipelineIncomplete) { $finalOutcome = ("INCOMPLETE (Stage 4 exit " + $removalExitCode + ")") }
+if ($pipelineIncomplete) {
+    $reasons = @()
+    if ($null -ne $removalExitCode -and $removalExitCode -ne 0) { $reasons += ('Stage 4 exit ' + $removalExitCode) }
+    if ($diffIncomplete) { $reasons += 'before/after collection incomplete' }
+    if ($reportUploadFailed) { $reasons += ('report upload exit ' + $reportUploadExitCode) }
+    $finalOutcome = 'INCOMPLETE (' + ($reasons -join '; ') + ')'
+}
 Add-Content -Path $MasterLogPath -Value ("Final outcome: " + $finalOutcome) -Encoding UTF8
 if ($pipelineIncomplete) {
     exit 1

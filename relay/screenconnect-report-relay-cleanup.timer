@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily cleanup for ScreenConnect report relay receipts
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=15m
+Unit=screenconnect-report-relay-cleanup.service
+
+[Install]
+WantedBy=timers.target

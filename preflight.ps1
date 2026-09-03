@@ -4,7 +4,7 @@
 # Runs before anything else in the pipeline:
 #   . admin check            (refuse when not elevated)
 #   . OS role check          (refuse on Windows Server unless -Force)
-#   . disk space check       (refuse below minimum free GB)
+#   . disk space check       (ask before continuing below minimum free GB)
 #   . working directory      C:\RIT-SCC\<host>-<timestamp>\
 #   . master log open
 #   . tech name / client prompt (incident date auto = computer's date)
@@ -137,6 +137,31 @@ function Get-FreeSpaceGB {
     } catch {
         return -1
     }
+}
+
+function Confirm-LowDiskSpace {
+    param(
+        [double]$FreeGB,
+        [string]$DriveRoot,
+        [int]$MinFreeGB
+    )
+
+    Write-Host ''
+    Write-StageWarn ("Only {0} GB free on {1}; the recommended minimum is {2} GB." -f $FreeGB, $DriveRoot, $MinFreeGB)
+    try {
+        $answer = Read-Host 'Continue anyway? [y/N]'
+    } catch {
+        Write-StageFail ("Could not read the low-disk confirmation: {0}" -f $_.Exception.Message)
+        return $false
+    }
+
+    if ($null -ne $answer -and $answer.Trim() -match '^(?i:y|yes)$') {
+        Write-StageWarn 'Continuing despite the low-disk warning because the operator confirmed.'
+        return $true
+    }
+
+    Write-StageFail 'Low disk space was not approved; preflight is stopping.'
+    return $false
 }
 
 function Invoke-RestorePoint {
@@ -353,8 +378,19 @@ if ($env:OS -eq 'Windows_NT') {
             $uacAnswer = ''
             do {
                 $uacInput = Read-Host 'Type Y once UAC is enabled, or F to force-continue with UAC disabled'
-                if ([string]::IsNullOrWhiteSpace($uacInput)) { $uacInput = 'Y' }
-                $uacAnswer = $uacInput.Trim().Substring(0,1).ToUpperInvariant()
+                if ($null -eq $uacInput -or [string]::IsNullOrWhiteSpace($uacInput)) {
+                    Write-StageFail 'UAC confirmation was not provided; aborting. Type Y after enabling UAC or F to force-continue.'
+                    exit 1
+                }
+                $uacValue = $uacInput.Trim()
+                if ($uacValue -match '^(?i:y|yes)$') {
+                    $uacAnswer = 'Y'
+                } elseif ($uacValue -match '^(?i:f|force)$') {
+                    $uacAnswer = 'F'
+                } else {
+                    Write-StageFail 'Invalid UAC confirmation; aborting. Type Y after enabling UAC or F to force-continue.'
+                    exit 1
+                }
             } while ($uacAnswer -ne 'Y' -and $uacAnswer -ne 'F')
             if ($uacAnswer -eq 'F') {
                 Write-StageWarn 'UAC still disabled (force-continued at the prompt) - record this as a finding.'
@@ -384,12 +420,24 @@ if (Test-IsServerOs -Caption $osCaption) {
 
 # --- 3. Disk space ---
 $sysDrive = 'C:\'
-if ($env:OS -ne 'Windows_NT') { $sysDrive = '/' }
+if ($env:OS -eq 'Windows_NT') {
+    try {
+        $workingRootFull = [System.IO.Path]::GetFullPath($WorkingRoot)
+        $workingRootDrive = [System.IO.Path]::GetPathRoot($workingRootFull)
+        if (-not [string]::IsNullOrWhiteSpace($workingRootDrive)) {
+            $sysDrive = $workingRootDrive
+        }
+    } catch {
+        Write-StageWarn ("Could not resolve the WorkingRoot volume; checking {0}." -f $sysDrive)
+    }
+} else {
+    $sysDrive = '/'
+}
 $freeGB = Get-FreeSpaceGB -DriveRoot $sysDrive
 if ($freeGB -lt 0) {
     Write-StageWarn 'Could not determine free disk space (continuing with a warning).'
 } elseif ($freeGB -lt $MinFreeGB) {
-    Write-StageFail ("Only {0} GB free on {1} (minimum {2} GB)." -f $freeGB, $sysDrive, $MinFreeGB)
+    $null = Confirm-LowDiskSpace -FreeGB $freeGB -DriveRoot $sysDrive -MinFreeGB $MinFreeGB
 } else {
     Write-Stage ("Disk space OK: {0} GB free." -f $freeGB)
 }

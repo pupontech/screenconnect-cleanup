@@ -1,4 +1,4 @@
-# Agent Handoff — ScreenConnect Cleanup Tool (v1.7.33 release candidate; latest release v1.7.31)
+# Agent Handoff — ScreenConnect Cleanup Tool (v1.7.38 testing candidate)
 
 Handoff for a NEW agent taking over this project. Read this first, then the
 docs listed. Absolute paths, no assumptions. **PROVEN vs WRITTEN-BUT-UNVERIFIED
@@ -10,10 +10,9 @@ is distinguished throughout — trust only what the notes say was executed.**
 - Local checkout (NOTE: **path contains spaces** — always quote shell paths):
   `/root/screenconnect cleanup tool/repo/screenconnect-cleanup`
 - `gh` authenticated as **pupontech** (verified). Releases published from here.
-- Latest released version: **v1.7.31** (sha256 `2a3b7d48…`, byte-verified, Windows CI
-  green on win-2022 + win-2025). Current main HEAD: `06dbf0b`; the worktree
-  contains the v1.7.33 release-candidate changes.
-- Deploy bundle for the latest release: `/root/screenconnect cleanup tool/repo/screenconnect-cleanup-v1.7.31.zip`
+- Latest tag/current main before this candidate: **v1.7.37** at `91b16a3`.
+  This worktree is the v1.7.38 testing candidate; its release bundle is built
+  only after the final verification pass.
 
 ## What this tool is
 
@@ -31,11 +30,14 @@ DOCUMENT what needs live Windows testing.
 ```bash
 cd "/root/screenconnect cleanup tool/repo/screenconnect-cleanup"
 pwsh -NoProfile -File ./tests/ci/Test-HouseRules.ps1            # ASCII/no-BOM/JSON
-pwsh -NoProfile -File ./tests/ci/Test-Parse.ps1                 # 23 scripts parse
+pwsh -NoProfile -File ./tests/ci/Test-Parse.ps1                 # 27 scripts parse
 pwsh -NoProfile -File ./tests/ci/Test-SafetyRegressionContracts.ps1 # safety/provenance contracts
 pwsh -NoProfile -File ./tests/ci/Test-PipelineLauncherContracts.ps1  # launcher contracts
 pwsh -NoProfile -File ./tests/ci/Test-ScannerProcessContracts.ps1   # scanner/UAC contracts
 pwsh -NoProfile -File ./tests/ci/Test-RemovalRuntimeContracts.ps1   # removal runtime checks
+pwsh -NoProfile -File ./tests/test_preflight_low_space_prompt.ps1  # guided preflight Y/N
+pwsh -NoProfile -File ./tests/test_direct_runner_low_space_prompt.ps1 # direct runner Y/N
+pwsh -NoProfile -File ./tests/test_review_wrapper_low_space_prompt.ps1 # review wrapper Y/N
 pwsh -NoProfile -File ./tests/test_report_scanner_section.ps1       # report scanner-status section
 python3 ./tests/test_diff_synthetic.py                               # synthetic diff behavior
 ```
@@ -70,12 +72,17 @@ default-NO prompt, NOT UAC logic). 1.7.31 fixed the duplicate preflight
 `-Debug` parameter; owner field confirmation also established that KVRT works
 with UAC disabled.
 
-## v1.7.33 release-candidate worktree changes
+## v1.7.32 → v1.7.37 changes and current audit-fix worktree
 
-The current worktree adds safety/correctness hardening: fresh-run artifact
-binding and plan provenance checks, fail-closed registry/elevation handling,
-quarantine containment and ACLs, bounded child/scanner execution, normalized
-snapshot/diff/report shapes, and focused Windows PowerShell 5.1 contracts.
+The current main includes the v1.7.32-v1.7.37 safety/reporting hardening described
+above. The uncommitted worktree changes additionally add a 10 GB low-space gate
+with explicit Y/Yes override to preflight.ps1, sc-cleanup.ps1, and
+Invoke-ReviewAndRemove.ps1; reject blank/invalid disabled-UAC confirmations; bind
+guided plan/quarantine/manifest output to the current run root; continue guided
+after-evidence collection after removal errors; and preserve the lab launcher exit
+code. Focused tests cover Y, Yes, N, blank, and invalid low-space responses.
+These changes are not a release until the owner reviews them and runs the Windows
+matrix.
 The current audit also fixes child-process initialization, quoted executable
 identity checks, guarded 3010 resume, collision-safe resume task names,
 uninstall-root allowlisting, isolated Stage 0 helper execution, and fail-closed

@@ -54,6 +54,30 @@ jobs:
         shell: pwsh
         run: ./preflight.ps1 -SelfTest
 
+      - name: Regression - low-space confirmation (Windows PowerShell 5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/test_preflight_low_space_prompt.ps1
+
+      - name: Regression - low-space confirmation (pwsh)
+        shell: pwsh
+        run: ./tests/test_preflight_low_space_prompt.ps1
+
+      - name: Regression - direct runner low-space confirmation (Windows PowerShell 5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/test_direct_runner_low_space_prompt.ps1
+
+      - name: Regression - direct runner low-space confirmation (pwsh)
+        shell: pwsh
+        run: ./tests/test_direct_runner_low_space_prompt.ps1
+
+      - name: Regression - review wrapper low-space confirmation (Windows PowerShell 5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/test_review_wrapper_low_space_prompt.ps1
+
+      - name: Regression - review wrapper low-space confirmation (pwsh)
+        shell: pwsh
+        run: ./tests/test_review_wrapper_low_space_prompt.ps1
+
       - name: Safe Windows integration (removal dry-run + XSS + WhatIf) - 5.1
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/ci/Test-WindowsIntegration.ps1
@@ -109,6 +133,18 @@ jobs:
       - name: Report rendering regression (pwsh)
         shell: pwsh
         run: ./tests/test_report_scanner_section.ps1
+
+      - name: ConnectWise report package/upload regression (Windows PowerShell 5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/test_connectwise_report_upload.ps1
+
+      - name: ConnectWise report package/upload regression (pwsh)
+        shell: pwsh
+        run: ./tests/test_connectwise_report_upload.ps1
+
+      - name: Relay and bulk-export unit tests
+        shell: pwsh
+        run: python -m unittest relay.test_report_relay -v
 
       - name: Synthetic Stage 7 diff test (end-to-end via pwsh)
         shell: pwsh

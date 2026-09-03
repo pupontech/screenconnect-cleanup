@@ -11,7 +11,9 @@ sc-cleanup.ps1  [flags]          <- top-level runner, BUILT (wires Stages 0-9)
 |
 +- STAGE 0  PREFLIGHT
 |    admin check . OS role check (refuse on Server unless -force)
-|    disk space . working dir C:\RIT-SCC\<host>-<timestamp>\
+|    disk space . below minimum, show measured free space and ask to continue
+|                 (blank/no/invalid answer aborts; no silent bypass)
+|    working dir C:\RIT-SCC\<host>-<timestamp>\
 |    master log open (no tech/client/date prompts - owner directive 2026-08-27)
 |    System Restore point + registry hive export   [skip: -np]
 |    tool pack: verify hashes (tools/Get-ToolPack.ps1)
@@ -88,6 +90,8 @@ succeeds.
 -procmon      force the Procmon stage (currently a stub)
 -IncidentDate <date>   incident window anchor (defaults to today; never prompted)
 -force        override the server-OS refusal
+-MinFreeGB <n> recommended free-space threshold (default 10); below it,
+              prompt for explicit Y/Yes continuation
 -ExecuteRemoval  TEST MODE: pre-authorize removal (lab/VM only, no typed confirmation)
 -Debug        full debug logger: console transcript + debug detail to
               <WorkDir>\logs\debug.log (send this file back when reporting a field issue)

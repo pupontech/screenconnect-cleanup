@@ -19,6 +19,7 @@ detect-remote-access.ps1
 Run-DetectRemoteAccess.bat
 targets.json
 New-InvestigationReport.ps1
+Submit-ConnectWiseReport.ps1    <- sanitized package + authenticated relay upload
 Invoke-GUIScanner.ps1          <- launches KVRT/ESET GUI scanners (and Malwarebytes via winget) and waits (Stage 5)
 Get-MalwarebytesDownloadDiagnostics.ps1 <- read-only Malwarebytes filter/proxy failure diagnostics (Stage 5)
 Invoke-AVUninstaller.ps1        <- opens installed-AV uninstallers, attended (Stage 6)
@@ -99,7 +100,78 @@ Run-DetectRemoteAccess.bat        (double-click)
 powershell -File .\detect-remote-access.ps1 [-Target screenconnect,anydesk] [-All] [-SelfTest]
 ```
 
-## 3. Common flags (sc-cleanup.ps1)
+## 3. Automatic report holding and later ConnectWise submission
+
+The report workflow uploads a **sanitized package** to the private relay at
+`https://reports.aygross.xyz/v1/uploads` when a client has been provisioned with
+the relay token. The main `sc-cleanup.ps1` runner uploads once after the final
+report. A standalone `detect-remote-access.ps1` run uploads after its findings
+are written. `START-HERE.bat` suppresses the detector upload and uploads once
+after its final report, so one run does not create duplicate receipts.
+
+The package contains:
+
+- `connectwise-report.json` with the incident type, tool/run metadata,
+  ScreenConnect installation/instance identifiers, relay host and port, session
+  type/role/version, connection indicators, suspicious file names/hashes and
+  signature results, parse issues, historical service-install identifiers, and
+  available delivery context.
+- `connectwise-report.txt` with the same selected fields in a technician-readable
+  format.
+- `package-manifest.json` with the source findings hash and package contents.
+
+The automatic package does **not** include the raw evidence folder, raw config
+contents, the HTML report, `RunAsUser`, parameter blobs, credentials, tokens,
+passwords, private keys, or connection strings. User-profile paths are reduced
+to `<USERPROFILE>`. Review the local raw evidence separately before attaching
+anything more to an official incident report.
+
+### Client token enrollment
+
+The default token location is:
+
+```text
+%ProgramData%\ScreenConnectCleanup\report-relay-token.txt
+```
+
+The script also accepts the `SCREENCONNECT_REPORT_UPLOAD_TOKEN` environment
+variable, or an explicit `-ReportUploadTokenFile` path. Keep the token out of
+the ZIP, source control, transcripts, issue reports, and command history. The
+relay refuses uploads without a valid bearer token; if the token is missing,
+the package remains local and no unauthenticated request is attempted. Use
+`-NoReportUpload` with `sc-cleanup.ps1` when the package should be created but
+not sent.
+
+### Relay behavior and retention
+
+The relay accepts only authenticated `POST /v1/uploads` requests over HTTPS.
+It validates the ZIP without extracting it, enforces compressed and
+uncompressed-size limits, binds the request to its SHA-256, deduplicates retry
+requests, encrypts the stored archive with an age recipient, and exposes no
+public listing or download route. Receipts expire after 30 days by default.
+
+On the server, export a private bulk bundle as root:
+
+```bash
+sudo /usr/local/sbin/screenconnect-report-relay-export \
+  --output /root/connectwise-reports-YYYYMMDD.zip
+```
+
+The command decrypts and verifies each stored report, writes one bundle with a
+manifest, and leaves the encrypted originals in place. Treat that exported ZIP
+as sensitive and delete it after the official submission is complete.
+
+The relay is a holding area, not an automatic ConnectWise submission service.
+The official reporting route remains the ConnectWise Trust Center and its
+published vulnerability-disclosure process:
+
+`https://www.connectwise.com/company/trust/security/vulnerability-disclosure-policy`
+
+No supported ConnectWise upload API was established, so the exported bundle
+must be reviewed and attached through the official workflow later. Do not add
+credentials for the ConnectWise site to this tool.
+
+## 4. Common flags (sc-cleanup.ps1)
 
 | Flag | Effect |
 |---|---|
@@ -110,8 +182,12 @@ powershell -File .\detect-remote-access.ps1 [-Target screenconnect,anydesk] [-Al
 | `-procmon` | opt in to Procmon respawn-tracing stage |
 | `-IncidentDate yyyy-MM-dd` | anchor the incident window weighting |
 | `-WhatIf` | show what would run; execute nothing |
+| `-MinFreeGB <n>` | recommended free-space threshold for `sc-cleanup.ps1` and `Invoke-ReviewAndRemove.ps1` (default 10); below it, prompt for explicit `Y`/`Yes` continuation |
+| `-ReportRelayUrl <url>` | authenticated report relay endpoint (default `https://reports.aygross.xyz/v1/uploads`) |
+| `-ReportUploadTokenFile <path>` | client token file; default `%ProgramData%\ScreenConnectCleanup\report-relay-token.txt` |
+| `-NoReportUpload` | create no automatic upload from `sc-cleanup.ps1`; the sanitized package is still created locally |
 
-## 4. Before you trust it — outstanding live validation
+## 5. Before you trust it — outstanding live validation
 
 These were never run against real Windows content (agents had no Windows box;
 owner tests live). In priority order:
@@ -129,7 +205,7 @@ owner tests live). In priority order:
 Nothing destructive ships: Stage 4 (removal) is a stub behind the review gate.
 Do not build/rely on removal until M0 confirms the key map.
 
-## 5. House rules for anyone editing here
+## 6. House rules for anyone editing here
 
 - PowerShell 5.1 compatible syntax, pure ASCII, no BOM (PS 5.1 reads BOM-less
   non-ASCII as Windows-1252).

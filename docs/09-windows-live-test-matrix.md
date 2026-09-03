@@ -125,14 +125,19 @@ no-NAS assertions), removal runtime contracts OK, integration OK,
     it reaches detect-remote-access.ps1 after elevation (SCC_ARGS env forwarding).
 
 **[NEW v1.7.24]**
-4.4 Preflight always runs: START-HERE.bat Step 2 runs preflight.ps1 with NO
-    prompt. Step 4 runs detection automatically; Step 5 requires typed per-instance
-    review plus a final confirmation. Detection and removal artifacts are bound to
-    a fresh run directory, and a failed detection cannot fall back to older findings.
+4.4 Preflight always runs: START-HERE.bat Step 2 runs preflight.ps1. If free space
+    is below the minimum, it prints the measured amount and asks "Continue anyway?"
+    in the same command window. Only an explicit Y/Yes continues; blank, no, or an
+    invalid answer aborts. Direct `sc-cleanup.ps1` runs the same 10 GB check at
+    startup; `-MinFreeGB` records any explicitly configured threshold. Step 4 runs
+    detection automatically; Step 5 requires typed per-instance review plus a final
+    confirmation. Detection and removal artifacts are bound to a fresh run directory,
+    and a failed detection cannot fall back to older findings.
 4.5 UAC-disabled prompt-and-wait: on a machine with EnableLUA=0 (or a test that
     fakes it), run sc-cleanup.ps1 and preflight.ps1. Expected: prominent red
     banner with the `reg add ... EnableLUA ... /d 1` command, then a WAIT for
-    "Type Y once UAC is enabled, or F to force-continue". Y re-checks and
+    "Type Y once UAC is enabled, or F to force-continue". Only explicit Y or F
+    is accepted; blank or invalid input aborts with an error. Y re-checks and
     continues (log: "UAC check: enabled (confirmed after user action)"; a
     pending-reboot machine logs the "still reads disabled" warning and
     continues on your confirmation). F force-continues and logs the finding.

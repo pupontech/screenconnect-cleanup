@@ -38,6 +38,7 @@ for /f "delims=" %%R in ('powershell -NoProfile -Command "$p=Join-Path (Get-Loca
 if not defined SCC_RUN_ROOT goto :run_setup_failed
 
 echo     Run: !SCC_RUN_ROOT!
+set "PIPE_RC=0"
 
 echo.
 echo  ============================================================
@@ -70,7 +71,7 @@ set GO=
 rem ---- Step 2: preflight (ALWAYS runs - owner directive 2026-08-28) ---------
 echo.
 echo  STEP 2/9: Preflight
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0preflight.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0preflight.ps1" -WorkingRoot "!SCC_RUN_ROOT!"
 if errorlevel 1 goto :preflight_failed
 set GO=
 
@@ -89,7 +90,7 @@ set GO=
 rem ---- Step 4: detection -----------------------------------------------------
 echo.
 echo  STEP 4/9: Remote-access detection
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0detect-remote-access.ps1" -All -NoPause -NoZip -OutRoot "!SCC_RUN_ROOT!\detect"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0detect-remote-access.ps1" -All -NoPause -NoZip -NoReportUpload -OutRoot "!SCC_RUN_ROOT!\detect"
 if errorlevel 1 goto :detection_failed
 set GO=
 set "FINDINGS_JSON="
@@ -113,8 +114,12 @@ echo    Review each instance. Files are quarantined, never deleted.
 echo    Type y only after confirming the instance and removal.
 if exist "%~dp0Invoke-ReviewAndRemove.ps1" (
     if defined FINDINGS_JSON (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-ReviewAndRemove.ps1" -FindingsJson "!FINDINGS_JSON!"
-        if errorlevel 1 goto :removal_failed
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-ReviewAndRemove.ps1" -FindingsJson "!FINDINGS_JSON!" -WorkDir "!SCC_RUN_ROOT!"
+        set "REMOVE_RC=!errorlevel!"
+        if not "!REMOVE_RC!"=="0" (
+            echo     [WARN] Removal reported exit !REMOVE_RC! - continuing to collect after-evidence and report.
+            set "PIPE_RC=!REMOVE_RC!"
+        )
     ) else (
         echo     [i] No current-run findings - removal is skipped.
     )
@@ -246,13 +251,30 @@ if not defined FINDINGS_JSON (
     ) else (
         powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -OutputPath "!SCC_RUN_ROOT!/report.html"
     )
+        set "REPORT_RC=!errorlevel!"
+        if not "!REPORT_RC!"=="0" (
+            echo     [WARN] Report generation failed with errorlevel !REPORT_RC! - see the messages above.
+            if "!PIPE_RC!"=="0" set "PIPE_RC=!REPORT_RC!"
+        )
         if exist "!SCC_RUN_ROOT!/report.html" (
             echo     [i] Report written to !SCC_RUN_ROOT!/report.html
             rem Owner directive 2026-08-27: open the report folder + report.
             explorer /select,"!SCC_RUN_ROOT!/report.html"
             start "" "!SCC_RUN_ROOT!/report.html"
+            if exist "%~dp0Submit-ConnectWiseReport.ps1" (
+                powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Submit-ConnectWiseReport.ps1" -FindingsJson "!FINDINGS_JSON!" -WorkDir "!SCC_RUN_ROOT!" -RelayUrl "https://reports.aygross.xyz/v1/uploads"
+                set "UPLOAD_RC=!errorlevel!"
+                if not "!UPLOAD_RC!"=="0" (
+                    echo     [WARN] Report upload failed with errorlevel !UPLOAD_RC! - local evidence remains available.
+                    if "!PIPE_RC!"=="0" set "PIPE_RC=!UPLOAD_RC!"
+                )
+            ) else (
+                echo     [WARN] Submit-ConnectWiseReport.ps1 missing - local report was kept but not uploaded.
+                if "!PIPE_RC!"=="0" set "PIPE_RC=1"
+            )
         ) else (
             echo     [WARN] Report was not produced.
+            if "!PIPE_RC!"=="0" set "PIPE_RC=1"
         )
     ) else (
         echo     [WARN] Current-run findings disappeared - skipping report.
@@ -296,3 +318,4 @@ pause
 exit /b 1
 
 :done
+exit /b !PIPE_RC!

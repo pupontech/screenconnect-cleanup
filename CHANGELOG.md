@@ -3,6 +3,13 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.38] - 2026-09-03
+- Added sanitized diagnostic report packaging and optional authenticated relay upload.
+- Hardened retry idempotency with deterministic package bytes and bounded same-package retries.
+- Hardened relay ZIP validation with an entry-count limit and body-verified deduplication.
+- Fixed guided-runner report/upload exit-code propagation and explicit token-file errors.
+- Added PowerShell 5.1/pwsh and relay regression coverage.
+
 ## [1.7.37] - 2026-09-01
 - Fixed the HTML report count for the common single ScreenConnect-instance
   case under PowerShell 5.1. The summary card and ScreenConnect section heading

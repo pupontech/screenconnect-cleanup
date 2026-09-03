@@ -29,6 +29,9 @@ param(
     # Where plan.json / quarantine / manifest go. Default: C:\RIT-SCC\<host>-<stamp>
     [string]$WorkDir,
 
+    # Recommended free-space threshold; below it, explicit Y/Yes is required.
+    [int]$MinFreeGB = 10,
+
     # Where to look for findings when -FindingsJson is not given.
     [string]$ScanRoot = "$env:USERPROFILE\Desktop\RemoteAccessScan",
 
@@ -52,6 +55,40 @@ function Write-Line {
 if ($Yes) {
     Write-Line 'ERROR: -Yes automatic approval is disabled. Use the typed review and confirmation prompts.' 'Red'
     exit 2
+}
+
+function Get-AvailableDiskSpace {
+    param([string]$Path)
+    try {
+        $fullPath = [System.IO.Path]::GetFullPath($Path)
+        $root = [System.IO.Path]::GetPathRoot($fullPath)
+        if ([string]::IsNullOrWhiteSpace($root)) { return -1 }
+        $drive = New-Object System.IO.DriveInfo($root)
+        return [math]::Floor($drive.AvailableFreeSpace / 1GB)
+    } catch {
+        return -1
+    }
+}
+
+function Confirm-LowDiskSpace {
+    param(
+        [int]$FreeGB,
+        [string]$Path,
+        [int]$MinFreeGB
+    )
+    Write-Line ("WARNING: Only {0} GB free on {1}; the recommended minimum is {2} GB." -f $FreeGB, $Path, $MinFreeGB) 'Yellow'
+    try {
+        $answer = Read-Host 'Continue anyway? [y/N]'
+    } catch {
+        Write-Line ("Could not read the low-disk confirmation: " + $_.Exception.Message) 'Red'
+        return $false
+    }
+    if ($null -ne $answer -and $answer.Trim() -match '^(?i:y|yes)$') {
+        Write-Line 'Continuing despite the low-disk warning because the operator confirmed.' 'Yellow'
+        return $true
+    }
+    Write-Line 'Low disk space was not approved; removal is stopping before the plan is written.' 'Red'
+    return $false
 }
 
 function Get-Prop {
@@ -161,6 +198,14 @@ if (-not $confirmed) {
 if (-not $WorkDir) {
     $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
     $WorkDir = Join-Path 'C:\RIT-SCC' ($env:COMPUTERNAME + '-' + $stamp)
+}
+$freeGb = Get-AvailableDiskSpace -Path $WorkDir
+if ($freeGb -lt 0) {
+    Write-Line ("Could not determine free disk space for {0}; continuing with a warning." -f $WorkDir) 'Yellow'
+} elseif ($freeGb -lt $MinFreeGB) {
+    if (-not (Confirm-LowDiskSpace -FreeGB $freeGb -Path $WorkDir -MinFreeGB $MinFreeGB)) {
+        exit 1
+    }
 }
 if (-not (Test-Path -LiteralPath $WorkDir)) {
     $null = New-Item -ItemType Directory -Path $WorkDir -Force
