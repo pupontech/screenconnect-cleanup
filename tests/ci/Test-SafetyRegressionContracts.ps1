@@ -35,6 +35,7 @@ $detector = Read-Source 'detect-remote-access.ps1'
 $collect = Read-Source 'collect-snapshot.ps1'
 $report = Read-Source 'New-InvestigationReport.ps1'
 
+Check 'guided launcher creates run root under C:\\RIT-SCC' ($start.Contains("Join-Path 'C:\RIT-SCC'") -and ($start -notmatch "Join-Path \(Get-Location\).*runs/"))
 Check 'guided launcher gates baseline snapshot failure before removal' (($start -match 'before_snapshot_failed') -and ($start -match 'if errorlevel 1 goto :before_snapshot_failed'))
 Check 'guided launcher gates preflight failure before removal' (($start -match '(?i)if errorlevel 1 .*preflight') -and ($start -match '(?i)preflight_failed'))
 Check 'guided launcher does not search historical findings for automatic removal' ($start -notmatch '(?i)dir /b /ad /o-d.*RemoteAccessScan')

@@ -1,4 +1,4 @@
-# Agent Handoff — ScreenConnect Cleanup Tool (v1.7.38 testing candidate)
+# Agent Handoff — ScreenConnect Cleanup Tool (v1.7.39 testing candidate)
 
 Handoff for a NEW agent taking over this project. Read this first, then the
 docs listed. Absolute paths, no assumptions. **PROVEN vs WRITTEN-BUT-UNVERIFIED

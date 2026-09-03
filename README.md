@@ -175,7 +175,7 @@ The upload is authenticated with the token in
 `SCREENCONNECT_REPORT_UPLOAD_TOKEN` environment variable. Without a token, no
 network request is made and the local package remains available.
 
-The package contains selected installation IDs, relay/domain details, session
+The package contains ScreenConnect thumbprints, relay/domain details, session
 metadata, suspicious file names/hashes, connection indicators, parse issues,
 and delivery context. It omits raw config contents, raw evidence, parameter
 blobs, account names, credentials, and private keys; user-profile paths are

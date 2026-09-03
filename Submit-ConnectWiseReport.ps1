@@ -112,6 +112,7 @@ function New-SafeInstanceRecord {
 
     return [ordered]@{
         Identifier       = Convert-ReportScalar (Get-Field $Instance 'Identifier')
+        Thumbprint       = Convert-ReportScalar (Get-Field $Instance 'Identifier')
         RelayHost        = Convert-ReportScalar (Get-Field $Instance 'RelayHost')
         RelayPort        = Convert-ReportScalar (Get-Field $Instance 'RelayPort')
         SessionType      = Convert-ReportScalar (Get-Field $Instance 'SessionType')
@@ -235,8 +236,8 @@ function New-HumanSummary {
     [void]$lines.Add('')
     $screen = Get-Field $Report 'ScreenConnect'
     foreach ($instance in @(Get-ArrayValue (Get-Field $screen 'Instances'))) {
-        [void]$lines.Add('ScreenConnect instance: ' + [string](Get-Field $instance 'Identifier'))
-        [void]$lines.Add('  Relay: ' + [string](Get-Field $instance 'RelayHost') + ':' + [string](Get-Field $instance 'RelayPort'))
+        [void]$lines.Add('ScreenConnect thumbprint: ' + [string](Get-Field $instance 'Identifier'))
+        [void]$lines.Add('  Relay/server address: ' + [string](Get-Field $instance 'RelayHost') + ':' + [string](Get-Field $instance 'RelayPort'))
         [void]$lines.Add('  Version: ' + [string](Get-Field $instance 'DisplayVersion'))
         foreach ($file in @(Get-ArrayValue (Get-Field $instance 'Files'))) {
             [void]$lines.Add('  File: ' + [string](Get-Field $file 'Path') + ' [' + [string](Get-Field $file 'SignatureStatus') + ']')

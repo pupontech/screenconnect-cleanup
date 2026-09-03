@@ -3,6 +3,11 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.39] - 2026-09-03
+- Fixed the guided runner's per-run root to use `C:\RIT-SCC\<computer>-<guid>`
+  instead of a `runs\` directory relative to the extracted script.
+- Updated embedded script version banners to 1.7.39.
+
 ## [1.7.38] - 2026-09-03
 - Added sanitized diagnostic report packaging and optional authenticated relay upload.
 - Hardened retry idempotency with deterministic package bytes and bounded same-package retries.

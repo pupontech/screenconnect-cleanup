@@ -34,7 +34,7 @@ set "SCC_SELF="
 cd /d "%~dp0"
 
 rem ---- Bind every artifact to a fresh run root -------------------------------
-for /f "delims=" %%R in ('powershell -NoProfile -Command "$p=Join-Path (Get-Location) ('runs/' + [guid]::NewGuid().ToString('N')); New-Item -ItemType Directory -Path $p -Force ^| Out-Null; $p"') do set "SCC_RUN_ROOT=%%R"
+for /f "delims=" %%R in ('powershell -NoProfile -Command "$p=Join-Path 'C:\RIT-SCC' ($env:COMPUTERNAME + '-' + [guid]::NewGuid().ToString('N')); New-Item -ItemType Directory -Path $p -Force ^| Out-Null; $p"') do set "SCC_RUN_ROOT=%%R"
 if not defined SCC_RUN_ROOT goto :run_setup_failed
 
 echo     Run: !SCC_RUN_ROOT!
