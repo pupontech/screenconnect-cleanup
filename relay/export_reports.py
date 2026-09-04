@@ -63,7 +63,13 @@ def _read_metadata(path: Path, receipt_id: str) -> dict:
     return value
 
 
-def _discover_records(storage_dir: Path) -> list[tuple[str, Path, Path, dict]]:
+def discover_records(storage_dir: Path) -> list[tuple[str, Path, Path, dict]]:
+    """Return receipt records (receipt_id, .age path, metadata path, metadata).
+
+    Raises ValueError when the storage directory holds an orphaned or
+    mismatched receipt pair, so a partial export can never silently omit
+    a stored report.
+    """
     if not storage_dir.is_dir():
         return []
     records: list[tuple[str, Path, Path, dict]] = []
@@ -107,7 +113,7 @@ def build_bulk_archive(
     if output_path.exists():
         raise ValueError("refusing to overwrite existing output archive")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    records = _discover_records(storage_dir)
+    records = discover_records(storage_dir)
     selected = [record for record in records if since_unix is None or record[3]["received_unix"] >= since_unix]
     decrypt = decryptor or (lambda source, destination, identity: decrypt_with_age(source, destination, identity))
     temporary_output = output_path.with_name(output_path.name + ".tmp")

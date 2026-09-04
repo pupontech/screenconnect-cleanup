@@ -144,7 +144,7 @@ jobs:
 
       - name: Relay and bulk-export unit tests
         shell: pwsh
-        run: python -m unittest relay.test_report_relay -v
+        run: python -m unittest relay.test_report_relay relay.test_export_iocs -v
 
       - name: Synthetic Stage 7 diff test (end-to-end via pwsh)
         shell: pwsh

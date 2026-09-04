@@ -161,6 +161,36 @@ The command decrypts and verifies each stored report, writes one bundle with a
 manifest, and leaves the encrypted originals in place. Treat that exported ZIP
 as sensitive and delete it after the official submission is complete.
 
+For mass relay/server IOC analysis, export deduplicated observed relays as root:
+
+```bash
+sudo /usr/local/sbin/screenconnect-report-relay-ioc-export \
+  --output-dir /root/screenconnect-relay-iocs-YYYYMMDD
+```
+
+The IOC export decrypts each stored receipt into a private temporary
+directory, reads only `connectwise-report.json` from every validated report
+ZIP, and writes four outputs that never contain raw evidence or binaries:
+
+- `relay-addresses.txt` - one observed relay `host[:port]` per line.
+- `screenconnect-relays.csv` - observed relay host, port, thumbprints,
+  first/last seen (UTC), report count, and receipt IDs.
+- `connectwise-abuse-summary.txt` - technician-readable abuse summary of the
+  same observed relays.
+- `screenconnect-relays.json` - the structured export: receipts analyzed,
+  ignored-instance count, and the `observed` relay list with thumbprints,
+  first/last seen, report counts, and receipt IDs.
+
+Relays are deduplicated across receipts while thumbprint associations are
+preserved. Observed data is kept separate from any external IOC list: pass
+`--external-ioc-list FILE` (one host, `host:port`, or thumbprint per line, `#`
+comments allowed) and matching observed relays are reported in a clearly
+labelled external section of the JSON and summary, never merged into the
+observed list. The command refuses to write over an existing output file or
+into the relay storage directory, and supports `--since-unix` to limit the
+receipts analyzed. Install the `relay/screenconnect-report-relay-ioc-export`
+wrapper to `/usr/local/sbin/` alongside the bulk-export wrapper.
+
 The relay is a holding area, not an automatic ConnectWise submission service.
 The official reporting route remains the ConnectWise Trust Center and its
 published vulnerability-disclosure process:
