@@ -3,6 +3,27 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.46] - 2026-09-06
+- Removed the guided-run MicroBin uploader-password prompt: the default
+  MicroBin server (`https://reports.aygross.xyz`) is passwordless, so
+  START-HERE.bat no longer asks for a password with hidden input and no
+  longer creates or deletes a run-scoped secret file
+  (`microbin-uploader-password.txt`). Resolve-MicroBinUploaderPassword.ps1,
+  its dedicated regression test, and its Windows CI steps were removed, and
+  the deploy bundle no longer carries the helper. A run therefore needs no
+  credential configuration for the default server, and no uploader password
+  is ever stored next to a run or in the tool folder.
+- Explicit password-file support is kept for other servers that require an
+  uploader password: a pre-configured `SCC_MICROBIN_UPLOADER_PASSWORD_FILE`
+  is still honored by START-HERE.bat (echoed as in use, passed through
+  unchanged to Submit-ConnectWiseReport.ps1 at the report step, and never
+  deleted by the runner), and the uploader still reads
+  `-MicroBinUploaderPasswordFile` or the
+  `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD` environment variable.
+- README.md and DEPLOY.md updated to the passwordless flow; the launcher
+  regression test now also asserts START-HERE never prompts for or stores an
+  uploader password.
+
 ## [1.7.45] - 2026-09-06
 - START-HERE.bat now asks for the optional MicroBin uploader password with a
   hidden (masked) prompt whenever report sharing is enabled and no password

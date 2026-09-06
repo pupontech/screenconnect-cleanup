@@ -233,11 +233,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.p
   nonblank line of the file that sits next to `START-HERE.bat`); when the
   file is missing or empty it prompts for the `https://` base URL once,
   validates it (https only, ASCII, no embedded credentials), and saves it to
-  that file for future runs. The URL file never holds passwords. The optional
-  uploader password is prompted once with hidden (masked) input when sharing
-  is enabled and none is pre-configured; the value is stored in a run-scoped
-  secret file inside that run's folder (removed when the run ends), never
-  beside the tool, never in the URL file, and never in any log.
+  that file for future runs. The URL file never holds passwords. The default
+  MicroBin server is passwordless: START-HERE never prompts for an uploader
+  password and never creates or deletes a password file. Only when your
+  server requires an uploader password do you pre-configure it before the
+  run (step 4 below); the runner passes your password file through
+  unchanged.
 
   Operator workflow in the guided runner:
 
@@ -249,19 +250,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.p
      It is saved to `microbin-url.txt` next to the tool and reused from then
      on. To point at a different server, edit that file (first line) or
      delete it and answer `y` on the next run.
-  4. If the server needs an uploader password and none is pre-configured,
-     START-HERE asks for it once with a **hidden prompt** - keystrokes are
-     masked, and pressing Enter means no password (the paste is still
-     created; it just carries no edit/delete credential). The value is
-     written to a run-scoped secret file inside that run's folder
-     (`C:\RIT-SCC\<host>-<guid>\microbin-uploader-password.txt`), is never
-     echoed or logged, and is deleted automatically when the run ends - on
-     the normal path and on every failure exit. A run aborted with Ctrl+C
-     can leave the file in the run folder; delete it (or the run folder)
-     before finishing with the machine. To skip the prompt entirely,
-     pre-configure the password before starting: point
-     `SCC_MICROBIN_UPLOADER_PASSWORD_FILE` at a file that contains it, or
-     export `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD`.
+  4. There is no uploader-password prompt: the default server is
+     passwordless. If your MicroBin server requires an uploader password,
+     pre-configure it before the run - point
+     `SCC_MICROBIN_UPLOADER_PASSWORD_FILE` at a file that contains it (the
+     runner passes that path through unchanged and never deletes the file),
+     or export `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD` (the uploader
+     reads it from the environment itself). Leave both unset for a
+     passwordless server.
   5. The report step prints `MICROBIN UPLOAD: <paste-url>` on success. The
      local `connectwise-report.zip` always stays on disk; an invalid URL or a
      failed upload is reported as a failure and never hides the local

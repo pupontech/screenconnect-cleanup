@@ -57,13 +57,12 @@ rem anything anywhere. An explicit y resolves the server base URL from
 rem microbin-url.txt (first nonblank trimmed line) beside this tool; when that
 rem file is missing or empty the operator is asked once for an https:// base
 rem URL, which is saved there for future runs. The URL file never holds
-rem passwords. When sharing is enabled and no uploader password is
-rem pre-configured, the operator is asked once with a HIDDEN prompt for the
-rem optional MicroBin uploader password (blank = none); the value is written
-rem to a run-scoped secret file inside this run's root, forwarded to the
-rem uploader only as a file path, and deleted when the run ends - also on
-rem failure exits. It is never echoed, never logged, and never stored beside
-rem the tool or in microbin-url.txt.
+rem passwords. The default MicroBin server is passwordless, so no uploader
+rem password is prompted or stored by this runner. For a server that requires
+rem an uploader password the operator pre-configures it in the environment
+rem before the run (a password file path that is passed through unchanged, or
+rem the uploader's own password environment variable); this runner never
+rem creates, echoes, or deletes an uploader password.
 echo.
 echo  ------------------------------------------------------------
 echo   Optional: MicroBin report sharing - separate from the private
@@ -96,36 +95,15 @@ if exist "%~dp0Resolve-MicroBinRunUrl.ps1" (
 ) else (
     echo     [WARN] Resolve-MicroBinRunUrl.ps1 missing - MicroBin sharing skipped.
 )
-rem Optional uploader password, only when sharing is enabled for this run. A
-rem password file the operator pre-configured in the environment is reused
-rem without prompting and is never deleted here; otherwise the operator is
-rem asked once with hidden input and the value is stored in a run-scoped
-rem secret file under this run's root (SCC_MICROBIN_SECRET_CREATED tracks that
-rem this run created it, so cleanup never touches a pre-configured file).
+rem Optional uploader password file, only for servers that require one. The
+rem default MicroBin server is passwordless, so nothing is prompted and no
+rem secret file is created by this runner. When the operator pre-configured a
+rem password file in the environment (SCC_MICROBIN_UPLOADER_PASSWORD_FILE) it
+rem is passed through unchanged to the uploader at the report step and is
+rem never deleted here.
 if defined SCC_MICROBIN_URL (
     if defined SCC_MICROBIN_UPLOADER_PASSWORD_FILE (
         echo     [i] Using the pre-configured MicroBin uploader password file.
-    ) else (
-        set "SCC_MICROBIN_UPLOADER_PASSWORD_FILE=!SCC_RUN_ROOT!\microbin-uploader-password.txt"
-        if exist "%~dp0Resolve-MicroBinUploaderPassword.ps1" (
-            powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Resolve-MicroBinUploaderPassword.ps1" -SecretFile "!SCC_MICROBIN_UPLOADER_PASSWORD_FILE!"
-            if errorlevel 4 (
-                echo     [i] No MicroBin uploader password entered - the paste carries no edit or delete credential.
-                set "SCC_MICROBIN_UPLOADER_PASSWORD_FILE="
-            ) else if errorlevel 3 (
-                echo     [i] MicroBin uploader password already configured in the environment - not re-prompted.
-                set "SCC_MICROBIN_UPLOADER_PASSWORD_FILE="
-            ) else if errorlevel 1 (
-                echo     [WARN] MicroBin uploader password could not be recorded - continuing without one.
-                set "SCC_MICROBIN_UPLOADER_PASSWORD_FILE="
-            ) else (
-                echo     [i] MicroBin uploader password recorded for this run only and removed when the run ends.
-                set "SCC_MICROBIN_SECRET_CREATED=1"
-            )
-        ) else (
-            echo     [WARN] Resolve-MicroBinUploaderPassword.ps1 missing - continuing without an uploader password.
-            set "SCC_MICROBIN_UPLOADER_PASSWORD_FILE="
-        )
     )
 )
 goto :microbin_done
@@ -410,9 +388,6 @@ if not defined FINDINGS_JSON (
         echo     [WARN] Current-run findings disappeared - skipping report.
     )
 )
-rem Remove the run-scoped MicroBin uploader secret this run created. Runs on
-rem the normal path and on every failure exit so no credential is left behind.
-call :remove_microbin_secret
 set GO=
 set FINDINGS_JSON=
 
@@ -425,45 +400,28 @@ echo  ============================================================
 pause
 goto :done
 
-:remove_microbin_secret
-rem Deletes ONLY the run-scoped secret file this run created; a password file
-rem the operator pre-configured via the environment is never touched.
-if defined SCC_MICROBIN_SECRET_CREATED (
-    if defined SCC_MICROBIN_UPLOADER_PASSWORD_FILE (
-        if exist "!SCC_MICROBIN_UPLOADER_PASSWORD_FILE!" del /f /q "!SCC_MICROBIN_UPLOADER_PASSWORD_FILE!" >nul 2>&1
-    )
-    set "SCC_MICROBIN_UPLOADER_PASSWORD_FILE="
-    set "SCC_MICROBIN_SECRET_CREATED="
-)
-exit /b 0
-
 :run_setup_failed
 echo [ERROR] Could not create a unique current-run directory. Aborting.
-call :remove_microbin_secret
 pause
 exit /b 1
 
 :before_snapshot_failed
 echo [ERROR] Before-snapshot failed or was not written. No removal will run.
-call :remove_microbin_secret
 pause
 exit /b 1
 
 :preflight_failed
 echo [ERROR] Preflight failed. No detection or removal will run.
-call :remove_microbin_secret
 pause
 exit /b 1
 
 :detection_failed
 echo [ERROR] Detection failed. No removal will run and no historical findings will be used.
-call :remove_microbin_secret
 pause
 exit /b 1
 
 :removal_failed
 echo [ERROR] Removal reported a failure. Review the current run artifacts.
-call :remove_microbin_secret
 pause
 exit /b 1
 

@@ -82,6 +82,7 @@ try {
     Check 'report-step MicroBin arg is gated on a resolved URL' ($bat.Contains('if defined SCC_MICROBIN_URL')) $batPath
     Check 'relay upload path is preserved' ($bat.Contains('reports.aygross.xyz/v1/uploads') -and $bat.Contains('-NoReportUpload')) $batPath
     Check 'uploader password is only forwarded, never defined or echoed in the launcher' ($bat.Contains('SCC_MICROBIN_UPLOADER_PASSWORD_FILE') -and -not $bat.Contains('SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD')) $batPath
+    Check 'launcher never prompts for or stores an uploader password' (-not $bat.Contains('Resolve-MicroBinUploaderPassword') -and -not $bat.Contains('SCC_MICROBIN_SECRET_CREATED') -and -not $bat.Contains('microbin-uploader-password.txt') -and -not $bat.Contains('remove_microbin_secret')) $batPath
     Check 'launcher never echoes the configured URL' (-not [regex]::IsMatch($bat, '(?im)echo[^\r\n]*SCC_MICROBIN_URL')) $batPath
     Check 'deploy bundle carries the resolver and URL configuration' ($bundle.Contains('Resolve-MicroBinRunUrl.ps1') -and $bundle.Contains('microbin-url.txt')) $bundlePath
     Check 'repo ships the configured MicroBin URL' ((Test-Path -LiteralPath $urlFileRoot -PathType Leaf) -and (Get-Content -LiteralPath $urlFileRoot -Raw).Trim() -eq 'https://reports.aygross.xyz') $urlFileRoot
