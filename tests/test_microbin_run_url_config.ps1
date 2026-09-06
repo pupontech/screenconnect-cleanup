@@ -83,8 +83,8 @@ try {
     Check 'relay upload path is preserved' ($bat.Contains('reports.aygross.xyz/v1/uploads') -and $bat.Contains('-NoReportUpload')) $batPath
     Check 'uploader password is only forwarded, never defined or echoed in the launcher' ($bat.Contains('SCC_MICROBIN_UPLOADER_PASSWORD_FILE') -and -not $bat.Contains('SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD')) $batPath
     Check 'launcher never echoes the configured URL' (-not [regex]::IsMatch($bat, '(?im)echo[^\r\n]*SCC_MICROBIN_URL')) $batPath
-    Check 'deploy bundle carries the resolver and the empty URL placeholder' ($bundle.Contains('Resolve-MicroBinRunUrl.ps1') -and $bundle.Contains('microbin-url.txt')) $bundlePath
-    Check 'repo ships an empty microbin-url.txt placeholder' ((Test-Path -LiteralPath $urlFileRoot -PathType Leaf) -and (Get-Item -LiteralPath $urlFileRoot).Length -eq 0) $urlFileRoot
+    Check 'deploy bundle carries the resolver and URL configuration' ($bundle.Contains('Resolve-MicroBinRunUrl.ps1') -and $bundle.Contains('microbin-url.txt')) $bundlePath
+    Check 'repo ships the configured MicroBin URL' ((Test-Path -LiteralPath $urlFileRoot -PathType Leaf) -and (Get-Content -LiteralPath $urlFileRoot -Raw).Trim() -eq 'https://reports.aygross.xyz') $urlFileRoot
 
     # ---- Saved-URL read behavior (skip mode: silent, stdout = URL only) -----
     $cfgDir = Join-Path $probeRoot 'read'

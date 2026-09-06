@@ -21,7 +21,7 @@ targets.json
 New-InvestigationReport.ps1
 Submit-ConnectWiseReport.ps1    <- sanitized package + authenticated relay upload / optional MicroBin paste share
 Resolve-MicroBinRunUrl.ps1      <- guided-run MicroBin URL resolver (reads or prompts + saves microbin-url.txt)
-microbin-url.txt                <- intentionally EMPTY placeholder; the guided runner stores the chosen paste-server URL on its first line
+microbin-url.txt                <- saved MicroBin base URL used by the guided runner
 Invoke-GUIScanner.ps1          <- launches KVRT/ESET GUI scanners (and Malwarebytes via winget) and waits (Stage 5)
 Get-MalwarebytesDownloadDiagnostics.ps1 <- read-only Malwarebytes filter/proxy failure diagnostics (Stage 5)
 Invoke-AVUninstaller.ps1        <- opens installed-AV uninstallers, attended (Stage 6)
@@ -265,10 +265,9 @@ powershell -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.ps1 `
      invalid URL or failed upload is reported as a failure; the local
      `connectwise-report.zip` is always retained.
 
-  The deploy bundle ships an **empty** `microbin-url.txt` on purpose (a
-  comment line would be mistaken for a URL, because the first nonblank line
-  is the value). Populate it by answering `y` and typing the URL once, or by
-  editing the file directly before the run. `sc-cleanup.ps1` and
+  The deploy bundle contains the configured MicroBin base URL. If the file is
+  empty, populate it by answering `y` and typing the URL once, or by editing
+  the file directly before the run. `sc-cleanup.ps1` and
   `detect-remote-access.ps1` accept `-MicroBinUrl` and
   `-MicroBinUploaderPasswordFile` directly.
 

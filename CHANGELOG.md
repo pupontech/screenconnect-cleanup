@@ -3,6 +3,11 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.44] - 2026-09-06
+- Configured the deploy bundle to use `https://reports.aygross.xyz` as its
+  saved MicroBin base URL for testing.
+- Kept the MicroBin uploader password separate from the ZIP and repository.
+
 ## [1.7.43] - 2026-09-06
 - Added per-run incident context with safe defaults of `Not authorized` and
   `Email invite scam`, with bounded operator correction.
