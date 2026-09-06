@@ -234,9 +234,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.p
   file is missing or empty it prompts for the `https://` base URL once,
   validates it (https only, ASCII, no embedded credentials), and saves it to
   that file for future runs. The URL file never holds passwords. The optional
-  uploader password keeps the existing file/environment mechanism
-  (`SCC_MICROBIN_UPLOADER_PASSWORD_FILE`, falling back to
-  `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD`).
+  uploader password is prompted once with hidden (masked) input when sharing
+  is enabled and none is pre-configured; the value is stored in a run-scoped
+  secret file inside that run's folder (removed when the run ends), never
+  beside the tool, never in the URL file, and never in any log.
 
   Operator workflow in the guided runner:
 
@@ -248,10 +249,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.p
      It is saved to `microbin-url.txt` next to the tool and reused from then
      on. To point at a different server, edit that file (first line) or
      delete it and answer `y` on the next run.
-  4. If the server requires an uploader password, set
-     `SCC_MICROBIN_UPLOADER_PASSWORD_FILE` to the path of a password file, or
-     export `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD`, before starting. The
-     tool never prompts for a password and never stores one in the repo.
+  4. If the server needs an uploader password and none is pre-configured,
+     START-HERE asks for it once with a **hidden prompt** - keystrokes are
+     masked, and pressing Enter means no password (the paste is still
+     created; it just carries no edit/delete credential). The value is
+     written to a run-scoped secret file inside that run's folder
+     (`C:\RIT-SCC\<host>-<guid>\microbin-uploader-password.txt`), is never
+     echoed or logged, and is deleted automatically when the run ends - on
+     the normal path and on every failure exit. A run aborted with Ctrl+C
+     can leave the file in the run folder; delete it (or the run folder)
+     before finishing with the machine. To skip the prompt entirely,
+     pre-configure the password before starting: point
+     `SCC_MICROBIN_UPLOADER_PASSWORD_FILE` at a file that contains it, or
+     export `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD`.
   5. The report step prints `MICROBIN UPLOAD: <paste-url>` on success. The
      local `connectwise-report.zip` always stays on disk; an invalid URL or a
      failed upload is reported as a failure and never hides the local

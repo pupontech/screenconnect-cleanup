@@ -150,6 +150,14 @@ jobs:
         shell: pwsh
         run: ./tests/test_microbin_run_url_config.ps1
 
+      - name: MicroBin guided-run uploader-password prompt regression (Windows PowerShell 5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/test_microbin_uploader_password_prompt.ps1
+
+      - name: MicroBin guided-run uploader-password prompt regression (pwsh)
+        shell: pwsh
+        run: ./tests/test_microbin_uploader_password_prompt.ps1
+
       - name: Relay and bulk-export unit tests
         shell: pwsh
         run: python -m unittest relay.test_report_relay relay.test_export_iocs -v

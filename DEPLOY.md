@@ -21,6 +21,7 @@ targets.json
 New-InvestigationReport.ps1
 Submit-ConnectWiseReport.ps1    <- sanitized package + authenticated relay upload / optional MicroBin paste share
 Resolve-MicroBinRunUrl.ps1      <- guided-run MicroBin URL resolver (reads or prompts + saves microbin-url.txt)
+Resolve-MicroBinUploaderPassword.ps1 <- guided-run hidden MicroBin uploader-password prompt (writes a run-scoped secret file)
 microbin-url.txt                <- saved MicroBin base URL used by the guided runner
 Invoke-GUIScanner.ps1          <- launches KVRT/ESET GUI scanners (and Malwarebytes via winget) and waits (Stage 5)
 Get-MalwarebytesDownloadDiagnostics.ps1 <- read-only Malwarebytes filter/proxy failure diagnostics (Stage 5)
@@ -255,12 +256,19 @@ powershell -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.ps1 `
   2. First time only: type the server base URL as `https://host` when
      prompted. It is saved to `microbin-url.txt` beside the tool and reused
      on later runs (edit that file or delete it to change servers).
-  3. If the server needs an uploader password, provide it the same way as
-     before - never type it into a prompt and never put it in
-     `microbin-url.txt`:
-     - create a file containing only the password and point
-       `SCC_MICROBIN_UPLOADER_PASSWORD_FILE` at it, or
-     - export `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD` in the session.
+  3. If the server needs an uploader password and none is pre-configured,
+     the runner asks once with a **hidden prompt** - keystrokes are masked,
+     and pressing Enter means no password (the paste is still created; it
+     just carries no edit/delete credential). The value goes into a
+     run-scoped secret file under that run's folder
+     (`C:\RIT-SCC\<host>-<guid>\microbin-uploader-password.txt`), is never
+     echoed or written to `microbin-url.txt` or any log, and is deleted
+     when the run ends (normal path and every failure exit). A run aborted
+     with Ctrl+C can leave it behind - delete it with the run folder before
+     handing the machine back. To skip the prompt, pre-configure the
+     password instead: point `SCC_MICROBIN_UPLOADER_PASSWORD_FILE` at a
+     file containing it, or export
+     `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD` in the session.
   4. The report step prints `MICROBIN UPLOAD: <paste-url>` on success. An
      invalid URL or failed upload is reported as a failure; the local
      `connectwise-report.zip` is always retained.
@@ -269,7 +277,9 @@ powershell -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.ps1 `
   empty, populate it by answering `y` and typing the URL once, or by editing
   the file directly before the run. `sc-cleanup.ps1` and
   `detect-remote-access.ps1` accept `-MicroBinUrl` and
-  `-MicroBinUploaderPasswordFile` directly.
+  `-MicroBinUploaderPasswordFile` directly. The guided-run hidden password
+  prompt is provided by `Resolve-MicroBinUploaderPassword.ps1`, which ships
+  in the bundle next to `START-HERE.bat`.
 
 The relay is a holding area, not an automatic ConnectWise submission service.
 The official reporting route remains the ConnectWise Trust Center and its

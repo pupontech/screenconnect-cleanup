@@ -3,6 +3,30 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.45] - 2026-09-06
+- START-HERE.bat now asks for the optional MicroBin uploader password with a
+  hidden (masked) prompt whenever report sharing is enabled and no password
+  is pre-configured; blank/Enter means no password. The value is written to a
+  run-scoped secret file under that run's folder
+  (`microbin-uploader-password.txt`, ACL-restricted to the current user,
+  SYSTEM and Administrators on Windows), forwarded to
+  Submit-ConnectWiseReport.ps1 only as that file's path, and deleted when the
+  run ends - on the normal path and on every failure exit. A password file or
+  environment value pre-configured by the operator
+  (`SCC_MICROBIN_UPLOADER_PASSWORD_FILE` /
+  `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD`) is still honored and skips the
+  prompt, and is never deleted by the runner.
+- Added Resolve-MicroBinUploaderPassword.ps1 (the hidden prompt, exit codes
+  0/1/3/4, ASCII/length validation, exact no-trailing-newline write) and
+  shipped it in the deploy bundle. The password is never echoed, never
+  written to microbin-url.txt or any log, never stored beside the tool, and
+  never appears in error text or captured output.
+- Added focused regression tests (launcher wiring, run-scoped path, cleanup
+  on all exits, pre-configured skip, env short-circuit, blank = none, exact
+  file content, bounded refusal of unusable values, space/apostrophe paths,
+  and no-secret logging on every path) and wired them into the Windows CI
+  matrix under both PowerShell 5.1 and 7.
+
 ## [1.7.44] - 2026-09-06
 - Configured the deploy bundle to use `https://reports.aygross.xyz` as its
   saved MicroBin base URL for testing.
