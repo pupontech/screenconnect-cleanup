@@ -3,6 +3,14 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.41] - 2026-09-06
+- Added optional MicroBin paste sharing for the sanitized report JSON, with
+  HTTPS-only transport, bounded expiration, private read-only settings, and
+  optional uploader-password-file authentication.
+- Added `-RunPath` convenience input so an operator can upload an existing run
+  without locating `findings.json` manually.
+- Added MicroBin multipart, redirect, response-limit, and sanitization tests.
+
 ## [1.7.40] - 2026-09-04
 - Added a root-only VPS IOC exporter that reads only sanitized report JSON from
   encrypted relay receipts and produces deduplicated relay/server addresses,

@@ -45,6 +45,11 @@ param(
     [string]$ReportRelayUrl = 'https://reports.aygross.xyz/v1/uploads',
     [string]$ReportUploadTokenFile,
     [switch]$NoReportUpload,  # create the package but do not send it
+    # Optional MicroBin paste sharing: pass-through values for the report
+    # uploader; entirely off when unset. MicroBin is a separate user-selected
+    # paste server, never a ConnectWise submission.
+    [string]$MicroBinUrl,
+    [string]$MicroBinUploaderPasswordFile,
     [switch]$Debug           # full debug logger: console transcript + debug
                              # detail to <WorkDir>\logs\debug.log (v1.7.26)
 )
@@ -1246,6 +1251,8 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
     } else {
         $uploadArgs = @('-FindingsJson', [string]$findingsJson, '-WorkDir', [string]$WorkDir, '-RelayUrl', [string]$ReportRelayUrl)
         if ($ReportUploadTokenFile) { $uploadArgs += @('-ReportUploadTokenFile', [string]$ReportUploadTokenFile) }
+        if ($MicroBinUrl) { $uploadArgs += @('-MicroBinUrl', [string]$MicroBinUrl) }
+        if ($MicroBinUploaderPasswordFile) { $uploadArgs += @('-MicroBinUploaderPasswordFile', [string]$MicroBinUploaderPasswordFile) }
         if ($NoReportUpload) { $uploadArgs += '-NoUpload' }
         $reportUploadExitCode = Invoke-ChildScript -ScriptPath $uploadScript -ArgumentList $uploadArgs -LogTag 'ReportUpload'
         if ($reportUploadExitCode -ne 0) {

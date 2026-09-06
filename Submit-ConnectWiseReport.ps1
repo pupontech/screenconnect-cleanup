@@ -1,18 +1,23 @@
 # Submit-ConnectWiseReport.ps1 - create and optionally upload a sanitized report.
 # PowerShell 5.1 compatible. Raw evidence and credential-bearing fields are not
-# included in the automatic package. Uploads require an explicit bearer token.
+# included in the automatic package. Relay uploads require an explicit bearer
+# token. An optional MicroBin mode (active only when -MicroBinUrl is supplied)
+# posts the sanitized report JSON to a separate user-selected paste server over
+# HTTPS and is never a ConnectWise submission. Either upload destination fails
+# loudly but keeps the local package; -NoUpload disables both.
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
     [string]$FindingsJson,
-    [Parameter(Mandatory = $true)]
     [string]$WorkDir,
+    [string]$RunPath = '',
     [string]$ReportHtml = '',
     [string]$ResultsJson = '',
     [string]$DiffJson = '',
     [string]$RelayUrl = 'https://reports.aygross.xyz/v1/uploads',
     [string]$ReportUploadToken = '',
     [string]$ReportUploadTokenFile = '',
+    [string]$MicroBinUrl = '',
+    [string]$MicroBinUploaderPasswordFile = '',
     [switch]$NoUpload,
     [switch]$AllowInsecureRelay
 )
@@ -433,14 +438,278 @@ function Invoke-ReportUpload {
     return $receipt
 }
 
+# ---------------------------------------------------------------------------
+# Optional MicroBin upload mode (user-selected paste server)
+# ---------------------------------------------------------------------------
+# MicroBin (https://github.com/szabodanika/microbin) exposes a multipart text
+# upload at POST /upload. Current endpoint (master, 2026-06): recognized form
+# fields are content, privacy, expiration, plain_key, random_key,
+# encrypted_random_key, burn_after, syntax_highlight, uploader_password and
+# file. privacy is a single selector (public / unlisted / readonly / private /
+# secret); there is no separate readonly boolean. privacy=readonly creates a
+# paste that is not publicly listed and cannot be edited, and is only honored
+# when the server enables readonly (MICROBIN_ENABLE_READONLY); on other servers
+# the same value degrades to an unlisted, unencrypted paste. privacy=private
+# would switch on server-side encryption, which requires a key shared out of
+# band, so a zero-fuss report share must not use it. A successful create
+# answers with a 3xx whose Location is {path}/upload/<id> (or
+# {path}/auth/<id>/success); a wrong uploader password on a read-only server
+# answers with a redirect to {path}/incorrect instead. Expiration values are
+# the bounded tokens 1min..16years plus never; "never" is refused here so a
+# configured dropbox always expires the report.
+$script:MicroBinExpiration = '1week'
+$script:MicroBinBodyCap = 16384
+$script:MicroBinBoundaryPrefix = '--------------------------ScreenConnectCleanup'
+
+function Get-MicroBinUploaderPassword {
+    # Returns the MicroBin uploader password when the operator configured one:
+    # -MicroBinUploaderPasswordFile first, then the
+    # SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD environment variable. The value
+    # is never written to the console, logs, or error text, and is only sent
+    # inside the multipart body over the validated transport.
+    $password = ''
+    $explicitFile = -not [string]::IsNullOrWhiteSpace($MicroBinUploaderPasswordFile)
+    if ($explicitFile) {
+        if (-not (Test-Path -LiteralPath $MicroBinUploaderPasswordFile -PathType Leaf)) {
+            throw ('MicroBin uploader password file was not found: ' + $MicroBinUploaderPasswordFile)
+        }
+        $password = [System.IO.File]::ReadAllText($MicroBinUploaderPasswordFile)
+        if ([string]::IsNullOrWhiteSpace($password)) {
+            throw ('MicroBin uploader password file is empty: ' + $MicroBinUploaderPasswordFile)
+        }
+    } elseif (-not [string]::IsNullOrWhiteSpace($env:SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD)) {
+        $password = $env:SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD
+    }
+    return $password.Trim()
+}
+
+function Get-MicroBinUploadTarget {
+    param([string]$Url)
+    $parsedUri = $null
+    if (-not [System.Uri]::TryCreate($Url, [System.UriKind]::Absolute, [ref]$parsedUri)) {
+        throw 'MicroBin URL is not an absolute URI'
+    }
+    if ($parsedUri.Scheme -ne 'https' -and -not $AllowInsecureRelay) {
+        throw 'MicroBin target must use HTTPS (use -AllowInsecureRelay only for local tests)'
+    }
+    if ($parsedUri.Scheme -notin @('https', 'http')) {
+        throw 'MicroBin URL must use http or https'
+    }
+    if (-not [string]::IsNullOrEmpty($parsedUri.UserInfo)) {
+        throw 'MicroBin URL must not contain embedded credentials'
+    }
+    $base = $Url.Trim().TrimEnd('/')
+    if ($base -match '(?i)/upload$') {
+        $uploadUri = $base
+    } else {
+        $uploadUri = $base + '/upload'
+    }
+    return [pscustomobject]@{
+        UploadUri = $uploadUri
+        Origin    = $parsedUri.GetLeftPart([System.UriPartial]::Authority)
+        Scheme    = $parsedUri.Scheme
+        Authority = $parsedUri.Authority
+    }
+}
+
+function New-MicroBinMultipartBody {
+    param([string]$Content, [string]$Password, [string]$Boundary)
+    $parts = New-Object 'System.Collections.Generic.List[string]'
+    [void]$parts.Add('--' + $Boundary)
+    [void]$parts.Add('Content-Disposition: form-data; name="content"')
+    [void]$parts.Add('')
+    [void]$parts.Add($Content)
+    [void]$parts.Add('--' + $Boundary)
+    [void]$parts.Add('Content-Disposition: form-data; name="privacy"')
+    [void]$parts.Add('')
+    [void]$parts.Add('readonly')
+    [void]$parts.Add('--' + $Boundary)
+    [void]$parts.Add('Content-Disposition: form-data; name="expiration"')
+    [void]$parts.Add('')
+    [void]$parts.Add($script:MicroBinExpiration)
+    if (-not [string]::IsNullOrEmpty($Password)) {
+        [void]$parts.Add('--' + $Boundary)
+        [void]$parts.Add('Content-Disposition: form-data; name="uploader_password"')
+        [void]$parts.Add('')
+        [void]$parts.Add($Password)
+    }
+    [void]$parts.Add('--' + $Boundary + '--')
+    [void]$parts.Add('')
+    $bodyText = ($parts -join "`r`n")
+    return [System.Text.Encoding]::UTF8.GetBytes($bodyText)
+}
+
+function Read-MicroBinErrorBody {
+    param($Response)
+    # Bounded read of a non-2xx/3xx body for diagnostics only; never buffers
+    # more than the cap even if the server streams an unbounded page.
+    $text = ''
+    try {
+        $stream = $Response.GetResponseStream()
+        if ($null -eq $stream) { return '' }
+        $buffer = New-Object byte[] 8192
+        $memory = New-Object System.IO.MemoryStream
+        $readTotal = 0
+        while ($readTotal -lt $script:MicroBinBodyCap) {
+            $remaining = $script:MicroBinBodyCap - $readTotal
+            $chunkSize = $buffer.Length
+            if ($remaining -lt $chunkSize) { $chunkSize = $remaining }
+            $read = $stream.Read($buffer, 0, $chunkSize)
+            if ($read -le 0) { break }
+            $memory.Write($buffer, 0, $read)
+            $readTotal += $read
+        }
+        $text = [System.Text.Encoding]::UTF8.GetString($memory.ToArray())
+        $memory.Dispose()
+    } catch {
+        $text = ''
+    }
+    $text = $text -replace '[^\x20-\x7E]+', ' '
+    $text = $text.Trim()
+    if ($text.Length -gt 300) { $text = $text.Substring(0, 300) }
+    return $text
+}
+
+function Invoke-MicroBinCreate {
+    param([string]$Content, [string]$Password)
+    $target = Get-MicroBinUploadTarget $MicroBinUrl
+    $boundary = $script:MicroBinBoundaryPrefix + [guid]::NewGuid().ToString('N')
+    $body = New-MicroBinMultipartBody -Content $Content -Password $Password -Boundary $boundary
+    try { [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 } catch { }
+    $request = [System.Net.HttpWebRequest]::Create($target.UploadUri)
+    $request.Method = 'POST'
+    $request.AllowAutoRedirect = $false
+    $request.ContentType = 'multipart/form-data; boundary=' + $boundary
+    $request.ContentLength = $body.Length
+    $request.Timeout = 30000
+    $request.ReadWriteTimeout = 30000
+    $requestStream = $request.GetRequestStream()
+    try { $requestStream.Write($body, 0, $body.Length) } finally { $requestStream.Dispose() }
+    $response = $null
+    try {
+        $response = $request.GetResponse()
+    } catch [System.Net.WebException] {
+        # With AllowAutoRedirect=$false a 3xx response is returned normally;
+        # HTTP error statuses (4xx/5xx) surface as a WebException that still
+        # carries the response we need to inspect. Redirects are never
+        # followed, so no Location from a later hop can be trusted.
+        if ($null -eq $_.Exception.Response) {
+            throw ('MicroBin server request failed: ' + $_.Exception.Message)
+        }
+        $response = $_.Exception.Response
+    }
+    try {
+        $statusCode = [int]$response.StatusCode
+        $location = [string]$response.Headers['Location']
+        $errorBody = ''
+        if ($statusCode -ge 400) { $errorBody = Read-MicroBinErrorBody $response }
+        return [pscustomobject]@{
+            StatusCode = $statusCode
+            Location   = $location
+            ErrorBody  = $errorBody
+            Target     = $target
+        }
+    } finally {
+        $response.Dispose()
+    }
+}
+
+function Convert-MicroBinLocationToPasteUrl {
+    param([object]$Result)
+    $loc = [string]$Result.Location
+    $target = $Result.Target
+    if ([string]::IsNullOrWhiteSpace($loc)) {
+        throw ('MicroBin responded with HTTP ' + [string]$Result.StatusCode + ' but no Location header was present')
+    }
+    $loc = $loc.Trim()
+    $path = ''
+    if ($loc -match '^[A-Za-z][A-Za-z0-9+.-]*://') {
+        # Absolute URL. NOTE: Uri.TryCreate(Absolute) on .NET Core turns a
+        # rooted path like /upload/x into a file:// URI, so an explicit scheme
+        # check must gate the absolute branch.
+        $parsed = $null
+        if (-not [System.Uri]::TryCreate($loc, [System.UriKind]::Absolute, [ref]$parsed)) {
+            throw 'MicroBin Location header is not a valid URL'
+        }
+        if ($parsed.Scheme -ne $target.Scheme -or -not [string]::Equals($parsed.Authority, $target.Authority, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw 'MicroBin redirect Location points to a different origin; it was not followed or reported'
+        }
+        $path = $parsed.AbsolutePath
+        $isAbsolute = $true
+    } else {
+        if (-not $loc.StartsWith('/')) {
+            throw 'MicroBin Location header is neither an absolute URL nor a site-relative path'
+        }
+        $questionIndex = $loc.IndexOf('?')
+        $path = $loc
+        if ($questionIndex -ge 0) { $path = $loc.Substring(0, $questionIndex) }
+        $isAbsolute = $false
+    }
+    $path = $path.TrimEnd('/')
+    if ($path -match '/incorrect$') {
+        throw 'MicroBin rejected the uploader credentials (redirected to /incorrect); check -MicroBinUploaderPasswordFile or the SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD environment variable'
+    }
+    if ($path -notmatch '/(upload|auth)/[A-Za-z0-9_-]+(/success)?$') {
+        throw ('MicroBin Location does not look like a paste URL: ' + $path)
+    }
+    if ($isAbsolute) { return $parsed.AbsoluteUri.TrimEnd('/') }
+    return $target.Origin + $path
+}
+
+function Invoke-MicroBinUpload {
+    param([string]$Content, [string]$Password)
+    $result = Invoke-MicroBinCreate -Content $Content -Password $Password
+    if ($result.StatusCode -lt 200 -or $result.StatusCode -ge 400) {
+        $detail = ''
+        if (-not [string]::IsNullOrWhiteSpace($result.ErrorBody)) { $detail = ' - ' + $result.ErrorBody }
+        throw ('MicroBin returned HTTP ' + [string]$result.StatusCode + $detail)
+    }
+    return (Convert-MicroBinLocationToPasteUrl $result)
+}
+
 $exitCode = 0
 try {
-    if (-not (Test-Path -LiteralPath $FindingsJson -PathType Leaf)) { throw 'findings JSON was not found' }
-    if (-not (Test-Path -LiteralPath $WorkDir -PathType Container)) {
-        $null = New-Item -ItemType Directory -Path $WorkDir -Force
+    # Input resolution: -RunPath finds the run root's findings.json the same
+    # way the guided runner does, so operators never need to hunt for it.
+    # An explicit -FindingsJson/-WorkDir pair keeps the historical contract.
+    if (-not [string]::IsNullOrWhiteSpace($RunPath)) {
+        if (-not (Test-Path -LiteralPath $RunPath -PathType Container)) { throw ('run path was not found: ' + $RunPath) }
+        $runPathFull = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $RunPath).Path)
+        if ([string]::IsNullOrWhiteSpace($FindingsJson)) {
+            $candidates = New-Object 'System.Collections.Generic.List[string]'
+            $directCandidate = Join-Path $runPathFull 'findings.json'
+            if (Test-Path -LiteralPath $directCandidate -PathType Leaf) { [void]$candidates.Add($directCandidate) }
+            $detectRoot = Join-Path $runPathFull 'detect'
+            if (Test-Path -LiteralPath $detectRoot -PathType Container) {
+                foreach ($sub in (Get-ChildItem -LiteralPath $detectRoot -Directory -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)) {
+                    $subCandidate = Join-Path $sub.FullName 'findings.json'
+                    if (Test-Path -LiteralPath $subCandidate -PathType Leaf) { [void]$candidates.Add($subCandidate) }
+                }
+            }
+            if ($candidates.Count -eq 0) { throw ('no findings.json was found under the run path: ' + $runPathFull) }
+            if ($candidates.Count -gt 1) { throw ('multiple findings.json files were found under the run path; pass -FindingsJson explicitly: ' + ($candidates -join '; ')) }
+            $findingsFullPath = $candidates[0]
+            Write-Host ('REPORT FINDINGS: ' + $findingsFullPath)
+        } else {
+            if (-not (Test-Path -LiteralPath $FindingsJson -PathType Leaf)) { throw 'findings JSON was not found' }
+            $findingsFullPath = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $FindingsJson).Path)
+        }
+        if ([string]::IsNullOrWhiteSpace($WorkDir)) {
+            $workFullPath = $runPathFull
+        } else {
+            if (-not (Test-Path -LiteralPath $WorkDir -PathType Container)) { $null = New-Item -ItemType Directory -Path $WorkDir -Force }
+            $workFullPath = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $WorkDir).Path)
+        }
+    } else {
+        if ([string]::IsNullOrWhiteSpace($FindingsJson)) { throw 'findings JSON was not specified (pass -FindingsJson, or -RunPath for a run root)' }
+        if ([string]::IsNullOrWhiteSpace($WorkDir)) { throw 'work directory was not specified (pass -WorkDir, or -RunPath for a run root)' }
+        if (-not (Test-Path -LiteralPath $FindingsJson -PathType Leaf)) { throw 'findings JSON was not found' }
+        if (-not (Test-Path -LiteralPath $WorkDir -PathType Container)) {
+            $null = New-Item -ItemType Directory -Path $WorkDir -Force
+        }
+        $findingsFullPath = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $FindingsJson).Path)
+        $workFullPath = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $WorkDir).Path)
     }
-    $findingsFullPath = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $FindingsJson).Path)
-    $workFullPath = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $WorkDir).Path)
     $data = [System.IO.File]::ReadAllText($findingsFullPath) | ConvertFrom-Json
     if ($null -eq $data) { throw 'findings JSON was empty' }
     $report = New-SafeReport $data
@@ -476,13 +745,36 @@ try {
 
     if ($NoUpload) {
         Write-Host 'REPORT UPLOAD: disabled by operator'
+        if (-not [string]::IsNullOrWhiteSpace($MicroBinUrl)) {
+            Write-Host 'MICROBIN UPLOAD: disabled by operator'
+        }
     } else {
-        $token = Get-UploadToken
-        if ([string]::IsNullOrWhiteSpace($token)) {
-            Write-Host 'REPORT UPLOAD: skipped; no authenticated relay token is configured'
-        } else {
-            $receipt = Invoke-ReportUploadWithRetry -Path $script:PackagePath -Token $token -Uri $RelayUrl -Digest $localDigest
-            Write-Host ('REPORT UPLOAD: ' + [string]$receipt.status + '; receipt ' + [string]$receipt.receipt_id)
+        # Authenticated relay: behavior is unchanged, but it is isolated in its
+        # own try/catch so a relay failure never suppresses a separately
+        # configured MicroBin share, and vice versa.
+        try {
+            $token = Get-UploadToken
+            if ([string]::IsNullOrWhiteSpace($token)) {
+                Write-Host 'REPORT UPLOAD: skipped; no authenticated relay token is configured'
+            } else {
+                $receipt = Invoke-ReportUploadWithRetry -Path $script:PackagePath -Token $token -Uri $RelayUrl -Digest $localDigest
+                Write-Host ('REPORT UPLOAD: ' + [string]$receipt.status + '; receipt ' + [string]$receipt.receipt_id)
+            }
+        } catch {
+            Write-Host ('REPORT UPLOAD FAILED: ' + $_.Exception.Message) -ForegroundColor Red
+            $exitCode = 1
+        }
+        # Optional MicroBin paste share: runs only when a URL is configured, so
+        # users who never configure MicroBin are completely unaffected.
+        if (-not [string]::IsNullOrWhiteSpace($MicroBinUrl)) {
+            try {
+                $microBinPassword = Get-MicroBinUploaderPassword
+                $pasteUrl = Invoke-MicroBinUpload -Content $reportJson -Password $microBinPassword
+                Write-Host ('MICROBIN UPLOAD: ' + $pasteUrl)
+            } catch {
+                Write-Host ('MICROBIN UPLOAD FAILED: ' + $_.Exception.Message) -ForegroundColor Red
+                $exitCode = 1
+            }
         }
     }
 } catch {

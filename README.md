@@ -183,6 +183,44 @@ normalized. The relay stores encrypted receipts for later root-only bulk export.
 It does not submit to ConnectWise automatically. Review the package and use the
 official Trust Center workflow when you are ready to send a batch.
 
+### Optional MicroBin paste sharing (separate user-selected server)
+
+MicroBin (<https://github.com/szabodanika/microbin>) is an optional paste server
+**you pick yourself**. When you configure one, the uploader additionally posts
+the same sanitized report JSON as a private, read-only, time-limited paste and
+prints the paste URL. It is a separate server - never a ConnectWise submission,
+never the private relay - and nothing is sent anywhere unless you configure a
+URL:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.ps1 `
+  -RunPath "C:\RIT-SCC\<host>-<guid>" `
+  -MicroBinUrl "https://paste.example.org" `
+  -MicroBinUploaderPasswordFile "C:\path\to\microbin-uploader-password.txt"
+```
+
+- `-RunPath` points at a run root; the script locates that run's
+  `findings.json` (run root, or one level under its `detect\` folder - the same
+  rule the guided runner uses) and writes the package next to the run. The
+  existing `-FindingsJson` + `-WorkDir` contract still works unchanged.
+- `-MicroBinUrl` is the server base URL; the create endpoint (`POST /upload`)
+  is appended automatically. HTTPS is enforced; plain `http` is refused outside
+  local tests (`-AllowInsecureRelay`).
+- The uploader password is read from `-MicroBinUploaderPasswordFile`, falling
+  back to the `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD` environment variable,
+  and is only sent when configured. It never appears in command lines, logs, or
+  error text.
+- The paste body is the sanitized `connectwise-report.json` text (same
+  allowlist as the ZIP: no raw evidence, no credentials, no account names;
+  user-profile paths normalized). It is created with `privacy=readonly` and a
+  bounded one-week expiration; each run creates one new paste with no automatic
+  retry. The created URL is printed as `MICROBIN UPLOAD: <url>`.
+- Guided runs (`START-HERE.bat`) enable it through the `SCC_MICROBIN_URL` and
+  `SCC_MICROBIN_UPLOADER_PASSWORD_FILE` environment variables;
+  `sc-cleanup.ps1` and `detect-remote-access.ps1` accept `-MicroBinUrl` and
+  `-MicroBinUploaderPasswordFile` directly. With none of these set, no MicroBin
+  request is ever made.
+
 ### Choosing what to look for
 
 `targets.json` controls it. ScreenConnect is on by default; 14 other remote-access

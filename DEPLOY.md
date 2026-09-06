@@ -19,7 +19,7 @@ detect-remote-access.ps1
 Run-DetectRemoteAccess.bat
 targets.json
 New-InvestigationReport.ps1
-Submit-ConnectWiseReport.ps1    <- sanitized package + authenticated relay upload
+Submit-ConnectWiseReport.ps1    <- sanitized package + authenticated relay upload / optional MicroBin paste share
 Invoke-GUIScanner.ps1          <- launches KVRT/ESET GUI scanners (and Malwarebytes via winget) and waits (Stage 5)
 Get-MalwarebytesDownloadDiagnostics.ps1 <- read-only Malwarebytes filter/proxy failure diagnostics (Stage 5)
 Invoke-AVUninstaller.ps1        <- opens installed-AV uninstallers, attended (Stage 6)
@@ -191,6 +191,47 @@ into the relay storage directory, and supports `--since-unix` to limit the
 receipts analyzed. Install the `relay/screenconnect-report-relay-ioc-export`
 wrapper to `/usr/local/sbin/` alongside the bulk-export wrapper.
 
+### Optional MicroBin paste sharing (separate user-selected server)
+
+MicroBin is an optional paste server of your own choosing. When you configure
+one, the uploader additionally posts the sanitized report JSON as a private,
+read-only paste that expires after one week and prints the created paste URL.
+It is a **separate server - never a ConnectWise submission** - and no MicroBin
+request is ever made unless a URL is configured:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.ps1 `
+  -RunPath "C:\RIT-SCC\CLIENT-20260906-1a2b3c4d" `
+  -MicroBinUrl "https://paste.example.org" `
+  -MicroBinUploaderPasswordFile "C:\RIT-SCC\secrets\microbin-uploader-password.txt"
+```
+
+- `-RunPath` locates `findings.json` under the run root (run root itself, or
+  one level under its `detect\` folder) and defaults the package output to that
+  root, so the operator never has to find `findings.json` by hand. The existing
+  `-FindingsJson` + `-WorkDir` pair remains fully supported.
+- `-MicroBinUrl` is the server base URL; the script posts multipart form data
+  to the MicroBin create endpoint (`POST /upload`): `content` (the sanitized
+  `connectwise-report.json` text), `privacy=readonly`, a bounded
+  `expiration=1week`, and `uploader_password` only when one is configured.
+  MicroBin has no separate readonly flag: `readonly` is a privacy level that is
+  not publicly listed and cannot be edited, and it degrades to an unlisted
+  paste on servers that do not enable readonly. HTTPS is enforced unless
+  `-AllowInsecureRelay` (local tests only).
+- The uploader password is read from `-MicroBinUploaderPasswordFile` or the
+  `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD` environment variable and never
+  appears in command lines, logs, or error text. Uploads are never
+  automatically retried (a retry would create a duplicate paste).
+- Redirects are not followed. The client validates the `Location` header of the
+  create response (same origin, paste-shaped path) and prints the paste URL as
+  `MICROBIN UPLOAD: <url>`. A server in read-only uploader-password mode that
+  rejects the password answers with a redirect to `/incorrect`, which is
+  reported as a credential failure.
+- Guided runs (`START-HERE.bat`) enable the share through the
+  `SCC_MICROBIN_URL` and `SCC_MICROBIN_UPLOADER_PASSWORD_FILE` environment
+  variables. `sc-cleanup.ps1` and `detect-remote-access.ps1` accept
+  `-MicroBinUrl` and `-MicroBinUploaderPasswordFile` directly.
+
 The relay is a holding area, not an automatic ConnectWise submission service.
 The official reporting route remains the ConnectWise Trust Center and its
 published vulnerability-disclosure process:
@@ -216,6 +257,8 @@ credentials for the ConnectWise site to this tool.
 | `-ReportRelayUrl <url>` | authenticated report relay endpoint (default `https://reports.aygross.xyz/v1/uploads`) |
 | `-ReportUploadTokenFile <path>` | client token file; default `%ProgramData%\ScreenConnectCleanup\report-relay-token.txt` |
 | `-NoReportUpload` | create no automatic upload from `sc-cleanup.ps1`; the sanitized package is still created locally |
+| `-MicroBinUrl <url>` | optional MicroBin paste-server base URL (separate user-selected server, never ConnectWise); posts a private read-only one-week paste of the sanitized report JSON when set |
+| `-MicroBinUploaderPasswordFile <path>` | MicroBin uploader password file, for servers that require one (environment fallback: `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD`) |
 
 ## 5. Before you trust it — outstanding live validation
 

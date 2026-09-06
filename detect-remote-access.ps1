@@ -52,6 +52,12 @@ param(
     [string]$ReportUploadTokenFile,
     [switch]$NoReportUpload,
 
+    # Optional MicroBin paste sharing: pass-through values for the report
+    # uploader; entirely off when unset. MicroBin is a separate user-selected
+    # paste server, never a ConnectWise submission.
+    [string]$MicroBinUrl,
+    [string]$MicroBinUploaderPasswordFile,
+
     # Run the parser against synthetic samples and exit. Proves the extraction
     # logic works without needing a live ScreenConnect install to hand.
     [switch]$SelfTest
@@ -197,6 +203,8 @@ function Invoke-ReportUploader {
     }
     $arguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $uploadScript, '-FindingsJson', $FindingsPath, '-WorkDir', $OutputDirectory, '-RelayUrl', $ReportRelayUrl)
     if ($ReportUploadTokenFile) { $arguments += @('-ReportUploadTokenFile', $ReportUploadTokenFile) }
+    if ($MicroBinUrl) { $arguments += @('-MicroBinUrl', $MicroBinUrl) }
+    if ($MicroBinUploaderPasswordFile) { $arguments += @('-MicroBinUploaderPasswordFile', $MicroBinUploaderPasswordFile) }
     try {
         $output = & $runnerPath @arguments 2>&1
         $rc = $LASTEXITCODE

@@ -262,8 +262,12 @@ if not defined FINDINGS_JSON (
             explorer /select,"!SCC_RUN_ROOT!/report.html"
             start "" "!SCC_RUN_ROOT!/report.html"
             if exist "%~dp0Submit-ConnectWiseReport.ps1" (
-                powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Submit-ConnectWiseReport.ps1" -FindingsJson "!FINDINGS_JSON!" -WorkDir "!SCC_RUN_ROOT!" -RelayUrl "https://reports.aygross.xyz/v1/uploads"
+                set "MICROBIN_EXTRA="
+                if defined SCC_MICROBIN_URL set "MICROBIN_EXTRA=!MICROBIN_EXTRA! -MicroBinUrl "!SCC_MICROBIN_URL!""
+                if defined SCC_MICROBIN_UPLOADER_PASSWORD_FILE set "MICROBIN_EXTRA=!MICROBIN_EXTRA! -MicroBinUploaderPasswordFile "!SCC_MICROBIN_UPLOADER_PASSWORD_FILE!""
+                powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Submit-ConnectWiseReport.ps1" -FindingsJson "!FINDINGS_JSON!" -WorkDir "!SCC_RUN_ROOT!" -RelayUrl "https://reports.aygross.xyz/v1/uploads"!MICROBIN_EXTRA!
                 set "UPLOAD_RC=!errorlevel!"
+                set "MICROBIN_EXTRA="
                 if not "!UPLOAD_RC!"=="0" (
                     echo     [WARN] Report upload failed with errorlevel !UPLOAD_RC! - local evidence remains available.
                     if "!PIPE_RC!"=="0" set "PIPE_RC=!UPLOAD_RC!"
