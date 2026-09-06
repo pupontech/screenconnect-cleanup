@@ -3,7 +3,39 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.43] - 2026-09-06
+- Added per-run incident context with safe defaults of `Not authorized` and
+  `Email invite scam`, with bounded operator correction.
+- Added the best observed ScreenConnect installation date and evidence basis,
+  preferring matching Windows service-install event 7045, then directory
+  creation time, then registry `InstallDate`.
+- Kept screenshots, VirusTotal fields, raw event messages, and credentials out
+  of the sanitized report and MicroBin paste.
+
 ## [1.7.42] - 2026-09-06
+- The report now carries operator-recorded incident context. START-HERE.bat
+  prompts once per run at the report stage for Authorization (Authorized / Not
+  authorized, default Not authorized) and Delivery (Email invite scam, default,
+  or Other with a mandatory short ASCII description). Blank answers resolve to
+  the safe defaults; invalid or ambiguous answers are refused and re-prompted.
+  The validated pair is stored in the run root (incident-context.txt) and
+  forwarded to Submit-ConnectWiseReport.ps1, which embeds it as
+  IncidentContext.Authorization / IncidentContext.Delivery in the sanitized
+  JSON, the human-readable TXT, and the MicroBin paste. Unguided uploads fall
+  back to context already in the findings and otherwise report Not available -
+  nothing is ever guessed.
+- Each ScreenConnect instance in the sanitized report now includes
+  InstallDateObserved and InstallDateBasis: the best observed installation date
+  from the detector's existing evidence, preferring the earliest matching
+  Windows service-install event 7045 timestamp, then the install-directory
+  creation time, then the registry InstallDate (YYYYMMDD). Absence reports
+  "Not available"; raw event messages/config content are never included.
+- Added Resolve-IncidentContext.ps1 (the guided-run prompt) and focused
+  regression tests covering defaults, correction/validation, date
+  precedence/absence, absence of screenshot/VirusTotal fields, and no-secret
+  logging. The sanitized report schema moved to SchemaVersion 2 (the flat
+  DeliveryContext key is replaced by IncidentContext.Delivery).
+
 - START-HERE.bat now offers an explicit start-of-run MicroBin opt-in
   ("Upload the sanitized report to MicroBin? [y/N]", default no); a blank or
   no answer never uploads to MicroBin and the guided run stays relay-only.

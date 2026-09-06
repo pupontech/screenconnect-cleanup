@@ -294,6 +294,40 @@ if not defined FINDINGS_JSON (
     echo     [WARN] No current-run findings.json available - skipping report.
 ) else (
     if exist "!FINDINGS_JSON!" (
+    rem ---- Incident context (authorization + delivery) - one prompt per run --
+    rem The technician records how the ScreenConnect activity reached the user
+    rem (Delivery) and whether it was authorized, with safe defaults (Not
+    rem authorized / Email invite scam) when Enter is pressed. The validated
+    rem pair is written to incident-context.txt inside this run root and
+    rem forwarded to the report uploader below. A failed or aborted prompt
+    rem leaves the pair unset and the report honestly marks the context
+    rem Not available. Values are validated by Resolve-IncidentContext.ps1
+    rem (no blanks, no free-form ambiguity; Other requires a description).
+    set "SCC_CTX_AUTH="
+    set "SCC_CTX_DELIVERY="
+    if exist "%~dp0Resolve-IncidentContext.ps1" (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Resolve-IncidentContext.ps1" -OutFile "!SCC_RUN_ROOT!\incident-context.txt"
+        if errorlevel 4 (
+            echo     [WARN] Incident context was not completed - the report will mark it Not available.
+        ) else if errorlevel 1 (
+            echo     [WARN] Incident context could not be saved - the report will mark it Not available.
+        ) else (
+            if exist "!SCC_RUN_ROOT!\incident-context.txt" (
+                for /f "usebackq delims=" %%A in ("!SCC_RUN_ROOT!\incident-context.txt") do (
+                    if not defined SCC_CTX_AUTH (
+                        set "SCC_CTX_AUTH=%%A"
+                    ) else if not defined SCC_CTX_DELIVERY (
+                        set "SCC_CTX_DELIVERY=%%A"
+                    )
+                )
+            )
+            if defined SCC_CTX_AUTH if defined SCC_CTX_DELIVERY (
+                echo     [i] Incident context recorded for this run.
+            )
+        )
+    ) else (
+        echo     [WARN] Resolve-IncidentContext.ps1 missing - the report will mark context Not available.
+    )
     if exist "!SCC_RUN_ROOT!/removal-manifest.json" (
         powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -RemovalManifest "!SCC_RUN_ROOT!/removal-manifest.json" -OutputPath "!SCC_RUN_ROOT!/report.html"
     ) else (
@@ -311,11 +345,17 @@ if not defined FINDINGS_JSON (
             start "" "!SCC_RUN_ROOT!/report.html"
             if exist "%~dp0Submit-ConnectWiseReport.ps1" (
                 set "MICROBIN_EXTRA="
+                set "CTX_EXTRA="
+                if defined SCC_CTX_AUTH set "CTX_EXTRA=!CTX_EXTRA! -IncidentAuthorization "!SCC_CTX_AUTH!""
+                if defined SCC_CTX_DELIVERY set "CTX_EXTRA=!CTX_EXTRA! -IncidentDelivery "!SCC_CTX_DELIVERY!""
                 if defined SCC_MICROBIN_URL set "MICROBIN_EXTRA=!MICROBIN_EXTRA! -MicroBinUrl "!SCC_MICROBIN_URL!""
                 if defined SCC_MICROBIN_UPLOADER_PASSWORD_FILE set "MICROBIN_EXTRA=!MICROBIN_EXTRA! -MicroBinUploaderPasswordFile "!SCC_MICROBIN_UPLOADER_PASSWORD_FILE!""
-                powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Submit-ConnectWiseReport.ps1" -FindingsJson "!FINDINGS_JSON!" -WorkDir "!SCC_RUN_ROOT!" -RelayUrl "https://reports.aygross.xyz/v1/uploads"!MICROBIN_EXTRA!
+                powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Submit-ConnectWiseReport.ps1" -FindingsJson "!FINDINGS_JSON!" -WorkDir "!SCC_RUN_ROOT!" -RelayUrl "https://reports.aygross.xyz/v1/uploads"!MICROBIN_EXTRA!!CTX_EXTRA!
                 set "UPLOAD_RC=!errorlevel!"
                 set "MICROBIN_EXTRA="
+                set "CTX_EXTRA="
+                set SCC_CTX_AUTH=
+                set SCC_CTX_DELIVERY=
                 if not "!UPLOAD_RC!"=="0" (
                     echo     [WARN] Report upload failed with errorlevel !UPLOAD_RC! - local evidence remains available.
                     if "!PIPE_RC!"=="0" set "PIPE_RC=!UPLOAD_RC!"

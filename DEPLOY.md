@@ -113,11 +113,14 @@ after its final report, so one run does not create duplicate receipts.
 
 The package contains:
 
-- `connectwise-report.json` with the incident type, tool/run metadata,
-  ScreenConnect installation/instance identifiers, relay host and port, session
-  type/role/version, connection indicators, suspicious file names/hashes and
-  signature results, parse issues, historical service-install identifiers, and
-  available delivery context.
+- `connectwise-report.json` with the incident type, tool/run metadata, the
+  operator-recorded incident context (authorization + delivery), ScreenConnect
+  installation/instance identifiers, relay host and port, session type/role/
+  version, connection indicators, suspicious file names/hashes and signature
+  results, parse issues, historical service-install identifiers, and each
+  instance's best observed installation date and basis (service-install event
+  7045 timestamp, install-directory creation time, or registry InstallDate;
+  "Not available" when there is no evidence).
 - `connectwise-report.txt` with the same selected fields in a technician-readable
   format.
 - `package-manifest.json` with the source findings hash and package contents.
@@ -127,6 +130,13 @@ contents, the HTML report, `RunAsUser`, parameter blobs, credentials, tokens,
 passwords, private keys, or connection strings. User-profile paths are reduced
 to `<USERPROFILE>`. Review the local raw evidence separately before attaching
 anything more to an official incident report.
+
+Guided runs (`START-HERE.bat`) collect the incident context once per run at the
+report step (Authorization: Authorized / Not authorized, default Not
+authorized; Delivery: Email invite scam by default or Other with a
+description) via `Resolve-IncidentContext.ps1`, and pass it to
+`Submit-ConnectWiseReport.ps1`. Context never comes from unattended runs
+without operator input; those report `Not available` honestly.
 
 ### Client token enrollment
 

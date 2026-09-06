@@ -5,6 +5,14 @@
 # posts the sanitized report JSON to a separate user-selected paste server over
 # HTTPS and is never a ConnectWise submission. Either upload destination fails
 # loudly but keeps the local package; -NoUpload disables both.
+#
+# The report carries the operator-recorded incident context (Authorization and
+# Delivery, prompted per run by Resolve-IncidentContext.ps1) and, per
+# ScreenConnect instance, the best observed installation date with its basis.
+# The date is derived from the detector's own evidence with fixed precedence
+# (service-install event 7045 timestamp, then install-directory creation time,
+# then registry InstallDate) and says 'Not available' when there is no
+# evidence; nothing is invented, and raw event/config content stays out.
 [CmdletBinding()]
 param(
     [string]$FindingsJson,
@@ -18,6 +26,12 @@ param(
     [string]$ReportUploadTokenFile = '',
     [string]$MicroBinUrl = '',
     [string]$MicroBinUploaderPasswordFile = '',
+    # Operator-recorded incident context for this run (guided-run prompt in
+    # Resolve-IncidentContext.ps1). When absent the report falls back to
+    # context already present in the findings and finally to 'Not available';
+    # it never guesses. Explicit values are validated to a closed set.
+    [string]$IncidentAuthorization = '',
+    [string]$IncidentDelivery = '',
     [switch]$NoUpload,
     [switch]$AllowInsecureRelay
 )
@@ -25,6 +39,20 @@ param(
 $ErrorActionPreference = 'Stop'
 $script:PackagePath = $null
 $script:StageDir = $null
+
+# ---------------------------------------------------------------------------
+# Incident-context constants. The closed sets are shared by convention with
+# Resolve-IncidentContext.ps1 (the guided-run prompt) - keep both in step.
+# 'Not available' is also the honest absence marker for the per-instance
+# observed install date.
+# ---------------------------------------------------------------------------
+$script:NotAvailable               = 'Not available'
+$script:AuthorizationAuthorized    = 'Authorized'
+$script:AuthorizationNotAuthorized = 'Not authorized'
+$script:DeliveryEmailInviteScam    = 'Email invite scam'
+$script:DeliveryOtherPrefix        = 'Other: '
+$script:OtherLabelMaxLength        = 80
+$script:ContextForbiddenChars      = @('"', '%', '!', '&', '|', '<', '>', '^', '(', ')')
 
 function Get-Field {
     param(
@@ -91,6 +119,98 @@ function New-SafeConnectionRecord {
     }
 }
 
+function Assert-ContextLabel {
+    param([string]$Label)
+    # Shared by convention with Resolve-IncidentContext.ps1: a description
+    # must be short, printable ASCII, and free of characters that are unsafe
+    # on a batch command line. Throws so an invalid explicit value fails
+    # loudly before any package is built.
+    if ([string]::IsNullOrWhiteSpace($Label)) { throw 'incident context description must not be blank' }
+    $clean = $Label.Trim()
+    if ($clean.Length -gt $script:OtherLabelMaxLength) {
+        throw ('incident context description must be at most ' + $script:OtherLabelMaxLength + ' characters')
+    }
+    foreach ($ch in $clean.ToCharArray()) {
+        $code = [int]$ch
+        if ($code -lt 0x20 -or $code -gt 0x7E) { throw 'incident context description must be printable ASCII' }
+        if ($script:ContextForbiddenChars -contains ([string]$ch)) {
+            throw 'incident context description contains a character that is not allowed'
+        }
+    }
+    return $clean
+}
+
+function Assert-IncidentAuthorization {
+    param([string]$Value)
+    $v = ([string]$Value).Trim()
+    if ($v -eq $script:AuthorizationNotAuthorized -or $v -eq $script:AuthorizationAuthorized) { return $v }
+    throw 'incident authorization must be exactly "Authorized" or "Not authorized"'
+}
+
+function Assert-IncidentDelivery {
+    param([string]$Value)
+    $v = ([string]$Value).Trim()
+    if ($v -eq $script:DeliveryEmailInviteScam) { return $v }
+    if ($v.StartsWith($script:DeliveryOtherPrefix, [System.StringComparison]::Ordinal)) {
+        $label = $v.Substring($script:DeliveryOtherPrefix.Length)
+        $clean = Assert-ContextLabel -Label $label
+        return $script:DeliveryOtherPrefix + $clean
+    }
+    throw 'incident delivery must be "Email invite scam" or "Other: <short printable-ASCII description>"'
+}
+
+function Resolve-IncidentContextValue {
+    param([string]$Explicit, [object]$FindingsValue)
+    # An operator-supplied (already validated) value wins; otherwise context
+    # already present in the findings is carried through; otherwise the report
+    # honestly says 'Not available' instead of guessing. Raw event messages
+    # and config content never reach these fields.
+    if (-not [string]::IsNullOrWhiteSpace($Explicit)) { return $Explicit.Trim() }
+    if ($null -ne $FindingsValue) {
+        $fallback = ([string]$FindingsValue).Trim()
+        if ($fallback.Length -gt 0) { return $fallback }
+    }
+    return $script:NotAvailable
+}
+
+function Get-ObservedInstallDate {
+    param([object]$Instance)
+    # Best observed installation date from the detector's existing evidence.
+    # Precedence: (1) the earliest matching Windows service-install event 7045
+    # timestamp, (2) the install-directory creation time, (3) the registry
+    # InstallDate (the Windows uninstall YYYYMMDD value). Only scalars are
+    # read - raw event message text is never copied - and absence reports
+    # 'Not available' instead of inventing a date.
+    $observed = $null
+    $basis = $null
+    foreach ($evt in @(Get-ArrayValue (Get-Field $Instance 'ServiceInstallEvents'))) {
+        $t = ([string](Get-Field $evt 'TimeUtc')).Trim()
+        if ($t -match '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$') {
+            if ($null -eq $observed -or [string]::CompareOrdinal($t, $observed) -lt 0) {
+                $observed = $t
+                $basis = 'Windows service-install event 7045'
+            }
+        }
+    }
+    if ($null -eq $observed) {
+        $dirCreated = ([string](Get-Field $Instance 'InstallDirCreatedUtc')).Trim()
+        if ($dirCreated -match '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$') {
+            $observed = $dirCreated
+            $basis = 'Install-directory creation time'
+        }
+    }
+    if ($null -eq $observed) {
+        $regDate = ([string](Get-Field $Instance 'InstallDate')).Trim()
+        if ($regDate -match '^\d{8}$') {
+            $observed = $regDate.Substring(0, 4) + '-' + $regDate.Substring(4, 2) + '-' + $regDate.Substring(6, 2)
+            $basis = 'Registry InstallDate'
+        }
+    }
+    if ($null -eq $observed) { $observed = $script:NotAvailable }
+    if ($null -eq $basis) { $basis = $script:NotAvailable }
+    return [pscustomobject]@{ Observed = $observed; Basis = $basis }
+}
+
 function New-SafeInstanceRecord {
     param([object]$Instance)
     $fileValue = Get-Field $Instance 'Files'
@@ -115,20 +235,24 @@ function New-SafeInstanceRecord {
         $unknownKeys = @($unknown.PSObject.Properties | ForEach-Object { $_.Name } | Sort-Object)
     }
 
+    $installDate = Get-ObservedInstallDate $Instance
+
     return [ordered]@{
-        Identifier       = Convert-ReportScalar (Get-Field $Instance 'Identifier')
-        Thumbprint       = Convert-ReportScalar (Get-Field $Instance 'Identifier')
-        RelayHost        = Convert-ReportScalar (Get-Field $Instance 'RelayHost')
-        RelayPort        = Convert-ReportScalar (Get-Field $Instance 'RelayPort')
-        SessionType      = Convert-ReportScalar (Get-Field $Instance 'SessionType')
-        Role             = Convert-ReportScalar (Get-Field $Instance 'Role')
-        DisplayVersion   = Convert-ReportScalar (Get-Field $Instance 'DisplayVersion')
-        Publisher        = Convert-ReportScalar (Get-Field $Instance 'Publisher')
-        ServiceName      = Convert-ReportScalar (Get-Field $Instance 'ServiceName')
-        InstallPath      = Convert-ReportPath (Get-Field $Instance 'InstallDir')
-        Files            = @($safeFiles)
-        Connections      = @($safeConnections)
-        UnknownParamKeys = @($unknownKeys)
+        Identifier          = Convert-ReportScalar (Get-Field $Instance 'Identifier')
+        Thumbprint          = Convert-ReportScalar (Get-Field $Instance 'Identifier')
+        RelayHost           = Convert-ReportScalar (Get-Field $Instance 'RelayHost')
+        RelayPort           = Convert-ReportScalar (Get-Field $Instance 'RelayPort')
+        SessionType         = Convert-ReportScalar (Get-Field $Instance 'SessionType')
+        Role                = Convert-ReportScalar (Get-Field $Instance 'Role')
+        DisplayVersion      = Convert-ReportScalar (Get-Field $Instance 'DisplayVersion')
+        Publisher           = Convert-ReportScalar (Get-Field $Instance 'Publisher')
+        ServiceName         = Convert-ReportScalar (Get-Field $Instance 'ServiceName')
+        InstallPath         = Convert-ReportPath (Get-Field $Instance 'InstallDir')
+        InstallDateObserved = $installDate.Observed
+        InstallDateBasis    = $installDate.Basis
+        Files               = @($safeFiles)
+        Connections         = @($safeConnections)
+        UnknownParamKeys    = @($unknownKeys)
     }
 }
 
@@ -184,6 +308,9 @@ function New-SafeReport {
     if ($null -eq $parseValue) { $parseValue = Get-Field $Data 'ParseIssues' }
     if ($null -eq $historicalValue) { $historicalValue = Get-Field $Data 'Historical' }
 
+    $contextAuthorization = Resolve-IncidentContextValue $IncidentAuthorization (Get-Field $Data 'Authorization')
+    $contextDelivery = Resolve-IncidentContextValue $IncidentDelivery (Get-Field $Data 'DeliveryContext')
+
     $instances = @()
     foreach ($instance in @(Get-ArrayValue $instanceValue)) {
         if ($null -ne $instance) { $instances += ,(New-SafeInstanceRecord $instance) }
@@ -205,14 +332,17 @@ function New-SafeReport {
     }
 
     return [ordered]@{
-        SchemaVersion   = 1
+        SchemaVersion   = 2
         ReportType      = 'Potential malicious or fraudulent ScreenConnect activity'
         GeneratedUtc    = Convert-ReportScalar (Get-Field $Data 'GeneratedUtc')
         ToolVersion     = Convert-ReportScalar (Get-Field $Data 'Version')
         RunId           = Convert-ReportScalar (Get-Field $Data 'RunId')
         ComputerName    = Convert-ReportScalar (Get-Field $Data 'ComputerName')
         OSCaption       = Convert-ReportScalar (Get-Field $Data 'OSCaption')
-        DeliveryContext = Convert-ReportScalar (Get-Field $Data 'DeliveryContext')
+        IncidentContext = [ordered]@{
+            Authorization = $contextAuthorization
+            Delivery      = $contextDelivery
+        }
         TargetsSelected = @((Get-ArrayValue (Get-Field $Data 'TargetsSelected')) | ForEach-Object { Convert-ReportScalar $_ })
         EventLogError   = Convert-ReportScalar (Get-Field $Data 'EventLogError')
         ScreenConnect   = [ordered]@{
@@ -237,13 +367,22 @@ function New-HumanSummary {
     [void]$lines.Add('Report type: ' + [string](Get-Field $Report 'ReportType'))
     [void]$lines.Add('Generated UTC: ' + [string](Get-Field $Report 'GeneratedUtc'))
     [void]$lines.Add('Computer: ' + [string](Get-Field $Report 'ComputerName'))
-    [void]$lines.Add('Delivery context: ' + [string](Get-Field $Report 'DeliveryContext'))
+    $incidentContext = Get-Field $Report 'IncidentContext'
+    [void]$lines.Add('Incident authorization: ' + [string](Get-Field $incidentContext 'Authorization'))
+    [void]$lines.Add('Incident delivery: ' + [string](Get-Field $incidentContext 'Delivery'))
     [void]$lines.Add('')
     $screen = Get-Field $Report 'ScreenConnect'
     foreach ($instance in @(Get-ArrayValue (Get-Field $screen 'Instances'))) {
         [void]$lines.Add('ScreenConnect thumbprint: ' + [string](Get-Field $instance 'Identifier'))
         [void]$lines.Add('  Relay/server address: ' + [string](Get-Field $instance 'RelayHost') + ':' + [string](Get-Field $instance 'RelayPort'))
         [void]$lines.Add('  Version: ' + [string](Get-Field $instance 'DisplayVersion'))
+        $installDateObserved = [string](Get-Field $instance 'InstallDateObserved')
+        $installDateBasis = [string](Get-Field $instance 'InstallDateBasis')
+        if ($installDateObserved -eq $script:NotAvailable) {
+            [void]$lines.Add('  Install date observed: Not available')
+        } else {
+            [void]$lines.Add('  Install date observed: ' + $installDateObserved + ' (' + $installDateBasis + ')')
+        }
         foreach ($file in @(Get-ArrayValue (Get-Field $instance 'Files'))) {
             [void]$lines.Add('  File: ' + [string](Get-Field $file 'Path') + ' [' + [string](Get-Field $file 'SignatureStatus') + ']')
         }
@@ -669,6 +808,15 @@ function Invoke-MicroBinUpload {
 
 $exitCode = 0
 try {
+    # Explicit incident-context values are validated before any work: an
+    # invalid value means a broken caller and must fail loudly rather than
+    # silently reaching the report.
+    if (-not [string]::IsNullOrWhiteSpace($IncidentAuthorization)) {
+        $null = Assert-IncidentAuthorization $IncidentAuthorization
+    }
+    if (-not [string]::IsNullOrWhiteSpace($IncidentDelivery)) {
+        $null = Assert-IncidentDelivery $IncidentDelivery
+    }
     # Input resolution: -RunPath finds the run root's findings.json the same
     # way the guided runner does, so operators never need to hunt for it.
     # An explicit -FindingsJson/-WorkDir pair keeps the historical contract.

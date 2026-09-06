@@ -204,7 +204,7 @@ try {
     # ---- 1. Successful private readonly share: multipart fields + sanitized body
     $srvOk = Start-MicroBinServer -Mode 'success'
     $okUrl = 'http://127.0.0.1:' + $srvOk.Port
-    $out = Invoke-UploaderRun @('-FindingsJson', $findingsPath, '-WorkDir', $workDir, '-MicroBinUrl', $okUrl, '-AllowInsecureRelay')
+    $out = Invoke-UploaderRun @('-FindingsJson', $findingsPath, '-WorkDir', $workDir, '-MicroBinUrl', $okUrl, '-AllowInsecureRelay', '-IncidentAuthorization', 'Authorized', '-IncidentDelivery', 'Other: SMS lure')
     $text = $out.Output
     Check 'microbin share succeeds and prints the paste URL' ($out.Rc -eq 0 -and $text -match ('MICROBIN UPLOAD: ' + [regex]::Escape($okUrl) + '/upload/pig-dog-cat')) $text
     $entries = Read-MicroBinLog $srvOk.Log
@@ -221,7 +221,10 @@ try {
         $bodyText = [string]$fields.content
         $bodyJson = $null
         try { $bodyJson = $bodyText | ConvertFrom-Json } catch { }
-        Check 'paste content is valid sanitized report JSON' ($null -ne $bodyJson -and [int]$bodyJson.SchemaVersion -eq 1 -and [string]$bodyJson.ComputerName -eq 'CLIENT-99') $bodyText
+        Check 'paste content is valid sanitized report JSON' ($null -ne $bodyJson -and [int]$bodyJson.SchemaVersion -eq 2 -and [string]$bodyJson.ComputerName -eq 'CLIENT-99') $bodyText
+        Check 'paste carries the operator incident context' ($null -ne $bodyJson -and [string]$bodyJson.IncidentContext.Authorization -eq 'Authorized' -and [string]$bodyJson.IncidentContext.Delivery -eq 'Other: SMS lure') $bodyText
+        Check 'paste has no screenshot or VirusTotal fields' ($bodyText -notmatch '(?i)screenshot|virustotal') $bodyText
+        Check 'context description is never echoed to the console' ($text -notmatch 'SMS lure') $text
         Check 'sanitized identifiers and relay details are retained' ($bodyText -match 'ABCDEF123456' -and $bodyText -match 'evil-relay.example') $bodyText
         Check 'raw evidence and secrets are excluded from the paste' ($bodyText -notmatch 'do-not-upload-this-secret' -and $bodyText -notmatch 'RunAsUser') $bodyText
         Check 'user profile paths are normalized in the paste' ($bodyText -notmatch 'C:\\Users\\Bob' -and $bodyText -match '<USERPROFILE>') $bodyText

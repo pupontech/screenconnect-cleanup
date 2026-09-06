@@ -177,11 +177,22 @@ network request is made and the local package remains available.
 
 The package contains ScreenConnect thumbprints, relay/domain details, session
 metadata, suspicious file names/hashes, connection indicators, parse issues,
-and delivery context. It omits raw config contents, raw evidence, parameter
-blobs, account names, credentials, and private keys; user-profile paths are
-normalized. The relay stores encrypted receipts for later root-only bulk export.
-It does not submit to ConnectWise automatically. Review the package and use the
-official Trust Center workflow when you are ready to send a batch.
+the operator-recorded incident context (authorization + delivery), and each
+instance's best observed installation date with its basis. It omits raw config
+contents, raw evidence, parameter blobs, account names, credentials, and
+private keys; user-profile paths are normalized. The relay stores encrypted
+receipts for later root-only bulk export. It does not submit to ConnectWise
+automatically. Review the package and use the official Trust Center workflow
+when you are ready to send a batch.
+
+Guided runs (`START-HERE.bat`) prompt once at the report step for the incident
+context that goes on the package: whether the activity was `Authorized` or
+`Not authorized` (default), and how it was delivered (`Email invite scam` by
+default, or `Other` with a short description). Blank answers resolve to the
+safe defaults; invalid or ambiguous input is refused and re-prompted
+(`Resolve-IncidentContext.ps1`). The validated pair is stored in the run root
+(`incident-context.txt`) and embedded in the JSON/TXT package and any MicroBin
+paste; unattended uploads without context report `Not available`.
 
 ### Optional MicroBin paste sharing (separate user-selected server)
 
