@@ -92,7 +92,11 @@ local administrator, internet access for the tool pack and scanners.
    -sr skips removal (Stage 4 is a stub anyway) and -sa skips AV scanners,
    so this run touches nothing: snapshot, detect, after-snapshot, report.
 7. Output lands under C:\RIT-SCC\<HOST>_<timestamp>\ — findings.json,
-   HTML/tech report, raw\ evidence, before/after diff.
+   HTML/tech report, raw\ evidence, before/after diff. A copy of the
+   detection console transcript (detect-remote-access.log) is placed in the
+   run folder as well, and a copy of report.html is placed on the current
+   user's Desktop - both are copies; the originals are preserved. Failed
+   copies are reported visibly, never silently.
 ```
 
 Standalone detection (no admin needed for partial results):

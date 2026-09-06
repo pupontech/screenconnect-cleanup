@@ -152,6 +152,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\detect-remote-access.ps1
 | `-OutRoot <path>` | where results go (default: Desktop\RemoteAccessScan) |
 | `-NoZip` | skip zipping the output folder to the Desktop |
 | `-NoPause` | do not wait for Enter (unattended runs) |
+| `-TranscriptCopyDir <path>` | also copy the console transcript into this folder (as `detect-remote-access.log`); guided runs pass the `C:\RIT-SCC` run root, default is this run's results folder |
 
 ### What you get
 
@@ -159,12 +160,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\detect-remote-access.ps1
 RemoteAccessScan\<HOST>_<timestamp>\
   findings.json     structured results (feeds the report generator)
   SUMMARY.txt       the console output, saved
+  detect-remote-access.log
+                    copy of the console transcript (the timestamped original
+                    stays on the Desktop)
   raw\              verbatim evidence - config files, service/process/program dumps,
                     service-install (7045) events
 ```
 
 Plus a zip of the whole folder on the Desktop, matching the convention the
 `remote-diagnostics` log pullers already use.
+
+A copy of the console transcript (`detect-remote-access.log`) is kept in the
+results folder as well - the timestamped original on the Desktop is always
+preserved. When a caller passes `-TranscriptCopyDir` (the guided runner and
+`sc-cleanup.ps1` pass the `C:\RIT-SCC` run root), the copy lands there instead,
+so the run folder holds the detection log next to the report.
 
 ### Automatic sanitized report holding
 
@@ -274,6 +284,26 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.p
   `sc-cleanup.ps1` and `detect-remote-access.ps1` accept `-MicroBinUrl` and
   `-MicroBinUploaderPasswordFile` directly (no prompt). With none of these
   configured, no MicroBin request is ever made.
+
+### Where a run's key artifacts land
+
+Every run keeps its two key artifacts in **both** places (copies only - the
+originals are never moved or deleted):
+
+- The detection console transcript (`Desktop\detect-remote-access_<stamp>.log`)
+  is also copied into the run folder as `detect-remote-access.log`
+  (`C:\RIT-SCC\<host>-<guid>\detect-remote-access.log`); a standalone
+  `Run-DetectRemoteAccess.bat` run keeps the copy in its results folder
+  instead.
+- `report.html` (generated in the run folder) is also copied to the current
+  user's Desktop so the summary is easy to find and hand off. The real Desktop
+  folder is resolved via `[Environment]::GetFolderPath('Desktop')`, so
+  OneDrive-redirected Desktops work too.
+
+A failed copy is reported loudly and never hidden: the guided runner prints a
+`[WARN]` and marks the run's exit code, `sc-cleanup.ps1` logs a stage warning,
+and `detect-remote-access.ps1` prints a `!` warning while still succeeding - the
+transcript or report itself remains available at its original location.
 
 ### Choosing what to look for
 

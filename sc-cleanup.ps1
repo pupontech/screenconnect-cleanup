@@ -670,7 +670,7 @@ $stage2Result = Invoke-Stage -StageId 2 -StageName 'Detect' -SkipFlag '' -StageB
     Write-StageLog ("Running detect-remote-access.ps1 -OutRoot " + $detectOutRoot)
     # The top-level runner uploads once, after the final report. Suppress the
     # detector's standalone uploader to avoid duplicate receipts.
-    $detectArgs = @('-OutRoot', $detectOutRoot, '-NoPause', '-NoZip', '-NoReportUpload')
+    $detectArgs = @('-OutRoot', $detectOutRoot, '-NoPause', '-NoZip', '-NoReportUpload', '-TranscriptCopyDir', $WorkDir)
     $rc = Invoke-ChildScript -ScriptPath $detectScript -ArgumentList $detectArgs -LogTag 'Detect'
     if ($rc -ne 0) { throw ("detect-remote-access.ps1 exited with code " + $rc) }
     Write-StageLog ("Detection complete. Output in " + $detectOutRoot)
@@ -1195,6 +1195,33 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
         $null = Start-Process -FilePath $reportHtml -ErrorAction Stop
     } catch {
         Write-StageLog ("Could not open report: " + $_.Exception.Message) 'Warn'
+    }
+
+    # Owner directive 2026-09-06: leave a copy of report.html on the current
+    # user's Desktop so the run's summary is easy to find and hand off. The
+    # run-root original is preserved; a failed copy is reported visibly (never
+    # silently swallowed) but does not fail the stage - the report exists in
+    # the run root either way.
+    try {
+        $desktopDir = [Environment]::GetFolderPath('Desktop')
+        if (-not $desktopDir) { $desktopDir = Join-Path $env:USERPROFILE 'Desktop' }
+        if ($desktopDir -and (Test-Path -LiteralPath $reportHtml)) {
+            $desktopReport = Join-Path $desktopDir 'report.html'
+            $reportOnDesktop = $false
+            try {
+                $reportOnDesktop = ([System.IO.Path]::GetFullPath($reportHtml) -ieq [System.IO.Path]::GetFullPath($desktopReport))
+            } catch {
+                $reportOnDesktop = $false
+            }
+            if ($reportOnDesktop) {
+                Write-StageLog "Report is already on the Desktop - no copy needed."
+            } else {
+                Copy-Item -LiteralPath $reportHtml -Destination $desktopReport -Force -ErrorAction Stop
+                Write-StageLog ("Report copy placed on the Desktop: " + $desktopReport)
+            }
+        }
+    } catch {
+        Write-StageLog ("Could not copy report.html to the Desktop: " + $_.Exception.Message) 'Warn'
     }
 
     # Also produce a machine-readable results.json with key findings

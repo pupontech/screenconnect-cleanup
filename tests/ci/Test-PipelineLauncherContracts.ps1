@@ -26,6 +26,14 @@
 #   C6. collect-snapshot.ps1 collects sections in concurrent GROUPS
 #       (-Sections mode, Invoke-SectionGroups) and shows a live progress
 #       ticker that is not gated by -Quiet (owner directive 2026-08-28).
+#   C11. Every run keeps a copy of the detect-remote-access console
+#       transcript in the run folder: START-HERE.bat Step 4 and sc-cleanup.ps1
+#       Stage 2 pass the C:\RIT-SCC run root to detect-remote-access.ps1
+#       (-TranscriptCopyDir), which copies the Desktop transcript there while
+#       preserving the original (owner directive 2026-09-06).
+#   C12. Every run leaves a copy of report.html on the current user's Desktop
+#       (START-HERE.bat Step 9 and sc-cleanup.ps1 Stage 9), preserving the
+#       run-root original and reporting copy failures visibly.
 #
 # Exit codes: 0 = all contracts hold, 1 = violations found.
 # PowerShell 5.1 compatible. Pure ASCII, no BOM.
@@ -296,6 +304,53 @@ if ($startHereBat -notmatch '(?i)-ReportHtml[^\r\n]*report\.html') {
 }
 if ($cleanup -notmatch "'-ReportHtml', \[string\]\`$reportHtml") {
     Add-Failure 'C10' "sc-cleanup.ps1 Stage 9 does not pass the report HTML path to the uploader (-ReportHtml)."
+}
+
+# --- C11: transcript log copy lands in the run folder ------------------------
+# Owner directive 2026-09-06: the detect-remote-access console transcript
+# (Desktop\detect-remote-access_<stamp>.log) must also be copied into the
+# C:\RIT-SCC run root. Both callers pass the run root via -TranscriptCopyDir,
+# and detect-remote-access.ps1 performs the copy after stopping the
+# transcript, preserving the Desktop original.
+$detect = Read-AsciiText (Join-Path $repoRoot 'detect-remote-access.ps1')
+if ($detect -notmatch '\[string\]\$TranscriptCopyDir') {
+    Add-Failure 'C11' "detect-remote-access.ps1 does not declare -TranscriptCopyDir."
+}
+if ($detect -notmatch 'Copy-Item -LiteralPath \$transcriptPath') {
+    Add-Failure 'C11' "detect-remote-access.ps1 never copies the transcript file (Copy-Item transcriptPath)."
+}
+if ($detect -notmatch 'Preserve a copy of the console transcript') {
+    Add-Failure 'C11' "detect-remote-access.ps1 lost the transcript copy step marker."
+}
+if ($startHereBat -notmatch '-TranscriptCopyDir "!SCC_RUN_ROOT!"') {
+    Add-Failure 'C11' "START-HERE.bat Step 4 does not pass the C:\RIT-SCC run root to detect-remote-access.ps1 (-TranscriptCopyDir)."
+}
+if ($cleanup -notmatch "'-TranscriptCopyDir', \`$WorkDir") {
+    Add-Failure 'C11' "sc-cleanup.ps1 Stage 2 does not pass the run root to detect-remote-access.ps1 (-TranscriptCopyDir WorkDir)."
+}
+
+# --- C12: report.html copy lands on the current user's Desktop ----------------
+# Owner directive 2026-09-06: besides opening the report, a run must also leave
+# a copy of report.html on the Desktop (hand-off copy). The run-root original
+# stays; both callers resolve the real Desktop folder and copy, and report a
+# failed copy visibly instead of swallowing it.
+if ($startHereBat -notmatch "GetFolderPath\('Desktop'\)") {
+    Add-Failure 'C12' "START-HERE.bat Step 9 does not resolve the current user's Desktop folder for the report copy."
+}
+if ($startHereBat -notmatch '\[i\] Report copy on Desktop') {
+    Add-Failure 'C12' "START-HERE.bat Step 9 does not report the Desktop report copy."
+}
+if ($startHereBat -notmatch '\[WARN\] Could not copy report\.html to the current user') {
+    Add-Failure 'C12' "START-HERE.bat Step 9 does not fail visibly when the Desktop report copy fails."
+}
+if ($cleanup -notmatch "GetFolderPath\('Desktop'\)") {
+    Add-Failure 'C12' "sc-cleanup.ps1 Stage 9 does not resolve the current user's Desktop folder for the report copy."
+}
+if ($cleanup -notmatch 'Report copy placed on the Desktop') {
+    Add-Failure 'C12' "sc-cleanup.ps1 Stage 9 does not report the Desktop report copy."
+}
+if ($cleanup -notmatch 'Could not copy report\.html to the Desktop') {
+    Add-Failure 'C12' "sc-cleanup.ps1 Stage 9 does not fail visibly when the Desktop report copy fails."
 }
 
 if ($failures.Count -gt 0) {

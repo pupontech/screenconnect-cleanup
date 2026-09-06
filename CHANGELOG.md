@@ -3,6 +3,34 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.48] - 2026-09-06
+- Every run now keeps copies of its two key artifacts in both places, with
+  the originals always preserved (owner directive): the detection console
+  transcript is copied into the C:\RIT-SCC run folder, and report.html is
+  copied to the current user's Desktop.
+- The transcript's original home is unchanged (`Desktop\detect-remote-access_<stamp>.log`).
+  detect-remote-access.ps1 now also copies it into the run root passed by
+  START-HERE.bat Step 4 and sc-cleanup.ps1 Stage 2 (`-TranscriptCopyDir
+  C:\RIT-SCC\<run>`), saved there as `detect-remote-access.log`; a standalone
+  Run-DetectRemoteAccess.bat run keeps the copy in its own results folder
+  instead. The copy is made after the transcript is stopped, so content is
+  complete; a transcript that cannot be copied is reported loudly and never
+  fails the run - the Desktop original remains.
+- START-HERE.bat Step 9 and sc-cleanup.ps1 Stage 9 additionally place a copy
+  of report.html on the current user's Desktop, resolved via
+  `[Environment]::GetFolderPath('Desktop')` so OneDrive-redirected Desktops
+  work. The run-root report.html original is preserved; a failed copy is
+  reported visibly (a `[WARN]` that marks the guided run's exit code, a stage
+  warning in sc-cleanup.ps1) instead of passing silently.
+- README.md and DEPLOY.md document the copy behaviour. The pipeline-launcher
+  contract test now asserts both callers wire `-TranscriptCopyDir` and the
+  Desktop report copy (C11/C12), and a new
+  `tests/test_run_artifact_copies.ps1` regression exercises the real
+  detector's transcript copy through `-SelfTest` against a fake Desktop:
+  original preserved, run-folder copy content-identical, copy failure loud
+  but non-fatal. Verified under PowerShell 7 (Linux) and wired into the
+  Windows CI matrix under both PowerShell 5.1 and 7.
+
 ## [1.7.47] - 2026-09-06
 - A successful optional MicroBin share now annotates the generated HTML
   report: START-HERE.bat (guided runner) and sc-cleanup.ps1 (Stage 9) pass

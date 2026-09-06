@@ -52,6 +52,14 @@ param(
     [string]$ReportUploadTokenFile,
     [switch]$NoReportUpload,
 
+    # Optional folder that receives a copy of the console transcript (saved
+    # there as "detect-remote-access.log"). The guided runner (START-HERE.bat)
+    # and sc-cleanup.ps1 pass the C:\RIT-SCC run root so the run folder keeps
+    # the detection log with the other evidence; when unset, the copy goes into
+    # this run's results folder. The timestamped Desktop original is preserved
+    # either way.
+    [string]$TranscriptCopyDir,
+
     # Optional MicroBin paste sharing: pass-through values for the report
     # uploader; entirely off when unset. MicroBin is a separate user-selected
     # paste server, never a ConnectWise submission.
@@ -1098,6 +1106,40 @@ try {
     $script:RunExitCode = 1
 } finally {
     try { Stop-Transcript | Out-Null } catch { }
+
+    # --- Preserve a copy of the console transcript in the run folder --------
+    # The transcript's home is the Desktop (detect-remote-access_<stamp>.log);
+    # a copy is also left in -TranscriptCopyDir when the caller provided one
+    # (START-HERE.bat / sc-cleanup.ps1 pass the C:\RIT-SCC run root) and
+    # otherwise in this run's results folder, so the run's evidence stays
+    # complete no matter where the technician looks. The Desktop original is
+    # never moved or deleted. A failed copy is reported loudly (never silent)
+    # but does not fail the run: the transcript still exists on the Desktop.
+    $transcriptDestDir = $null
+    if ($TranscriptCopyDir) { $transcriptDestDir = $TranscriptCopyDir }
+    elseif ($outDir) { $transcriptDestDir = $outDir }
+    if ($transcriptDestDir) {
+        $transcriptCopyPath = Join-Path $transcriptDestDir 'detect-remote-access.log'
+        $sameFile = $false
+        try {
+            $sameFile = [System.IO.Path]::GetFullPath($transcriptPath) -ieq [System.IO.Path]::GetFullPath($transcriptCopyPath)
+        } catch {
+            $sameFile = $false
+        }
+        if ($sameFile) {
+            Write-Host "  Transcript log is already in $transcriptDestDir - no copy needed." -ForegroundColor Gray
+        } elseif (Test-Path -LiteralPath $transcriptPath -ErrorAction SilentlyContinue) {
+            try {
+                Copy-Item -LiteralPath $transcriptPath -Destination $transcriptCopyPath -Force -ErrorAction Stop
+                Write-Host "  Transcript copy: $transcriptCopyPath" -ForegroundColor Cyan
+            } catch {
+                Write-Host "  ! Could not copy the transcript log into $transcriptDestDir : $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "  ! Transcript log was not created ($transcriptPath) - no run-folder copy was made." -ForegroundColor Yellow
+        }
+    }
+
     if (-not $NoPause) {
         Write-Host ""
         Read-Host "Press Enter to close"

@@ -154,7 +154,7 @@ set GO=
 rem ---- Step 4: detection -----------------------------------------------------
 echo.
 echo  STEP 4/9: Remote-access detection
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0detect-remote-access.ps1" -All -NoPause -NoZip -NoReportUpload -OutRoot "!SCC_RUN_ROOT!\detect"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0detect-remote-access.ps1" -All -NoPause -NoZip -NoReportUpload -OutRoot "!SCC_RUN_ROOT!\detect" -TranscriptCopyDir "!SCC_RUN_ROOT!"
 if errorlevel 1 goto :detection_failed
 set GO=
 set "FINDINGS_JSON="
@@ -359,6 +359,15 @@ if not defined FINDINGS_JSON (
             rem Owner directive 2026-08-27: open the report folder + report.
             explorer /select,"!SCC_RUN_ROOT!/report.html"
             start "" "!SCC_RUN_ROOT!/report.html"
+            rem Owner directive 2026-09-06: also leave a copy of report.html on
+            rem the current user's Desktop. The run-root original is preserved;
+            rem a failed copy is reported visibly (never silent) and marks the
+            rem run, but never hides the local report.
+            powershell -NoProfile -ExecutionPolicy Bypass -Command "$d=[Environment]::GetFolderPath('Desktop'); if(-not $d){$d=Join-Path $env:USERPROFILE 'Desktop'}; Copy-Item -LiteralPath '!SCC_RUN_ROOT!\report.html' -Destination (Join-Path $d 'report.html') -Force -ErrorAction Stop; Write-Host ('[i] Report copy on Desktop: ' + (Join-Path $d 'report.html'))"
+            if errorlevel 1 (
+                echo     [WARN] Could not copy report.html to the current user's Desktop - see the message above.
+                if "!PIPE_RC!"=="0" set "PIPE_RC=1"
+            )
             if exist "%~dp0Submit-ConnectWiseReport.ps1" (
                 set "MICROBIN_EXTRA="
                 set "CTX_EXTRA="
