@@ -3,6 +3,22 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.42] - 2026-09-06
+- START-HERE.bat now offers an explicit start-of-run MicroBin opt-in
+  ("Upload the sanitized report to MicroBin? [y/N]", default no); a blank or
+  no answer never uploads to MicroBin and the guided run stays relay-only.
+- The guided runner persists the chosen server base URL in microbin-url.txt
+  beside the tool (first nonblank trimmed line is the value), prompting once
+  for an https:// URL without embedded credentials when the file is missing
+  or empty. Ambient SCC_MICROBIN_URL is no longer an enablement path.
+- Added Resolve-MicroBinRunUrl.ps1 (config read / interactive validate and
+  save) and shipped an intentionally empty microbin-url.txt placeholder in
+  the deploy bundle; the uploader password file/environment mechanism is
+  unchanged.
+- Added focused MicroBin guided-configuration tests: default-no wiring,
+  saved-URL reuse, missing/empty-file prompt and save, invalid input,
+  space/apostrophe paths, and no-secret logging.
+
 ## [1.7.41] - 2026-09-06
 - Added optional MicroBin paste sharing for the sanitized report JSON, with
   HTTPS-only transport, bounded expiration, private read-only settings, and

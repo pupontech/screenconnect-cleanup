@@ -215,11 +215,40 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.p
   user-profile paths normalized). It is created with `privacy=readonly` and a
   bounded one-week expiration; each run creates one new paste with no automatic
   retry. The created URL is printed as `MICROBIN UPLOAD: <url>`.
-- Guided runs (`START-HERE.bat`) enable it through the `SCC_MICROBIN_URL` and
-  `SCC_MICROBIN_UPLOADER_PASSWORD_FILE` environment variables;
+- Guided runs (`START-HERE.bat`) ask once at the start of every run:
+  "Upload the sanitized report to MicroBin? [y/N]" - the default is **no**,
+  and a blank/no answer never uploads anything to MicroBin. Answer `y` and
+  the runner reads the server base URL from `microbin-url.txt` (the first
+  nonblank line of the file that sits next to `START-HERE.bat`); when the
+  file is missing or empty it prompts for the `https://` base URL once,
+  validates it (https only, ASCII, no embedded credentials), and saves it to
+  that file for future runs. The URL file never holds passwords. The optional
+  uploader password keeps the existing file/environment mechanism
+  (`SCC_MICROBIN_UPLOADER_PASSWORD_FILE`, falling back to
+  `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD`).
+
+  Operator workflow in the guided runner:
+
+  1. Start `START-HERE.bat`.
+  2. At "Upload the sanitized report to MicroBin? [y/N]" press `y` to enable
+     sharing, or `n`/Enter to skip (relay-only run). The answer is per run:
+     `n` today does not clear a saved URL, `y` later simply reuses it.
+  3. First time only: type the server base URL as `https://host` when asked.
+     It is saved to `microbin-url.txt` next to the tool and reused from then
+     on. To point at a different server, edit that file (first line) or
+     delete it and answer `y` on the next run.
+  4. If the server requires an uploader password, set
+     `SCC_MICROBIN_UPLOADER_PASSWORD_FILE` to the path of a password file, or
+     export `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD`, before starting. The
+     tool never prompts for a password and never stores one in the repo.
+  5. The report step prints `MICROBIN UPLOAD: <paste-url>` on success. The
+     local `connectwise-report.zip` always stays on disk; an invalid URL or a
+     failed upload is reported as a failure and never hides the local
+     evidence.
+
   `sc-cleanup.ps1` and `detect-remote-access.ps1` accept `-MicroBinUrl` and
-  `-MicroBinUploaderPasswordFile` directly. With none of these set, no MicroBin
-  request is ever made.
+  `-MicroBinUploaderPasswordFile` directly (no prompt). With none of these
+  configured, no MicroBin request is ever made.
 
 ### Choosing what to look for
 

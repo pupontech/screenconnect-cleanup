@@ -20,6 +20,8 @@ Run-DetectRemoteAccess.bat
 targets.json
 New-InvestigationReport.ps1
 Submit-ConnectWiseReport.ps1    <- sanitized package + authenticated relay upload / optional MicroBin paste share
+Resolve-MicroBinRunUrl.ps1      <- guided-run MicroBin URL resolver (reads or prompts + saves microbin-url.txt)
+microbin-url.txt                <- intentionally EMPTY placeholder; the guided runner stores the chosen paste-server URL on its first line
 Invoke-GUIScanner.ps1          <- launches KVRT/ESET GUI scanners (and Malwarebytes via winget) and waits (Stage 5)
 Get-MalwarebytesDownloadDiagnostics.ps1 <- read-only Malwarebytes filter/proxy failure diagnostics (Stage 5)
 Invoke-AVUninstaller.ps1        <- opens installed-AV uninstallers, attended (Stage 6)
@@ -227,10 +229,38 @@ powershell -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.ps1 `
   `MICROBIN UPLOAD: <url>`. A server in read-only uploader-password mode that
   rejects the password answers with a redirect to `/incorrect`, which is
   reported as a credential failure.
-- Guided runs (`START-HERE.bat`) enable the share through the
-  `SCC_MICROBIN_URL` and `SCC_MICROBIN_UPLOADER_PASSWORD_FILE` environment
-  variables. `sc-cleanup.ps1` and `detect-remote-access.ps1` accept
-  `-MicroBinUrl` and `-MicroBinUploaderPasswordFile` directly.
+- Guided runs (`START-HERE.bat`) ask once at the start of every run:
+  "Upload the sanitized report to MicroBin? [y/N]" (default no - a blank or
+  `n` answer never uploads). Answer `y` and the runner uses the first
+  nonblank line of `microbin-url.txt` (the file beside `START-HERE.bat`); if
+  that file is missing or empty it prompts for the server base URL once,
+  accepts only an `https://` URL with no embedded credentials, saves it to
+  `microbin-url.txt` for future runs, and uses it for this run. The URL file
+  is for the URL only - never put a password in it.
+
+  Guided-run operator steps:
+
+  1. Start `START-HERE.bat`. At "Upload the sanitized report to MicroBin?
+     [y/N]" answer `y` to share, or `n`/Enter for a relay-only run.
+  2. First time only: type the server base URL as `https://host` when
+     prompted. It is saved to `microbin-url.txt` beside the tool and reused
+     on later runs (edit that file or delete it to change servers).
+  3. If the server needs an uploader password, provide it the same way as
+     before - never type it into a prompt and never put it in
+     `microbin-url.txt`:
+     - create a file containing only the password and point
+       `SCC_MICROBIN_UPLOADER_PASSWORD_FILE` at it, or
+     - export `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD` in the session.
+  4. The report step prints `MICROBIN UPLOAD: <paste-url>` on success. An
+     invalid URL or failed upload is reported as a failure; the local
+     `connectwise-report.zip` is always retained.
+
+  The deploy bundle ships an **empty** `microbin-url.txt` on purpose (a
+  comment line would be mistaken for a URL, because the first nonblank line
+  is the value). Populate it by answering `y` and typing the URL once, or by
+  editing the file directly before the run. `sc-cleanup.ps1` and
+  `detect-remote-access.ps1` accept `-MicroBinUrl` and
+  `-MicroBinUploaderPasswordFile` directly.
 
 The relay is a holding area, not an automatic ConnectWise submission service.
 The official reporting route remains the ConnectWise Trust Center and its

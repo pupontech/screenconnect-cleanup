@@ -50,6 +50,54 @@ echo   6 scanners  7 AV uninstall  8 diff  9 report
 echo  ============================================================
 echo.
 
+rem ---- Optional MicroBin report sharing opt-in (start of run) ---------------
+rem The sanitized report may additionally be posted to a MicroBin paste server
+rem of the operator's choice. Default is no: a blank or n answer never uploads
+rem anything anywhere. An explicit y resolves the server base URL from
+rem microbin-url.txt (first nonblank trimmed line) beside this tool; when that
+rem file is missing or empty the operator is asked once for an https:// base
+rem URL, which is saved there for future runs. The URL file never holds
+rem passwords; the optional uploader password keeps the existing file/env path.
+echo.
+echo  ------------------------------------------------------------
+echo   Optional: MicroBin report sharing - separate from the private
+echo   relay. Default no (relay-only run). Ctrl+C aborts.
+set /p GO="    Upload the sanitized report to MicroBin? [y/N] "
+if /i "%GO%"=="y" goto :microbin_optin
+if /i "%GO%"=="yes" goto :microbin_optin
+goto :microbin_optout
+:microbin_optin
+set "SCC_MICROBIN_URL="
+if exist "%~dp0Resolve-MicroBinRunUrl.ps1" (
+    for /f "delims=" %%U in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Resolve-MicroBinRunUrl.ps1" -ConfigFile "%~dp0microbin-url.txt" -SkipPrompt') do set "SCC_MICROBIN_URL=%%U"
+    if not defined SCC_MICROBIN_URL (
+        echo     [i] No saved MicroBin URL found - you will be asked for one now.
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Resolve-MicroBinRunUrl.ps1" -ConfigFile "%~dp0microbin-url.txt"
+        if errorlevel 4 (
+            echo     [WARN] MicroBin sharing skipped - no usable server URL was entered.
+        ) else if errorlevel 1 (
+            echo     [WARN] MicroBin configuration step failed - sharing skipped for this run.
+        ) else (
+            for /f "delims=" %%U in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Resolve-MicroBinRunUrl.ps1" -ConfigFile "%~dp0microbin-url.txt" -SkipPrompt') do set "SCC_MICROBIN_URL=%%U"
+        )
+    )
+    if defined SCC_MICROBIN_URL (
+        echo     [i] MicroBin report sharing enabled for this run's report.
+    ) else (
+        set "SCC_MICROBIN_URL="
+        echo     [i] MicroBin report sharing skipped - relay behavior unchanged.
+    )
+) else (
+    echo     [WARN] Resolve-MicroBinRunUrl.ps1 missing - MicroBin sharing skipped.
+)
+goto :microbin_done
+:microbin_optout
+set "SCC_MICROBIN_URL="
+echo     [i] MicroBin report sharing skipped - relay behavior unchanged.
+:microbin_done
+set GO=
+echo.
+
 rem ---- Step 1: tool pack -----------------------------------------------------
 echo  STEP 1/9: Tool pack + scanner staging
 set /p GO="    Run now? [Y/n] "
