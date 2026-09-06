@@ -3,6 +3,28 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.47] - 2026-09-06
+- A successful optional MicroBin share now annotates the generated HTML
+  report: START-HERE.bat (guided runner) and sc-cleanup.ps1 (Stage 9) pass
+  the current run's report path (`-ReportHtml`) to
+  Submit-ConnectWiseReport.ps1, which appends a small "Sanitized paste
+  (MicroBin)" line with the paste URL to the report after the upload
+  succeeds. The URL is HTML-escaped (`&`, `<`, `>`, `"`, `'`) before it is
+  written, so a crafted server `Location` header can never close an
+  attribute or inject markup.
+- The report is only touched after a successful upload: a failed upload
+  never annotates it, a run without MicroBin configured produces no paste
+  link, and a report path that is missing or malformed fails loudly
+  (`MICROBIN PASTE LINK FAILED`) instead of silently passing as an upload
+  success. Existing callers that pass no `-ReportHtml` are unaffected.
+- README.md and DEPLOY.md document the annotation; the launcher contract
+  test now asserts both callers pass `-ReportHtml` to the uploader, and a
+  new `tests/test_microbin_report_html_link.ps1` regression (Windows
+  PowerShell 5.1 + PowerShell 7 in CI) covers the success path, HTML
+  escaping of a query-bearing URL, failure paths leaving the report
+  untouched, hostile Location headers never reaching the HTML, and the
+  missing-report wiring error.
+
 ## [1.7.46] - 2026-09-06
 - Removed the guided-run MicroBin uploader-password prompt: the default
   MicroBin server (`https://reports.aygross.xyz`) is passwordless, so

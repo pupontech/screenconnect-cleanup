@@ -286,6 +286,18 @@ exit 0
     Remove-Item -LiteralPath $debugProbeRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# --- C10: uploader receives the HTML report path (MicroBin paste link) -------
+# After a successful MicroBin upload the paste URL is appended to the run's
+# generated HTML report, so both callers must pass the report path to
+# Submit-ConnectWiseReport.ps1 (-ReportHtml). A caller that drops it would
+# silently produce a report without the paste link.
+if ($startHereBat -notmatch '(?i)-ReportHtml[^\r\n]*report\.html') {
+    Add-Failure 'C10' "START-HERE.bat Step 9 does not pass the current-run report path to the uploader (-ReportHtml)."
+}
+if ($cleanup -notmatch "'-ReportHtml', \[string\]\`$reportHtml") {
+    Add-Failure 'C10' "sc-cleanup.ps1 Stage 9 does not pass the report HTML path to the uploader (-ReportHtml)."
+}
+
 if ($failures.Count -gt 0) {
     Write-Host ""
     Write-Host ("FAIL: {0} contract violation(s):" -f $failures.Count) -ForegroundColor Red

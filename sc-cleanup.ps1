@@ -1249,7 +1249,7 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
         $reportUploadExitCode = 1
         Write-StageLog ("Report uploader not found: " + $uploadScript) 'Error'
     } else {
-        $uploadArgs = @('-FindingsJson', [string]$findingsJson, '-WorkDir', [string]$WorkDir, '-RelayUrl', [string]$ReportRelayUrl)
+        $uploadArgs = @('-FindingsJson', [string]$findingsJson, '-WorkDir', [string]$WorkDir, '-ReportHtml', [string]$reportHtml, '-RelayUrl', [string]$ReportRelayUrl)
         if ($ReportUploadTokenFile) { $uploadArgs += @('-ReportUploadTokenFile', [string]$ReportUploadTokenFile) }
         if ($MicroBinUrl) { $uploadArgs += @('-MicroBinUrl', [string]$MicroBinUrl) }
         if ($MicroBinUploaderPasswordFile) { $uploadArgs += @('-MicroBinUploaderPasswordFile', [string]$MicroBinUploaderPasswordFile) }

@@ -239,6 +239,12 @@ powershell -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.ps1 `
   `MICROBIN UPLOAD: <url>`. A server in read-only uploader-password mode that
   rejects the password answers with a redirect to `/incorrect`, which is
   reported as a credential failure.
+- After a successful upload the paste URL is appended to the run's generated
+  HTML report: the runner passes the report path (`-ReportHtml`) to the
+  uploader, which adds a small "Sanitized paste (MicroBin)" line with an
+  HTML-escaped link (never raw server text). A failed upload leaves the
+  report untouched, and a report path that is missing or malformed fails
+  loudly so a wiring problem cannot pass as an upload success.
 - Guided runs (`START-HERE.bat`) ask once at the start of every run:
   "Upload the sanitized report to MicroBin? [y/N]" (default no - a blank or
   `n` answer never uploads). Answer `y` and the runner uses the first
@@ -262,9 +268,11 @@ powershell -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.ps1 `
      it (passed through unchanged, never deleted by the runner), or export
      `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD` in the session (the
      uploader reads it from the environment itself).
-  4. The report step prints `MICROBIN UPLOAD: <paste-url>` on success. An
-     invalid URL or failed upload is reported as a failure; the local
-     `connectwise-report.zip` is always retained.
+  4. The report step prints `MICROBIN UPLOAD: <paste-url>` on success and adds
+     the paste URL to that run's `report.html` (HTML-escaped; no link is
+     added when the upload fails). An invalid URL or failed upload is
+     reported as a failure; the local `connectwise-report.zip` is always
+     retained.
 
   The deploy bundle contains the configured MicroBin base URL. If the file is
   empty, populate it by answering `y` and typing the URL once, or by editing

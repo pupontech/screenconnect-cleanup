@@ -366,7 +366,7 @@ if not defined FINDINGS_JSON (
                 if defined SCC_CTX_DELIVERY set "CTX_EXTRA=!CTX_EXTRA! -IncidentDelivery "!SCC_CTX_DELIVERY!""
                 if defined SCC_MICROBIN_URL set "MICROBIN_EXTRA=!MICROBIN_EXTRA! -MicroBinUrl "!SCC_MICROBIN_URL!""
                 if defined SCC_MICROBIN_UPLOADER_PASSWORD_FILE set "MICROBIN_EXTRA=!MICROBIN_EXTRA! -MicroBinUploaderPasswordFile "!SCC_MICROBIN_UPLOADER_PASSWORD_FILE!""
-                powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Submit-ConnectWiseReport.ps1" -FindingsJson "!FINDINGS_JSON!" -WorkDir "!SCC_RUN_ROOT!" -RelayUrl "https://reports.aygross.xyz/v1/uploads"!MICROBIN_EXTRA!!CTX_EXTRA!
+                powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Submit-ConnectWiseReport.ps1" -FindingsJson "!FINDINGS_JSON!" -WorkDir "!SCC_RUN_ROOT!" -ReportHtml "!SCC_RUN_ROOT!/report.html" -RelayUrl "https://reports.aygross.xyz/v1/uploads"!MICROBIN_EXTRA!!CTX_EXTRA!
                 set "UPLOAD_RC=!errorlevel!"
                 set "MICROBIN_EXTRA="
                 set "CTX_EXTRA="

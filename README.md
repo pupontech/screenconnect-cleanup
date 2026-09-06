@@ -226,6 +226,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.p
   user-profile paths normalized). It is created with `privacy=readonly` and a
   bounded one-week expiration; each run creates one new paste with no automatic
   retry. The created URL is printed as `MICROBIN UPLOAD: <url>`.
+- On a successful paste the URL is also added to the run's generated HTML
+  report (`report.html`): the runner passes the report path to the uploader
+  (`-ReportHtml`), and the uploader appends a small "Sanitized paste
+  (MicroBin)" line. The URL is HTML-escaped before it is written, so a
+  crafted server `Location` header can never close an attribute or inject
+  markup. A failed upload never touches the report, and no paste link is
+  produced when MicroBin is not configured.
 - Guided runs (`START-HERE.bat`) ask once at the start of every run:
   "Upload the sanitized report to MicroBin? [y/N]" - the default is **no**,
   and a blank/no answer never uploads anything to MicroBin. Answer `y` and
@@ -258,10 +265,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.p
      or export `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD` (the uploader
      reads it from the environment itself). Leave both unset for a
      passwordless server.
-  5. The report step prints `MICROBIN UPLOAD: <paste-url>` on success. The
-     local `connectwise-report.zip` always stays on disk; an invalid URL or a
-     failed upload is reported as a failure and never hides the local
-     evidence.
+  5. The report step prints `MICROBIN UPLOAD: <paste-url>` on success and
+     adds the paste URL to that run's `report.html` (HTML-escaped; no link
+     is added when the upload fails). The local `connectwise-report.zip`
+     always stays on disk; an invalid URL or a failed upload is reported as
+     a failure and never hides the local evidence.
 
   `sc-cleanup.ps1` and `detect-remote-access.ps1` accept `-MicroBinUrl` and
   `-MicroBinUploaderPasswordFile` directly (no prompt). With none of these

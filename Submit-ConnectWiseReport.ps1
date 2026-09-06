@@ -4,7 +4,10 @@
 # token. An optional MicroBin mode (active only when -MicroBinUrl is supplied)
 # posts the sanitized report JSON to a separate user-selected paste server over
 # HTTPS and is never a ConnectWise submission. Either upload destination fails
-# loudly but keeps the local package; -NoUpload disables both.
+# loudly but keeps the local package; -NoUpload disables both. After a
+# successful MicroBin share the paste URL is appended to the generated HTML
+# report (-ReportHtml) with HTML escaping; a failed upload never touches the
+# report, and a report path that is missing or malformed fails loudly.
 #
 # The report carries the operator-recorded incident context (Authorization and
 # Delivery, prompted per run by Resolve-IncidentContext.ps1) and, per
@@ -18,6 +21,10 @@ param(
     [string]$FindingsJson,
     [string]$WorkDir,
     [string]$RunPath = '',
+    # Optional path to the generated HTML report (report.html). After a
+    # successful MicroBin upload the paste URL is HTML-escaped and appended
+    # to this file; an empty value leaves the report untouched, and a failed
+    # upload never annotates it.
     [string]$ReportHtml = '',
     [string]$ResultsJson = '',
     [string]$DiffJson = '',
@@ -806,6 +813,58 @@ function Invoke-MicroBinUpload {
     return (Convert-MicroBinLocationToPasteUrl $result)
 }
 
+function ConvertTo-HtmlEscapedText {
+    # HTML-escapes a value before it is embedded in the generated HTML
+    # report. Same substitutions (and order) as Encode-Html in
+    # New-InvestigationReport.ps1, so a paste URL can never close an
+    # attribute or inject markup. Pure ASCII, PowerShell 5.1 compatible.
+    param([object]$Value)
+    if ($null -eq $Value) { return '' }
+    $s = [string]$Value
+    $s = $s.Replace('&', '&amp;')
+    $s = $s.Replace('<', '&lt;')
+    $s = $s.Replace('>', '&gt;')
+    $s = $s.Replace('"', '&quot;')
+    $s = $s.Replace("'", '&#39;')
+    return $s
+}
+
+function Add-ReportPasteLink {
+    # Appends a small, self-contained "Sanitized paste (MicroBin)" line to the
+    # generated HTML report after a successful MicroBin upload. The URL is
+    # HTML-escaped before it is written. With no -ReportHtml nothing happens
+    # (the callers that do not generate an HTML report are unaffected); a
+    # missing or malformed report fails loudly instead of silently skipping
+    # the annotation.
+    param(
+        [string]$ReportHtml,
+        [string]$PasteUrl
+    )
+    if ([string]::IsNullOrWhiteSpace($ReportHtml)) { return }
+    if ([string]::IsNullOrWhiteSpace($PasteUrl)) { throw 'a MicroBin paste URL is required to annotate the HTML report' }
+    if (-not (Test-Path -LiteralPath $ReportHtml -PathType Leaf)) { throw ('report HTML was not found: ' + $ReportHtml) }
+    $fullPath = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $ReportHtml).Path)
+    $html = [System.IO.File]::ReadAllText($fullPath)
+    if ([string]::IsNullOrEmpty($html)) { throw ('report HTML is empty: ' + $fullPath) }
+    $escapedUrl = ConvertTo-HtmlEscapedText $PasteUrl
+    $newline = "`r`n"
+    if ($html.IndexOf("`r`n") -lt 0) { $newline = "`n" }
+    $linkBlock = $newline +
+        '<!-- ScreenConnect Cleanup: sanitized MicroBin paste of this report (added after a successful upload). -->' + $newline +
+        '<p style="margin:0;padding:0.3em 0;">Sanitized paste (MicroBin): <a href="' + $escapedUrl + '">' + $escapedUrl + '</a></p>'
+    $footerIndex = $html.LastIndexOf('</footer>', [System.StringComparison]::OrdinalIgnoreCase)
+    $bodyIndex = $html.LastIndexOf('</body>', [System.StringComparison]::OrdinalIgnoreCase)
+    if ($footerIndex -ge 0) {
+        $html = $html.Insert($footerIndex, $linkBlock + $newline)
+    } elseif ($bodyIndex -ge 0) {
+        $html = $html.Insert($bodyIndex, $linkBlock + $newline)
+    } else {
+        throw ('report HTML has no closing </body> marker; the paste link was not added: ' + $fullPath)
+    }
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($fullPath, $html, $utf8NoBom)
+}
+
 $exitCode = 0
 try {
     # Explicit incident-context values are validated before any work: an
@@ -919,6 +978,19 @@ try {
                 $microBinPassword = Get-MicroBinUploaderPassword
                 $pasteUrl = Invoke-MicroBinUpload -Content $reportJson -Password $microBinPassword
                 Write-Host ('MICROBIN UPLOAD: ' + $pasteUrl)
+                # Only a successful upload reaches this point, so only a
+                # successful upload can annotate the HTML report. Annotation
+                # is its own loud step: a wiring problem (missing/unreadable
+                # report) must not silently pass as an upload success.
+                if (-not [string]::IsNullOrWhiteSpace($ReportHtml)) {
+                    try {
+                        Add-ReportPasteLink -ReportHtml $ReportHtml -PasteUrl $pasteUrl
+                        Write-Host ('MICROBIN PASTE LINK: added to ' + $ReportHtml)
+                    } catch {
+                        Write-Host ('MICROBIN PASTE LINK FAILED: ' + $_.Exception.Message) -ForegroundColor Red
+                        $exitCode = 1
+                    }
+                }
             } catch {
                 Write-Host ('MICROBIN UPLOAD FAILED: ' + $_.Exception.Message) -ForegroundColor Red
                 $exitCode = 1
