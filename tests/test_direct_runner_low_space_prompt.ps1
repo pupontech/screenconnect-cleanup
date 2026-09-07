@@ -41,7 +41,7 @@ function Invoke-RunnerProbe {
     $arguments = @(
         '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass',
         '-File', $runnerPath,
-        '-WhatIf', '-sr', '-sa', '-avu', '-np',
+        '-WhatIf', '-sr', '-sa', '-avu', '-np', '-Force',
         '-MinFreeGB', [string]$MinFreeGB,
         '-OutRoot', $runRoot,
         '-ToolDir', $toolDir
