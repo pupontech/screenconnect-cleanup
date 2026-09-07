@@ -90,7 +90,8 @@ function Get-SnapshotCollectionComplete {
     if ($completeProp) { return [bool]$completeProp.Value }
     $errorsProp = $Snapshot.PSObject.Properties['CollectionErrors']
     if (-not $errorsProp) { return $true }
-    return (@(Get-JsonItems $errorsProp.Value).Count -eq 0)
+    $errors = Get-JsonItems $errorsProp.Value
+    return ($errors.Count -eq 0)
 }
 
 function Get-SnapshotCollectionErrors {

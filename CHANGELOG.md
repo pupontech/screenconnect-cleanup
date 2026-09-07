@@ -3,6 +3,22 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [Unreleased]
+- Scanner staging now fails closed if downloaded-file metadata or mandatory PE
+  validation fails. Optional version text is kept separate from validation; an
+  unvalidated replacement cannot overwrite the existing staged scanner.
+- Fixed false INCOMPLETE snapshot diffs for older snapshots whose error lists
+  are empty arrays, empty objects, or null and lack CollectionComplete.
+- Detection reads the TCP inventory once per ScreenConnect module invocation,
+  instead of once per running instance, and indexes connections by process ID.
+  Each scan still gets fresh evidence; unrelated processes stay excluded and
+  zero/singleton/multiple connections serialize consistently as arrays.
+- Escaped scanner JSON-parser errors in the HTML warning as well as the table.
+  Malformed input containing HTML in a property name cannot inject report markup.
+- Added non-destructive behavior regressions and wired the new suites into
+  Windows CI under PowerShell 5.1 and 7. Local verification is Linux/pwsh only;
+  Windows execution and live-machine acceptance remain pending.
+
 ## [1.7.48] - 2026-09-06
 - Every run now keeps copies of its two key artifacts in both places, with
   the originals always preserved (owner directive): the detection console

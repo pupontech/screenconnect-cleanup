@@ -693,10 +693,23 @@ function Invoke-ScreenConnectModule {
     }
 
     # --- 7. Connections + install events ----------------------------------
+    # Query the system TCP table once per module invocation, not once per
+    # instance. Keep this inventory local so a later scan gets fresh evidence.
+    $allPids = @($instances.Values | ForEach-Object { $_.Processes } | ForEach-Object { [int]$_.ProcessId })
+    $connectionsByPid = @{}
+    foreach ($connection in @(Get-ConnectionsForPids $allPids)) {
+        $processKey = [int]$connection.OwningProcess
+        if (-not $connectionsByPid.ContainsKey($processKey)) {
+            $connectionsByPid[$processKey] = New-Object System.Collections.ArrayList
+        }
+        [void]$connectionsByPid[$processKey].Add($connection)
+    }
     foreach ($key in @($instances.Keys)) {
         $slot = $instances[$key]
-        $pids = @($slot.Processes | ForEach-Object { [int]$_.ProcessId })
-        $slot.Connections = Get-ConnectionsForPids $pids
+        $pids = @($slot.Processes | ForEach-Object { [int]$_.ProcessId } | Select-Object -Unique)
+        $slot.Connections = @($pids | ForEach-Object {
+            if ($connectionsByPid.ContainsKey($_)) { $connectionsByPid[$_] }
+        })
         foreach ($e in $Events) {
             if ($e.Message -match '(?i)ScreenConnect') {
                 $hit = $false

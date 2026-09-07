@@ -633,7 +633,7 @@ if ($ScannerSummary -or $ScannersSkipped) {
             }
         }
         if ($scannerError) {
-            $scannerNote = "<p class='warn-line'>$scannerError</p>"
+            $scannerNote = "<p class='warn-line'>$(Fmt $scannerError)</p>"
         } else {
             $scannerNote = "<p class='muted'>Each scanner ran as a visible attended GUI driven by the technician. Any status other than Completed means the scan did not finish or was unavailable - treat the scan as NOT done. Source: $(Fmt $ScannerSummary)</p>"
         }

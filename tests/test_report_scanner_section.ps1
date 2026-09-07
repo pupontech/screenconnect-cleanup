@@ -129,5 +129,14 @@ Check 'report6 renders incomplete verdict' ($html6.Contains('>INCOMPLETE</span>'
 Check 'report6 renders collection warning' ($html6.Contains('Collection warnings') -and $html6.Contains('decoder disabled'))
 Check 'report6 escapes diff error' ($html6.Contains('&lt;script&gt;alert(3)&lt;/script&gt;') -and (-not $html6.Contains('<script>')))
 
+# 7. Parser exceptions are untrusted text too: an attacker controls JSON keys.
+$malformedJson = Join-Path $tmp 'malformed-scanners.json'
+[IO.File]::WriteAllText($malformedJson, '{"<img src=x onerror=alert(4)>": invalid}')
+$out7 = Join-Path $tmp 'report7.html'
+& $reportScript -FindingsJson $findingsJson -OutputPath $out7 -ScannerSummary $malformedJson *> $null
+$html7 = Get-Content -LiteralPath $out7 -Raw
+Check 'report7 malformed scanner results are reported' ($html7.Contains('Could not load scanner results'))
+Check 'report7 parser exception cannot inject an HTML element' (-not $html7.Contains('<img src=x onerror=alert(4)>'))
+
 Write-Host ""
 if ($failures -eq 0) { Write-Host "ALL REPORT TESTS PASSED" } else { Write-Host "$failures REPORT TEST(S) FAILED"; exit 1 }
