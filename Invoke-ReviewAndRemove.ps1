@@ -81,8 +81,11 @@ function Confirm-LowDiskSpace {
         [int]$MinFreeGB
     )
     Write-Line ("WARNING: Only {0} GB free on {1}; the recommended minimum is {2} GB." -f $FreeGB, $Path, $MinFreeGB) 'Yellow'
+    # Emit the prompt text explicitly: with redirected stdin (CI, piped runs),
+    # Read-Host does not echo the prompt on Windows PowerShell 5.1.
+    Write-Host 'Continue anyway? [y/N]' -NoNewline
     try {
-        $answer = Read-Host 'Continue anyway? [y/N]'
+        $answer = Read-Host
     } catch {
         Write-Line ("Could not read the low-disk confirmation: " + $_.Exception.Message) 'Red'
         return $false
@@ -165,9 +168,12 @@ foreach ($inst in $instances) {
 Write-Line ""
 Write-Line ($instances.Count.ToString() + " ScreenConnect instance(s) will be removed on 'y'.") 'Yellow'
 Write-Line "Files are quarantined, never deleted. Type y to remove all detected instances."
+# Emit the prompt text explicitly: with redirected stdin (CI, piped runs),
+# Read-Host does not echo the prompt on Windows PowerShell 5.1.
+Write-Host 'Remove all detected ScreenConnect instances? [y/N]' -NoNewline
 $confirmed = $false
 do {
-    $c = Read-Host 'Remove all detected ScreenConnect instances? [y/N]'
+    $c = Read-Host
     if ([string]::IsNullOrWhiteSpace($c)) { $c = 'N' }
     $c = $c.Trim().Substring(0,1).ToUpperInvariant()
 } while ($c -ne 'Y' -and $c -ne 'N')

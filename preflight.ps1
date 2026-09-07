@@ -148,8 +148,12 @@ function Confirm-LowDiskSpace {
 
     Write-Host ''
     Write-StageWarn ("Only {0} GB free on {1}; the recommended minimum is {2} GB." -f $FreeGB, $DriveRoot, $MinFreeGB)
+    # Emit the prompt text explicitly: with redirected stdin (CI, piped runs),
+    # Read-Host does not echo the prompt on Windows PowerShell 5.1, so the
+    # confirmation would be invisible and uncapturable.
+    Write-Host 'Continue anyway? [y/N]' -NoNewline
     try {
-        $answer = Read-Host 'Continue anyway? [y/N]'
+        $answer = Read-Host
     } catch {
         Write-StageFail ("Could not read the low-disk confirmation: {0}" -f $_.Exception.Message)
         return $false
@@ -377,7 +381,9 @@ if ($env:OS -eq 'Windows_NT') {
             Write-Host ''
             $uacAnswer = ''
             do {
-                $uacInput = Read-Host 'Type Y once UAC is enabled, or F to force-continue with UAC disabled'
+                # Emit explicitly so the prompt stays visible with redirected stdin (5.1).
+                Write-Host 'Type Y once UAC is enabled, or F to force-continue with UAC disabled' -NoNewline
+                $uacInput = Read-Host
                 if ($null -eq $uacInput -or [string]::IsNullOrWhiteSpace($uacInput)) {
                     Write-StageFail 'UAC confirmation was not provided; aborting. Type Y after enabling UAC or F to force-continue.'
                     exit 1

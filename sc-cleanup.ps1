@@ -156,8 +156,11 @@ function Confirm-LowDiskSpace {
     )
 
     Write-StageLog ("WARNING: Only {0} GB free on {1}; the recommended minimum is {2} GB." -f $FreeGB, $Path, $MinFreeGB) 'Warn'
+    # Emit the prompt text explicitly: with redirected stdin (CI, piped runs),
+    # Read-Host does not echo the prompt on Windows PowerShell 5.1.
+    Write-Host 'Continue anyway? [y/N]' -NoNewline
     try {
-        $answer = Read-Host 'Continue anyway? [y/N]'
+        $answer = Read-Host
     } catch {
         Write-StageLog ("Could not read the low-disk confirmation: {0}" -f $_.Exception.Message) 'Error'
         return $false
@@ -476,7 +479,9 @@ if (-not $uacEnabled -and -not $force) {
     Write-Host ""
     $uacAnswer = ''
     do {
-        $uacInput = Read-Host 'Type Y once UAC is enabled, or F to force-continue with UAC disabled'
+        # Emit explicitly so the prompt stays visible with redirected stdin (5.1).
+        Write-Host 'Type Y once UAC is enabled, or F to force-continue with UAC disabled' -NoNewline
+        $uacInput = Read-Host
         if ($null -eq $uacInput -or [string]::IsNullOrWhiteSpace($uacInput)) {
             Write-StageLog 'UAC confirmation was not provided; aborting. Type Y after enabling UAC or F to force-continue.' 'Error'
             exit 2
@@ -730,8 +735,10 @@ $stage3Result = Invoke-Stage -StageId 3 -StageName 'Review Gate' -SkipFlag '' -S
             Write-StageLog "-ExecuteRemoval: removal pre-authorized, typed confirmation waived (TEST MODE)." 'Warn'
         } else {
             Write-Host "Files are quarantined, never deleted. Type y to remove all detected instances."
+            # Emit explicitly so the prompt stays visible with redirected stdin (5.1).
+            Write-Host 'Remove all detected ScreenConnect instances? [y/N]' -NoNewline
             do {
-                $confirmation = Read-Host 'Remove all detected ScreenConnect instances? [y/N]'
+                $confirmation = Read-Host
                 if ([string]::IsNullOrWhiteSpace($confirmation)) { $confirmation = 'N' }
                 $confirmation = $confirmation.Trim().Substring(0,1).ToUpperInvariant()
             } while ($confirmation -ne 'Y' -and $confirmation -ne 'N')
