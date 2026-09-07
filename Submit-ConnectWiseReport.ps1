@@ -1,13 +1,15 @@
-# Submit-ConnectWiseReport.ps1 - create and optionally upload a sanitized report.
+# Submit-ConnectWiseReport.ps1 - create a sanitized local report package and
+# share it to MicroBin.
 # PowerShell 5.1 compatible. Raw evidence and credential-bearing fields are not
-# included in the automatic package. Relay uploads require an explicit bearer
-# token. An optional MicroBin mode (active only when -MicroBinUrl is supplied)
-# posts the sanitized report JSON to a separate user-selected paste server over
-# HTTPS and is never a ConnectWise submission. Either upload destination fails
-# loudly but keeps the local package; -NoUpload disables both. After a
-# successful MicroBin share the paste URL is appended to the generated HTML
-# report (-ReportHtml) with HTML escaping; a failed upload never touches the
-# report, and a report path that is missing or malformed fails loudly.
+# included in the package. The local connectwise-report.zip stays in the run
+# root as an archive; the ONLY share path is a MicroBin paste of the sanitized
+# report JSON (server base URL from -MicroBinUrl, falling back to the first
+# nonblank line of microbin-url.txt beside this script). MicroBin is never a
+# ConnectWise submission. A failed share fails loudly but keeps the local
+# package; -NoUpload disables the share. After a successful MicroBin share the
+# paste URL is appended to the generated HTML report (-ReportHtml) with HTML
+# escaping; a failed upload never touches the report, and a report path that is
+# missing or malformed fails loudly.
 #
 # The report carries the operator-recorded incident context (Authorization and
 # Delivery, prompted per run by Resolve-IncidentContext.ps1) and, per
@@ -28,9 +30,6 @@ param(
     [string]$ReportHtml = '',
     [string]$ResultsJson = '',
     [string]$DiffJson = '',
-    [string]$RelayUrl = 'https://reports.aygross.xyz/v1/uploads',
-    [string]$ReportUploadToken = '',
-    [string]$ReportUploadTokenFile = '',
     [string]$MicroBinUrl = '',
     [string]$MicroBinUploaderPasswordFile = '',
     # Operator-recorded incident context for this run (guided-run prompt in
@@ -406,59 +405,13 @@ function New-HumanSummary {
     return ($lines -join "`r`n") + "`r`n"
 }
 
-function Get-DefaultTokenFile {
-    if (-not [string]::IsNullOrWhiteSpace($env:ProgramData)) {
-        return (Join-Path $env:ProgramData 'ScreenConnectCleanup\report-relay-token.txt')
-    }
-    return $null
-}
-
-function Get-UploadToken {
-    $token = $ReportUploadToken
-    if ([string]::IsNullOrWhiteSpace($token)) { $token = $env:SCREENCONNECT_REPORT_UPLOAD_TOKEN }
-    if ([string]::IsNullOrWhiteSpace($token)) {
-        $explicitTokenFile = -not [string]::IsNullOrWhiteSpace($ReportUploadTokenFile)
-        if ($explicitTokenFile) {
-            $tokenPath = $ReportUploadTokenFile
-        } else {
-            $tokenPath = Get-DefaultTokenFile
-        }
-        if (-not [string]::IsNullOrWhiteSpace($tokenPath)) {
-            if (Test-Path -LiteralPath $tokenPath -PathType Leaf) {
-                try {
-                    $token = [System.IO.File]::ReadAllText($tokenPath)
-                } catch {
-                    # An explicitly supplied token file that cannot be read is an
-                    # operator error and must fail loudly. An implicit default
-                    # token file that cannot be read also fails with a clear
-                    # message instead of a raw IO exception.
-                    throw ('report upload token file could not be read: ' + $tokenPath)
-                }
-            } elseif ($explicitTokenFile) {
-                # An explicitly requested token file that is missing means the
-                # operator intended an upload; this is not an implicit
-                # no-enrollment state and must not silently skip the upload.
-                throw ('report upload token file was not found: ' + $tokenPath)
-            }
-        }
-    }
-    if ([string]::IsNullOrWhiteSpace($token)) { return $null }
-    $token = $token.Trim()
-    if ($token -notmatch '^[A-Za-z0-9._~+/=-]{20,512}$') {
-        throw 'report upload token has an invalid format'
-    }
-    return $token
-}
-
 function New-DeterministicPackage {
     param(
         [string]$StageDir,
         [string]$Destination
     )
     # Build the ZIP with a fixed entry timestamp and a fixed entry order so that
-    # re-runs over identical findings produce byte-identical packages. The relay
-    # deduplicates by the SHA-256 of the received body, so a stable package is
-    # what makes retries idempotent across separate runs.
+    # re-runs over identical findings produce byte-identical packages.
     $fixedTime = New-Object System.DateTimeOffset -ArgumentList 2020, 1, 1, 0, 0, 0, ([TimeSpan]::Zero)
     $entryNames = @('connectwise-report.json', 'connectwise-report.txt', 'package-manifest.json')
     $archive = [System.IO.Compression.ZipFile]::Open($Destination, [System.IO.Compression.ZipArchiveMode]::Create)
@@ -492,100 +445,8 @@ function New-DeterministicPackage {
     }
 }
 
-function Test-RetryableUploadFailure {
-    param($Exception)
-    # True only when the attempt may have failed before the relay could store
-    # the body (transport error, timeout) or when the relay itself reported a
-    # server-side error (HTTP 5xx). Re-sending the exact same package for those
-    # cases is safe because the relay deduplicates by the SHA-256 of the received
-    # body. Client errors (HTTP 4xx) and invalid receipts after a 2xx response
-    # are deterministic and are never retried.
-    $responseProperty = $Exception.PSObject.Properties['Response']
-    $response = $null
-    if ($null -ne $responseProperty -and $null -ne $responseProperty.Value) {
-        $response = $responseProperty.Value
-    }
-    if ($null -ne $response) {
-        try {
-            return ([int]$response.StatusCode -ge 500)
-        } catch {
-            return $false
-        }
-    }
-    switch -Wildcard ($Exception.GetType().FullName) {
-        'System.Net.WebException' { return $true }
-        'System.Net.Http.HttpRequestException' { return $true }
-        '*TaskCanceledException' { return $true }
-        'System.TimeoutException' { return $true }
-        'System.Net.Sockets.SocketException' { return $true }
-        default { return $false }
-    }
-}
-
-function Invoke-ReportUploadWithRetry {
-    param(
-        [string]$Path,
-        [string]$Token,
-        [string]$Uri,
-        [string]$Digest
-    )
-    # Bounded retry of the SAME package file. Each attempt sends the identical
-    # bytes and digest, so a lost acknowledgement that was actually stored
-    # becomes an idempotent already_stored on the relay instead of a duplicate.
-    $maxAttempts = 3
-    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
-        try {
-            return Invoke-ReportUpload -Path $Path -Token $Token -Uri $Uri -Digest $Digest
-        } catch {
-            $lastError = $_
-            if ($attempt -ge $maxAttempts -or -not (Test-RetryableUploadFailure $lastError.Exception)) {
-                throw
-            }
-            Write-Host ('REPORT UPLOAD: attempt ' + $attempt + ' of ' + $maxAttempts + ' failed (' + $lastError.Exception.Message + ') - retrying with the same package')
-            Start-Sleep -Seconds (2 * $attempt)
-        }
-    }
-}
-
-function Invoke-ReportUpload {
-    param(
-        [string]$Path,
-        [string]$Token,
-        [string]$Uri,
-        [string]$Digest
-    )
-    $parsedUri = $null
-    if (-not [System.Uri]::TryCreate($Uri, [System.UriKind]::Absolute, [ref]$parsedUri)) {
-        throw 'report relay URL is not an absolute URI'
-    }
-    if ($parsedUri.Scheme -ne 'https' -and -not $AllowInsecureRelay) {
-        throw 'report relay must use HTTPS (use -AllowInsecureRelay only for local tests)'
-    }
-    try { [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 } catch { }
-    $headers = @{
-        Authorization       = 'Bearer ' + $Token
-        'X-Report-Filename' = [System.IO.Path]::GetFileName($Path)
-        'X-Report-SHA256'   = $Digest
-    }
-    $response = Invoke-WebRequest -Uri $Uri -Method Post -InFile $Path -ContentType 'application/zip' -Headers $headers -UseBasicParsing -TimeoutSec 120
-    if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) {
-        throw ('report relay returned HTTP ' + [string]$response.StatusCode)
-    }
-    $receipt = $response.Content | ConvertFrom-Json
-    if ($null -eq $receipt -or [string]$receipt.status -notin @('stored', 'already_stored')) {
-        throw 'report relay returned an invalid receipt'
-    }
-    if ([string]$receipt.sha256 -ne $Digest) {
-        throw 'report relay receipt hash does not match the local package'
-    }
-    if ([string]$receipt.receipt_id -notmatch '^[0-9a-f]{32}$') {
-        throw 'report relay receipt identifier is invalid'
-    }
-    return $receipt
-}
-
 # ---------------------------------------------------------------------------
-# Optional MicroBin upload mode (user-selected paste server)
+# MicroBin upload mode (the only report share path)
 # ---------------------------------------------------------------------------
 # MicroBin (https://github.com/szabodanika/microbin) exposes a multipart text
 # upload at POST /upload. Current endpoint (master, 2026-06): recognized form
@@ -606,6 +467,21 @@ function Invoke-ReportUpload {
 $script:MicroBinExpiration = '1week'
 $script:MicroBinBodyCap = 16384
 $script:MicroBinBoundaryPrefix = '--------------------------ScreenConnectCleanup'
+
+function Get-ConfiguredMicroBinUrl {
+    # Fallback server base URL for the report share: when -MicroBinUrl is not
+    # given, read the first nonblank trimmed line of microbin-url.txt beside
+    # this script (the file the deploy bundle ships and the guided runner
+    # used to maintain). A missing or empty file means no share is attempted.
+    if (-not [string]::IsNullOrWhiteSpace($MicroBinUrl)) { return $MicroBinUrl.Trim() }
+    $configFile = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'microbin-url.txt'
+    if (-not (Test-Path -LiteralPath $configFile -PathType Leaf)) { return '' }
+    foreach ($line in [System.IO.File]::ReadLines($configFile)) {
+        $candidate = $line.Trim()
+        if ($candidate.Length -gt 0) { return $candidate }
+    }
+    return ''
+}
 
 function Get-MicroBinUploaderPassword {
     # Returns the MicroBin uploader password when the operator configured one:
@@ -951,29 +827,15 @@ try {
     Write-Host ('REPORT PACKAGE SHA256: ' + $localDigest)
 
     if ($NoUpload) {
-        Write-Host 'REPORT UPLOAD: disabled by operator'
-        if (-not [string]::IsNullOrWhiteSpace($MicroBinUrl)) {
-            Write-Host 'MICROBIN UPLOAD: disabled by operator'
-        }
+        Write-Host 'MICROBIN UPLOAD: disabled by operator'
     } else {
-        # Authenticated relay: behavior is unchanged, but it is isolated in its
-        # own try/catch so a relay failure never suppresses a separately
-        # configured MicroBin share, and vice versa.
-        try {
-            $token = Get-UploadToken
-            if ([string]::IsNullOrWhiteSpace($token)) {
-                Write-Host 'REPORT UPLOAD: skipped; no authenticated relay token is configured'
-            } else {
-                $receipt = Invoke-ReportUploadWithRetry -Path $script:PackagePath -Token $token -Uri $RelayUrl -Digest $localDigest
-                Write-Host ('REPORT UPLOAD: ' + [string]$receipt.status + '; receipt ' + [string]$receipt.receipt_id)
-            }
-        } catch {
-            Write-Host ('REPORT UPLOAD FAILED: ' + $_.Exception.Message) -ForegroundColor Red
-            $exitCode = 1
-        }
-        # Optional MicroBin paste share: runs only when a URL is configured, so
-        # users who never configure MicroBin are completely unaffected.
-        if (-not [string]::IsNullOrWhiteSpace($MicroBinUrl)) {
+        # MicroBin is the only report share path. The server base URL comes
+        # from -MicroBinUrl or microbin-url.txt beside this script; with no
+        # configured URL the local package stays and nothing is sent anywhere.
+        if ([string]::IsNullOrWhiteSpace($MicroBinUrl)) { $MicroBinUrl = Get-ConfiguredMicroBinUrl }
+        if ([string]::IsNullOrWhiteSpace($MicroBinUrl)) {
+            Write-Host 'MICROBIN UPLOAD: skipped; no MicroBin server URL is configured'
+        } else {
             try {
                 $microBinPassword = Get-MicroBinUploaderPassword
                 $pasteUrl = Invoke-MicroBinUpload -Content $reportJson -Password $microBinPassword
@@ -998,7 +860,7 @@ try {
         }
     }
 } catch {
-    Write-Host ('REPORT UPLOAD FAILED: ' + $_.Exception.Message) -ForegroundColor Red
+    Write-Host ('REPORT FAILED: ' + $_.Exception.Message) -ForegroundColor Red
     $exitCode = 1
 } finally {
     if ($script:StageDir -and (Test-Path -LiteralPath $script:StageDir)) {

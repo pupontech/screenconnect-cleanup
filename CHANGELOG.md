@@ -3,6 +3,45 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.49] - 2026-09-07
+- Scanner staging now fails closed if downloaded-file metadata or mandatory PE
+  validation fails. Optional version text is kept separate from validation; an
+  unvalidated replacement cannot overwrite the existing staged scanner.
+- Fixed false INCOMPLETE snapshot diffs for older snapshots whose error lists
+  are empty arrays, empty objects, or null and lack CollectionComplete.
+- Detection reads the TCP inventory once per ScreenConnect module invocation,
+  instead of once per running instance, and indexes connections by process ID.
+  Each scan still gets fresh evidence; unrelated processes stay excluded and
+  zero/singleton/multiple connections serialize consistently as arrays.
+- Escaped scanner JSON-parser errors in the HTML warning as well as the table.
+  Malformed input containing HTML in a property name cannot inject report markup.
+- Added non-destructive behavior regressions, including MicroBin loopback
+  uploads, incident context/dates, and download-diagnostic classification.
+  Windows CI passed on Server 2022 and 2025 under PowerShell 5.1 and 7.
+  Destructive removal and live technician acceptance remain unverified.
+- Fixed prompt visibility under redirected stdin in Windows PowerShell 5.1.
+  Low-space probes now account for the Windows Server OS guard, and report
+  assertions tolerate PowerShell 5.1 JSON angle-bracket escaping.
+- Aligned script version banners and report metadata with VERSION (1.7.49).
+- Report sharing is now MicroBin only: removed the authenticated relay upload
+  of the sanitized report ZIP (relay URL/token parameters, token file lookup,
+  upload retry, and the relay invocation in Submit-ConnectWiseReport.ps1 are
+  gone). The local connectwise-report.zip stays as a run archive; the sanitized
+  report JSON is shared to the configured MicroBin server (microbin-url.txt),
+  and a failed share never hides the local evidence.
+- START-HERE.bat no longer asks a per-run MicroBin opt-in question: the report
+  step shares automatically to the saved microbin-url.txt server. The guided
+  MicroBin URL prompt (Resolve-MicroBinRunUrl.ps1) was removed with the
+  opt-in flow; the uploader reads the URL file itself.
+- START-HERE.bat tool staging (step 1) and preflight (step 2) now run
+  automatically with no [Y/n] prompt, matching the other automatic steps.
+- ScreenConnect removal review is one prompt: a single typed confirmation
+  removes ALL detected ScreenConnect instances. The per-instance KEEP-default
+  questions and the second "Proceed with removal?" confirmation were removed
+  from both Invoke-ReviewAndRemove.ps1 and sc-cleanup.ps1 Stage 3 (owner
+  directive). Removal stays quarantine-never-delete and -ExecuteRemoval is
+  still the only automatic path.
+
 ## [1.7.48] - 2026-09-06
 - Every run now keeps copies of its two key artifacts in both places, with
   the originals always preserved (owner directive): the detection console

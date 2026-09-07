@@ -19,9 +19,8 @@ detect-remote-access.ps1
 Run-DetectRemoteAccess.bat
 targets.json
 New-InvestigationReport.ps1
-Submit-ConnectWiseReport.ps1    <- sanitized package + authenticated relay upload / optional MicroBin paste share
-Resolve-MicroBinRunUrl.ps1      <- guided-run MicroBin URL resolver (reads or prompts + saves microbin-url.txt)
-microbin-url.txt                <- saved MicroBin base URL used by the guided runner
+Submit-ConnectWiseReport.ps1    <- sanitized package + automatic MicroBin paste share
+microbin-url.txt                <- MicroBin server base URL used by the uploader (first nonblank line)
 Invoke-GUIScanner.ps1          <- launches KVRT/ESET GUI scanners (and Malwarebytes via winget) and waits (Stage 5)
 Get-MalwarebytesDownloadDiagnostics.ps1 <- read-only Malwarebytes filter/proxy failure diagnostics (Stage 5)
 Invoke-AVUninstaller.ps1        <- opens installed-AV uninstallers, attended (Stage 6)
@@ -106,28 +105,29 @@ Run-DetectRemoteAccess.bat        (double-click)
 powershell -File .\detect-remote-access.ps1 [-Target screenconnect,anydesk] [-All] [-SelfTest]
 ```
 
-## 3. Automatic report holding and later ConnectWise submission
+## 3. Automatic report sharing (MicroBin only)
 
-The report workflow uploads a **sanitized package** to the private relay at
-`https://reports.aygross.xyz/v1/uploads` when a client has been provisioned with
-the relay token. The main `sc-cleanup.ps1` runner uploads once after the final
-report. A standalone `detect-remote-access.ps1` run uploads after its findings
-are written. `START-HERE.bat` suppresses the detector upload and uploads once
-after its final report, so one run does not create duplicate receipts.
+After the final report exists, the report step builds a **sanitized local
+package** and shares the sanitized report JSON to the configured MicroBin
+server. MicroBin is the only share path - there is no authenticated relay
+upload and no ZIP is sent anywhere.
 
-The package contains:
+The local run folder keeps:
 
-- `connectwise-report.json` with the incident type, tool/run metadata, the
-  operator-recorded incident context (authorization + delivery), ScreenConnect
-  installation/instance identifiers, relay host and port, session type/role/
-  version, connection indicators, suspicious file names/hashes and signature
-  results, parse issues, historical service-install identifiers, and each
-  instance's best observed installation date and basis (service-install event
-  7045 timestamp, install-directory creation time, or registry InstallDate;
-  "Not available" when there is no evidence).
-- `connectwise-report.txt` with the same selected fields in a technician-readable
-  format.
-- `package-manifest.json` with the source findings hash and package contents.
+- `connectwise-report.zip` - a deterministic local archive (report JSON +
+  technician TXT + package manifest) that stays on disk as evidence.
+- `report.html` - the generated HTML report, opened and copied to the Desktop.
+
+The package contains `connectwise-report.json` with the incident type,
+tool/run metadata, the operator-recorded incident context (authorization +
+delivery), ScreenConnect installation/instance identifiers, relay host and
+port, session type/role/version, connection indicators, suspicious file
+names/hashes and signature results, parse issues, historical
+service-install identifiers, and each instance's best observed installation
+date and basis (service-install event 7045 timestamp, install-directory
+creation time, or registry InstallDate; "Not available" when there is no
+evidence), plus `connectwise-report.txt` and `package-manifest.json` with the
+source findings hash.
 
 The automatic package does **not** include the raw evidence folder, raw config
 contents, the HTML report, `RunAsUser`, parameter blobs, credentials, tokens,
@@ -142,78 +142,12 @@ description) via `Resolve-IncidentContext.ps1`, and pass it to
 `Submit-ConnectWiseReport.ps1`. Context never comes from unattended runs
 without operator input; those report `Not available` honestly.
 
-### Client token enrollment
+### MicroBin share details
 
-The default token location is:
-
-```text
-%ProgramData%\ScreenConnectCleanup\report-relay-token.txt
-```
-
-The script also accepts the `SCREENCONNECT_REPORT_UPLOAD_TOKEN` environment
-variable, or an explicit `-ReportUploadTokenFile` path. Keep the token out of
-the ZIP, source control, transcripts, issue reports, and command history. The
-relay refuses uploads without a valid bearer token; if the token is missing,
-the package remains local and no unauthenticated request is attempted. Use
-`-NoReportUpload` with `sc-cleanup.ps1` when the package should be created but
-not sent.
-
-### Relay behavior and retention
-
-The relay accepts only authenticated `POST /v1/uploads` requests over HTTPS.
-It validates the ZIP without extracting it, enforces compressed and
-uncompressed-size limits, binds the request to its SHA-256, deduplicates retry
-requests, encrypts the stored archive with an age recipient, and exposes no
-public listing or download route. Receipts expire after 30 days by default.
-
-On the server, export a private bulk bundle as root:
-
-```bash
-sudo /usr/local/sbin/screenconnect-report-relay-export \
-  --output /root/connectwise-reports-YYYYMMDD.zip
-```
-
-The command decrypts and verifies each stored report, writes one bundle with a
-manifest, and leaves the encrypted originals in place. Treat that exported ZIP
-as sensitive and delete it after the official submission is complete.
-
-For mass relay/server IOC analysis, export deduplicated observed relays as root:
-
-```bash
-sudo /usr/local/sbin/screenconnect-report-relay-ioc-export \
-  --output-dir /root/screenconnect-relay-iocs-YYYYMMDD
-```
-
-The IOC export decrypts each stored receipt into a private temporary
-directory, reads only `connectwise-report.json` from every validated report
-ZIP, and writes four outputs that never contain raw evidence or binaries:
-
-- `relay-addresses.txt` - one observed relay `host[:port]` per line.
-- `screenconnect-relays.csv` - observed relay host, port, thumbprints,
-  first/last seen (UTC), report count, and receipt IDs.
-- `connectwise-abuse-summary.txt` - technician-readable abuse summary of the
-  same observed relays.
-- `screenconnect-relays.json` - the structured export: receipts analyzed,
-  ignored-instance count, and the `observed` relay list with thumbprints,
-  first/last seen, report counts, and receipt IDs.
-
-Relays are deduplicated across receipts while thumbprint associations are
-preserved. Observed data is kept separate from any external IOC list: pass
-`--external-ioc-list FILE` (one host, `host:port`, or thumbprint per line, `#`
-comments allowed) and matching observed relays are reported in a clearly
-labelled external section of the JSON and summary, never merged into the
-observed list. The command refuses to write over an existing output file or
-into the relay storage directory, and supports `--since-unix` to limit the
-receipts analyzed. Install the `relay/screenconnect-report-relay-ioc-export`
-wrapper to `/usr/local/sbin/` alongside the bulk-export wrapper.
-
-### Optional MicroBin paste sharing (separate user-selected server)
-
-MicroBin is an optional paste server of your own choosing. When you configure
-one, the uploader additionally posts the sanitized report JSON as a private,
-read-only paste that expires after one week and prints the created paste URL.
-It is a **separate server - never a ConnectWise submission** - and no MicroBin
-request is ever made unless a URL is configured:
+MicroBin is a paste server of your choosing; the share posts the sanitized
+report JSON as a private, read-only paste that expires after one week and
+prints the created paste URL. It is a **separate server - never a ConnectWise
+submission** - and no request is ever made unless a URL is configured:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.ps1 `
@@ -222,18 +156,21 @@ powershell -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.ps1 `
   -MicroBinUploaderPasswordFile "C:\RIT-SCC\secrets\microbin-uploader-password.txt"
 ```
 
+- Without `-MicroBinUrl` the uploader reads the first nonblank line of
+  `microbin-url.txt` beside the script (the deploy bundle ships it configured
+  to `https://reports.aygross.xyz`). With no URL configured anywhere, the
+  local package stays and no network request is made.
 - `-RunPath` locates `findings.json` under the run root (run root itself, or
   one level under its `detect\` folder) and defaults the package output to that
   root, so the operator never has to find `findings.json` by hand. The existing
   `-FindingsJson` + `-WorkDir` pair remains fully supported.
-- `-MicroBinUrl` is the server base URL; the script posts multipart form data
-  to the MicroBin create endpoint (`POST /upload`): `content` (the sanitized
-  `connectwise-report.json` text), `privacy=readonly`, a bounded
-  `expiration=1week`, and `uploader_password` only when one is configured.
-  MicroBin has no separate readonly flag: `readonly` is a privacy level that is
-  not publicly listed and cannot be edited, and it degrades to an unlisted
-  paste on servers that do not enable readonly. HTTPS is enforced unless
-  `-AllowInsecureRelay` (local tests only).
+- The script posts multipart form data to the MicroBin create endpoint
+  (`POST /upload`): `content` (the sanitized `connectwise-report.json` text),
+  `privacy=readonly`, a bounded `expiration=1week`, and `uploader_password`
+  only when one is configured. MicroBin has no separate readonly flag:
+  `readonly` is a privacy level that is not publicly listed and cannot be
+  edited, and it degrades to an unlisted paste on servers that do not enable
+  readonly. HTTPS is enforced unless `-AllowInsecureRelay` (local tests only).
 - The uploader password is read from `-MicroBinUploaderPasswordFile` or the
   `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD` environment variable and never
   appears in command lines, logs, or error text. Uploads are never
@@ -249,49 +186,23 @@ powershell -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.ps1 `
   HTML-escaped link (never raw server text). A failed upload leaves the
   report untouched, and a report path that is missing or malformed fails
   loudly so a wiring problem cannot pass as an upload success.
-- Guided runs (`START-HERE.bat`) ask once at the start of every run:
-  "Upload the sanitized report to MicroBin? [y/N]" (default no - a blank or
-  `n` answer never uploads). Answer `y` and the runner uses the first
-  nonblank line of `microbin-url.txt` (the file beside `START-HERE.bat`); if
-  that file is missing or empty it prompts for the server base URL once,
-  accepts only an `https://` URL with no embedded credentials, saves it to
-  `microbin-url.txt` for future runs, and uses it for this run. The URL file
-  is for the URL only - never put a password in it.
+- Guided runs (`START-HERE.bat`) share automatically at the report step: there
+  is no per-run opt-in question and no URL prompt. Edit `microbin-url.txt`
+  (first line) to point at a different server. The default server is
+  passwordless, so START-HERE never prompts for or stores an uploader
+  password. If your server requires one, pre-configure it before the run:
+  point `SCC_MICROBIN_UPLOADER_PASSWORD_FILE` at a file containing it (passed
+  through unchanged, never deleted by the runner), or export
+  `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD` in the session (the uploader
+  reads it from the environment itself).
 
-  Guided-run operator steps:
-
-  1. Start `START-HERE.bat`. At "Upload the sanitized report to MicroBin?
-     [y/N]" answer `y` to share, or `n`/Enter for a relay-only run.
-  2. First time only: type the server base URL as `https://host` when
-     prompted. It is saved to `microbin-url.txt` beside the tool and reused
-     on later runs (edit that file or delete it to change servers).
-  3. There is no uploader-password prompt: the default server is
-     passwordless, so START-HERE never asks for or stores an uploader
-     password. If your server requires one, pre-configure it before the
-     run: point `SCC_MICROBIN_UPLOADER_PASSWORD_FILE` at a file containing
-     it (passed through unchanged, never deleted by the runner), or export
-     `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD` in the session (the
-     uploader reads it from the environment itself).
-  4. The report step prints `MICROBIN UPLOAD: <paste-url>` on success and adds
-     the paste URL to that run's `report.html` (HTML-escaped; no link is
-     added when the upload fails). An invalid URL or failed upload is
-     reported as a failure; the local `connectwise-report.zip` is always
-     retained.
-
-  The deploy bundle contains the configured MicroBin base URL. If the file is
-  empty, populate it by answering `y` and typing the URL once, or by editing
-  the file directly before the run. `sc-cleanup.ps1` and
-  `detect-remote-access.ps1` accept `-MicroBinUrl` and
-  `-MicroBinUploaderPasswordFile` directly. The default server is
-  passwordless; START-HERE never prompts for or stores an uploader password.
-
-The relay is a holding area, not an automatic ConnectWise submission service.
+The share is a holding area, not an automatic ConnectWise submission service.
 The official reporting route remains the ConnectWise Trust Center and its
 published vulnerability-disclosure process:
 
 `https://www.connectwise.com/company/trust/security/vulnerability-disclosure-policy`
 
-No supported ConnectWise upload API was established, so the exported bundle
+No supported ConnectWise upload API was established, so the exported package
 must be reviewed and attached through the official workflow later. Do not add
 credentials for the ConnectWise site to this tool.
 
@@ -307,11 +218,9 @@ credentials for the ConnectWise site to this tool.
 | `-IncidentDate yyyy-MM-dd` | anchor the incident window weighting |
 | `-WhatIf` | show what would run; execute nothing |
 | `-MinFreeGB <n>` | recommended free-space threshold for `sc-cleanup.ps1` and `Invoke-ReviewAndRemove.ps1` (default 10); below it, prompt for explicit `Y`/`Yes` continuation |
-| `-ReportRelayUrl <url>` | authenticated report relay endpoint (default `https://reports.aygross.xyz/v1/uploads`) |
-| `-ReportUploadTokenFile <path>` | client token file; default `%ProgramData%\ScreenConnectCleanup\report-relay-token.txt` |
-| `-NoReportUpload` | create no automatic upload from `sc-cleanup.ps1`; the sanitized package is still created locally |
-| `-MicroBinUrl <url>` | optional MicroBin paste-server base URL (separate user-selected server, never ConnectWise); posts a private read-only one-week paste of the sanitized report JSON when set |
+| `-MicroBinUrl <url>` | MicroBin paste-server base URL; overrides `microbin-url.txt` (never ConnectWise); posts a private read-only one-week paste of the sanitized report JSON |
 | `-MicroBinUploaderPasswordFile <path>` | MicroBin uploader password file, for servers that require one (environment fallback: `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD`) |
+| `-NoShare` | create the local sanitized package but do not share it (`Submit-ConnectWiseReport.ps1`: `-NoUpload`) |
 
 ## 5. Before you trust it — outstanding live validation
 
@@ -328,8 +237,11 @@ owner tests live). In priority order:
    KVRT scan). Defender was removed from the line-up (owner, 2026-08-26).
 4. Confirm Get-ToolPack downloads complete on the target's network.
 
-Nothing destructive ships: Stage 4 (removal) is a stub behind the review gate.
-Do not build/rely on removal until M0 confirms the key map.
+Removal (Stage 4 / `remove-screenconnect.ps1`) is dry-run by default and gated
+behind the technician review: `START-HERE.bat` step 5 and `sc-cleanup.ps1`
+stage 3 ask ONE typed confirmation that removes all detected ScreenConnect
+instances. Removal has not been validated on live Windows against a real
+install; do not rely on it until M0 confirms the key map.
 
 ## 6. House rules for anyone editing here
 

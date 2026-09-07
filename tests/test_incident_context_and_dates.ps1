@@ -113,7 +113,7 @@ try {
     Check 'launcher reads the validated pair into run-scoped variables' ($batSource.Contains('SCC_CTX_AUTH') -and $batSource.Contains('SCC_CTX_DELIVERY')) $batPath
     Check 'launcher gates context args on the recorded values' ($batSource.Contains('if defined SCC_CTX_AUTH') -and $batSource.Contains('if defined SCC_CTX_DELIVERY')) $batPath
     Check 'launcher forwards context to the report uploader' ($batSource.Contains('-IncidentAuthorization') -and $batSource.Contains('-IncidentDelivery')) $batPath
-    Check 'launcher keeps the MicroBin and relay arguments' ($batSource.Contains('SCC_MICROBIN_URL') -and $batSource.Contains('reports.aygross.xyz/v1/uploads')) $batPath
+    Check 'launcher shares via the uploader with no relay or opt-in gate' (($batSource.Contains('Submit-ConnectWiseReport.ps1')) -and (-not $batSource.Contains('reports.aygross.xyz/v1/uploads')) -and (-not $batSource.Contains('SCC_MICROBIN_URL'))) $batPath
     Check 'deploy bundle carries the incident-context resolver' ($bundleSource.Contains('Resolve-IncidentContext.ps1')) $bundlePath
     Check 'uploader declares the incident-context parameters' ($uploaderSource.Contains('$IncidentAuthorization') -and $uploaderSource.Contains('$IncidentDelivery') -and $uploaderSource.Contains('$RunPath')) $uploaderPath
     Check 'uploader validates explicit context values' ($uploaderSource.Contains('Assert-IncidentAuthorization') -and $uploaderSource.Contains('Assert-IncidentDelivery')) $uploaderPath

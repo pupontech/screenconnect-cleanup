@@ -18,6 +18,10 @@
   typed review and confirmation prompts. The former -Yes compatibility switch is
   rejected because automatic destructive approval is not safe.
 
+  Review model (owner directive): ONE typed confirmation removes ALL detected
+  ScreenConnect instances. There is no per-instance selection and no second
+  confirmation prompt - the single y/N answer below is the only removal prompt.
+
   PS 5.1 compatible. Pure ASCII, no BOM.
   Exit codes: 0 = ok (including "nothing to do"), 1 = removal reported failure.
 #>
@@ -77,8 +81,11 @@ function Confirm-LowDiskSpace {
         [int]$MinFreeGB
     )
     Write-Line ("WARNING: Only {0} GB free on {1}; the recommended minimum is {2} GB." -f $FreeGB, $Path, $MinFreeGB) 'Yellow'
+    # Emit the prompt text explicitly: with redirected stdin (CI, piped runs),
+    # Read-Host does not echo the prompt on Windows PowerShell 5.1.
+    Write-Host 'Continue anyway? [y/N]' -NoNewline
     try {
-        $answer = Read-Host 'Continue anyway? [y/N]'
+        $answer = Read-Host
     } catch {
         Write-Line ("Could not read the low-disk confirmation: " + $_.Exception.Message) 'Red'
         return $false
@@ -143,47 +150,30 @@ if ($instances.Count -eq 0) {
 
 Write-Line ""
 Write-Line ("Found " + $instances.Count + " ScreenConnect instance(s).") 'White'
-
-# --- Review gate ------------------------------------------------------------
-$approved = New-Object System.Collections.ArrayList
-$n = 0
 foreach ($inst in $instances) {
-    $n++
     $id = Get-Prop $inst 'Identifier'
     if (-not $id) { $id = Get-Prop $inst 'Key' }
-    if (-not $id) { $id = "(unidentified $n)" }
-
-    Write-Line ""
-    Write-Line ("Instance " + $n + "/" + $instances.Count + ": " + $id) 'White'
-    foreach ($f in @('InstallDir','ServiceName','RelayHost','SessionType','DisplayVersion','Publisher')) {
-        $v = Get-Prop $inst $f
-        if ($v) { Write-Line ("    {0,-15} {1}" -f ($f + ':'), $v) }
-    }
-
-    # KEEP is the default. ScreenConnect is legitimate software a client's
-    # own IT may have installed deliberately, so a careless Enter must not
-    # remove anything. Explicit 'y' is required to mark an instance.
-    do {
-        $d = Read-Host 'Remove this instance? [y/N]'
-        if ([string]::IsNullOrWhiteSpace($d)) { $d = 'N' }
-        $d = $d.Trim().Substring(0,1).ToUpperInvariant()
-    } while ($d -ne 'Y' -and $d -ne 'N')
-    if ($d -eq 'Y') { [void]$approved.Add($inst) } else { Write-Line "  Keeping $id." }
-}
-
-if ($approved.Count -eq 0) {
-    Write-Line ""
-    Write-Line "Nothing marked for removal - done." 'Green'
-    exit 0
+    if (-not $id) { $id = '(unidentified)' }
+    Write-Line ("    - " + $id) 'Gray'
+    $installDir = Get-Prop $inst 'InstallDir'
+    if ($installDir) { Write-Line ("        Install directory: " + $installDir) 'Gray' }
+    $relayHost = Get-Prop $inst 'RelayHost'
+    if ($relayHost) { Write-Line ("        Relay host: " + $relayHost) 'Gray' }
 }
 
 # --- Confirmation -----------------------------------------------------------
-$confirmed = $false
+# ONE typed confirmation covers every detected instance (owner directive).
+# Every ScreenConnect instance in the current findings is a removal candidate;
+# a single y answers for all of them. Files are quarantined, never deleted.
 Write-Line ""
-Write-Line ($approved.Count.ToString() + " instance(s) marked REMOVE.") 'Yellow'
-Write-Line "Files are quarantined, never deleted. Type y to proceed." 'Yellow'
+Write-Line ($instances.Count.ToString() + " ScreenConnect instance(s) will be removed on 'y'.") 'Yellow'
+Write-Line "Files are quarantined, never deleted. Type y to remove all detected instances."
+# Emit the prompt text explicitly: with redirected stdin (CI, piped runs),
+# Read-Host does not echo the prompt on Windows PowerShell 5.1.
+Write-Host 'Remove all detected ScreenConnect instances? [y/N]' -NoNewline
+$confirmed = $false
 do {
-    $c = Read-Host 'Proceed with removal? [y/N]'
+    $c = Read-Host
     if ([string]::IsNullOrWhiteSpace($c)) { $c = 'N' }
     $c = $c.Trim().Substring(0,1).ToUpperInvariant()
 } while ($c -ne 'Y' -and $c -ne 'N')
@@ -211,8 +201,8 @@ if (-not (Test-Path -LiteralPath $WorkDir)) {
     $null = New-Item -ItemType Directory -Path $WorkDir -Force
 }
 
-$decision = 'PARTIAL_REMOVE'
-if ($approved.Count -eq $instances.Count) { $decision = 'ALL_REMOVE' }
+$decision = 'ALL_REMOVE'
+if ($instances.Count -eq 0) { $decision = 'KEEP_ALL' }
 
 $planPath = Join-Path $WorkDir 'plan.json'
 $sourceFindingsHash = (Get-FileHash -LiteralPath $FindingsJson -Algorithm SHA256 -ErrorAction Stop).Hash
@@ -226,7 +216,7 @@ $plan = [ordered]@{
     SourceFindings          = $FindingsJson
     SourceFindingsSha256    = $sourceFindingsHash
     RemovalConfirmed        = $true
-    ScreenConnectInstances  = $approved.ToArray()
+    ScreenConnectInstances  = $instances
 }
 $plan | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $planPath -Encoding UTF8 -NoNewline
 Write-Line ""

@@ -226,21 +226,16 @@ function Get-DownloadFile {
     Say ("Downloading " + $Label + "...")
     try {
         Start-DownloadFast -Url $Url -OutFile $part -Label $Label
+        $item = Get-Item -LiteralPath $part -ErrorAction Stop
+        # Version resources are optional display metadata. Failure to read them
+        # must not bypass mandatory size/PE validation or authorize replacement.
         try {
-            $item = Get-Item -LiteralPath $part -ErrorAction Stop
             $ver = $item.VersionInfo.FileVersion
             if ($ver) { Say ("       version: " + $ver + "  size: " + $item.Length) 'DarkGray' }
-            # A real KVRT/EOS download is tens of MB. A tiny file means an HTML
-            # error page or a partial/interrupted download; a larger file can
-            # still be a truncated download. Validate the PE header too, so a
-            # corrupt exe can never be swapped in (it would 'launch' silently
-            # and fail - the "KVRT no longer launches" failure mode).
-            if ($item.Length -lt 1048576 -or -not (Test-PeExecutable -Path $part)) {
-                Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
-                Say ("  FAILED: " + $Label + " looks incomplete or corrupt (" + $item.Length + " bytes, not a valid executable) - removed, re-run staging.") 'Yellow'
-                return $false
-            }
         } catch { }
+        if ($item.Length -lt 1048576 -or -not (Test-PeExecutable -Path $part)) {
+            throw ($Label + " looks incomplete or corrupt (" + $item.Length + " bytes, not a valid executable) - re-run staging.")
+        }
         # Swap into place only after the sanity check passed. -Force also
         # replaces a corrupt copy from an older run.
         Move-Item -LiteralPath $part -Destination $Dest -Force -ErrorAction Stop

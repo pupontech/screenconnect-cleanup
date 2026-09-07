@@ -176,114 +176,69 @@ preserved. When a caller passes `-TranscriptCopyDir` (the guided runner and
 `sc-cleanup.ps1` pass the `C:\RIT-SCC` run root), the copy lands there instead,
 so the run folder holds the detection log next to the report.
 
-### Automatic sanitized report holding
+### Automatic sanitized report sharing (MicroBin only)
 
-When the relay token is installed on the client, the runner also creates
-`connectwise-report.zip` and uploads it to `https://reports.aygross.xyz/v1/uploads`.
-The upload is authenticated with the token in
-`%ProgramData%\ScreenConnectCleanup\report-relay-token.txt` or the
-`SCREENCONNECT_REPORT_UPLOAD_TOKEN` environment variable. Without a token, no
+Guided runs (`START-HERE.bat`), the top-level runner (`sc-cleanup.ps1`), and a
+standalone detection run all share the sanitized report to the configured
+MicroBin server after the report exists; there is no other share path. The
+share is automatic: `START-HERE.bat` does not ask a per-run opt-in question.
+
+The share destination is the MicroBin server base URL in `microbin-url.txt`
+next to the tool (first nonblank line). The deploy bundle ships it configured
+to `https://reports.aygross.xyz`. When a caller passes `-MicroBinUrl` it wins;
+`sc-cleanup.ps1` and `detect-remote-access.ps1` accept `-MicroBinUrl` and
+`-MicroBinUploaderPasswordFile` directly. With no URL configured anywhere, no
 network request is made and the local package remains available.
 
-The package contains ScreenConnect thumbprints, relay/domain details, session
-metadata, suspicious file names/hashes, connection indicators, parse issues,
-the operator-recorded incident context (authorization + delivery), and each
-instance's best observed installation date with its basis. It omits raw config
-contents, raw evidence, parameter blobs, account names, credentials, and
-private keys; user-profile paths are normalized. The relay stores encrypted
-receipts for later root-only bulk export. It does not submit to ConnectWise
-automatically. Review the package and use the official Trust Center workflow
-when you are ready to send a batch.
+The local run folder keeps a sanitized `connectwise-report.zip` archive
+(report JSON + technician TXT + package manifest) and `report.html`. The
+MicroBin paste is the sanitized report JSON, created with `privacy=readonly`
+and a bounded one-week expiration - not the raw evidence, and never a
+ConnectWise submission. The paste contains ScreenConnect thumbprints,
+relay/domain details, session metadata, suspicious file names/hashes,
+connection indicators, parse issues, the operator-recorded incident context
+(authorization + delivery), and each instance's best observed installation
+date with its basis. It omits raw config contents, raw evidence, parameter
+blobs, account names, credentials, and private keys; user-profile paths are
+normalized. Review the local package and use the official ConnectWise Trust
+Center workflow when you are ready to send a batch - this tool never submits
+to ConnectWise automatically.
 
 Guided runs (`START-HERE.bat`) prompt once at the report step for the incident
-context that goes on the package: whether the activity was `Authorized` or
+context that goes on the share: whether the activity was `Authorized` or
 `Not authorized` (default), and how it was delivered (`Email invite scam` by
 default, or `Other` with a short description). Blank answers resolve to the
 safe defaults; invalid or ambiguous input is refused and re-prompted
 (`Resolve-IncidentContext.ps1`). The validated pair is stored in the run root
-(`incident-context.txt`) and embedded in the JSON/TXT package and any MicroBin
+(`incident-context.txt`) and embedded in the JSON/TXT package and the MicroBin
 paste; unattended uploads without context report `Not available`.
 
-### Optional MicroBin paste sharing (separate user-selected server)
+On a successful share the paste URL is appended to the run's generated HTML
+report (`report.html`): the runner passes the report path to the uploader
+(`-ReportHtml`), and the uploader appends a small "Sanitized paste
+(MicroBin)" line. The URL is HTML-escaped before it is written, so a crafted
+server `Location` header can never close an attribute or inject markup. A
+failed share never touches the report, and the local
+`connectwise-report.zip` always stays on disk; an invalid URL or a failed
+upload is reported as a failure and never hides the local evidence.
 
-MicroBin (<https://github.com/szabodanika/microbin>) is an optional paste server
-**you pick yourself**. When you configure one, the uploader additionally posts
-the same sanitized report JSON as a private, read-only, time-limited paste and
-prints the paste URL. It is a separate server - never a ConnectWise submission,
-never the private relay - and nothing is sent anywhere unless you configure a
-URL:
+Operator workflow in the guided runner:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.ps1 `
-  -RunPath "C:\RIT-SCC\<host>-<guid>" `
-  -MicroBinUrl "https://paste.example.org" `
-  -MicroBinUploaderPasswordFile "C:\path\to\microbin-uploader-password.txt"
-```
-
-- `-RunPath` points at a run root; the script locates that run's
-  `findings.json` (run root, or one level under its `detect\` folder - the same
-  rule the guided runner uses) and writes the package next to the run. The
-  existing `-FindingsJson` + `-WorkDir` contract still works unchanged.
-- `-MicroBinUrl` is the server base URL; the create endpoint (`POST /upload`)
-  is appended automatically. HTTPS is enforced; plain `http` is refused outside
-  local tests (`-AllowInsecureRelay`).
-- The uploader password is read from `-MicroBinUploaderPasswordFile`, falling
-  back to the `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD` environment variable,
-  and is only sent when configured. It never appears in command lines, logs, or
-  error text.
-- The paste body is the sanitized `connectwise-report.json` text (same
-  allowlist as the ZIP: no raw evidence, no credentials, no account names;
-  user-profile paths normalized). It is created with `privacy=readonly` and a
-  bounded one-week expiration; each run creates one new paste with no automatic
-  retry. The created URL is printed as `MICROBIN UPLOAD: <url>`.
-- On a successful paste the URL is also added to the run's generated HTML
-  report (`report.html`): the runner passes the report path to the uploader
-  (`-ReportHtml`), and the uploader appends a small "Sanitized paste
-  (MicroBin)" line. The URL is HTML-escaped before it is written, so a
-  crafted server `Location` header can never close an attribute or inject
-  markup. A failed upload never touches the report, and no paste link is
-  produced when MicroBin is not configured.
-- Guided runs (`START-HERE.bat`) ask once at the start of every run:
-  "Upload the sanitized report to MicroBin? [y/N]" - the default is **no**,
-  and a blank/no answer never uploads anything to MicroBin. Answer `y` and
-  the runner reads the server base URL from `microbin-url.txt` (the first
-  nonblank line of the file that sits next to `START-HERE.bat`); when the
-  file is missing or empty it prompts for the `https://` base URL once,
-  validates it (https only, ASCII, no embedded credentials), and saves it to
-  that file for future runs. The URL file never holds passwords. The default
-  MicroBin server is passwordless: START-HERE never prompts for an uploader
-  password and never creates or deletes a password file. Only when your
-  server requires an uploader password do you pre-configure it before the
-  run (step 4 below); the runner passes your password file through
-  unchanged.
-
-  Operator workflow in the guided runner:
-
-  1. Start `START-HERE.bat`.
-  2. At "Upload the sanitized report to MicroBin? [y/N]" press `y` to enable
-     sharing, or `n`/Enter to skip (relay-only run). The answer is per run:
-     `n` today does not clear a saved URL, `y` later simply reuses it.
-  3. First time only: type the server base URL as `https://host` when asked.
-     It is saved to `microbin-url.txt` next to the tool and reused from then
-     on. To point at a different server, edit that file (first line) or
-     delete it and answer `y` on the next run.
-  4. There is no uploader-password prompt: the default server is
-     passwordless. If your MicroBin server requires an uploader password,
-     pre-configure it before the run - point
-     `SCC_MICROBIN_UPLOADER_PASSWORD_FILE` at a file that contains it (the
-     runner passes that path through unchanged and never deletes the file),
-     or export `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD` (the uploader
-     reads it from the environment itself). Leave both unset for a
-     passwordless server.
-  5. The report step prints `MICROBIN UPLOAD: <paste-url>` on success and
-     adds the paste URL to that run's `report.html` (HTML-escaped; no link
-     is added when the upload fails). The local `connectwise-report.zip`
-     always stays on disk; an invalid URL or a failed upload is reported as
-     a failure and never hides the local evidence.
-
-  `sc-cleanup.ps1` and `detect-remote-access.ps1` accept `-MicroBinUrl` and
-  `-MicroBinUploaderPasswordFile` directly (no prompt). With none of these
-  configured, no MicroBin request is ever made.
+1. Start `START-HERE.bat`. Steps run in order; steps 1-4 and 8-9 run
+   automatically, step 5 asks ONE typed confirmation before removal, and
+   steps 6-7 are attended.
+2. There is no sharing question and no password prompt: the report step reads
+   the server base URL from `microbin-url.txt` and shares automatically. The
+   default MicroBin server is passwordless, so START-HERE never prompts for or
+   stores an uploader password.
+3. Only when your MicroBin server requires an uploader password, pre-configure
+   it before the run: point `SCC_MICROBIN_UPLOADER_PASSWORD_FILE` at a file
+   that contains it (the runner passes that path through unchanged and never
+   deletes the file), or export `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD`
+   (the uploader reads it from the environment itself).
+4. The report step prints `MICROBIN UPLOAD: <paste-url>` on success and adds
+   the paste URL to that run's `report.html` (HTML-escaped; no link is added
+   when the share fails).
 
 ### Where a run's key artifacts land
 

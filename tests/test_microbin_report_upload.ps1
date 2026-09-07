@@ -36,7 +36,7 @@ function Check {
 Check 'uploader declares MicroBin parameters' ($uploaderSource.Contains('$MicroBinUrl') -and $uploaderSource.Contains('$MicroBinUploaderPasswordFile') -and $uploaderSource.Contains('$RunPath')) $uploaderSource
 Check 'cleanup runner passes MicroBin through' ($cleanupSource.IndexOf('-MicroBinUrl', [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -and $cleanupSource.Contains('-MicroBinUploaderPasswordFile')) $cleanupSource
 Check 'standalone detector passes MicroBin through' ($detectorSource.Contains('-MicroBinUrl') -and $detectorSource.Contains('-MicroBinUploaderPasswordFile')) $detectorSource
-Check 'guided launcher honors optional MicroBin env config' ($startSource.Contains('SCC_MICROBIN_URL') -and $startSource.Contains('SCC_MICROBIN_UPLOADER_PASSWORD_FILE')) $startSource
+Check 'guided launcher shares through the uploader with no env wiring' (($startSource.Contains('Submit-ConnectWiseReport.ps1')) -and (-not $startSource.Contains('SCC_MICROBIN_URL')) -and (-not $startSource.Contains('SCC_MICROBIN_UPLOADER_PASSWORD_FILE'))) $startSource
 Check 'uploader sends no expiry beyond the bounded default' ($uploaderSource.Contains("MicroBinExpiration = '1week'")) $uploaderSource
 Check 'uploader refuses to follow redirects' ($uploaderSource.Contains('AllowAutoRedirect = $false')) $uploaderSource
 
@@ -227,8 +227,7 @@ try {
         Check 'context description is never echoed to the console' ($text -notmatch 'SMS lure') $text
         Check 'sanitized identifiers and relay details are retained' ($bodyText -match 'ABCDEF123456' -and $bodyText -match 'evil-relay.example') $bodyText
         Check 'raw evidence and secrets are excluded from the paste' ($bodyText -notmatch 'do-not-upload-this-secret' -and $bodyText -notmatch 'RunAsUser') $bodyText
-        Check 'user profile paths are normalized in the paste' ($bodyText -notmatch 'C:\\Users\\Bob' -and $bodyText -match '<USERPROFILE>') $bodyText
-        Check 'relay skip message coexists (no token configured)' ($text -match 'REPORT UPLOAD: skipped; no authenticated relay token is configured') $text
+        Check 'user profile paths are normalized in the paste' ($bodyText -notmatch 'C:' + [regex]::Escape('\Users\Bob') -and $bodyText -match 'USERPROFILE') $bodyText
     } else {
         Check 'multipart field details were captured' $false (($out.Output -join "`n"))
     }

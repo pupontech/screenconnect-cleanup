@@ -142,14 +142,6 @@ jobs:
         shell: pwsh
         run: ./tests/test_connectwise_report_upload.ps1
 
-      - name: MicroBin guided-run URL configuration regression (Windows PowerShell 5.1)
-        shell: powershell
-        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/test_microbin_run_url_config.ps1
-
-      - name: MicroBin guided-run URL configuration regression (pwsh)
-        shell: pwsh
-        run: ./tests/test_microbin_run_url_config.ps1
-
       - name: MicroBin paste URL in HTML report regression (Windows PowerShell 5.1)
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/test_microbin_report_html_link.ps1
@@ -165,6 +157,50 @@ jobs:
       - name: Run-folder transcript copy regression (pwsh)
         shell: pwsh
         run: ./tests/test_run_artifact_copies.ps1
+
+      - name: Review regressions - staging, evidence, TCP inventory (5.1)
+        shell: powershell
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/test_av_staging_validation.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/test_diff_evidence.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/test_detector_connections.ps1
+          exit $LASTEXITCODE
+
+      - name: Review regressions - staging, evidence, TCP inventory (pwsh)
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File ./tests/test_av_staging_validation.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoProfile -File ./tests/test_diff_evidence.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoProfile -File ./tests/test_detector_connections.ps1
+          exit $LASTEXITCODE
+
+      - name: MicroBin loopback upload regression (Windows PowerShell 5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/test_microbin_report_upload.ps1
+
+      - name: MicroBin loopback upload regression (pwsh)
+        shell: pwsh
+        run: ./tests/test_microbin_report_upload.ps1
+
+      - name: Incident context and dates regression (Windows PowerShell 5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/test_incident_context_and_dates.ps1
+
+      - name: Incident context and dates regression (pwsh)
+        shell: pwsh
+        run: ./tests/test_incident_context_and_dates.ps1
+
+      - name: Download diagnostics classifier fixtures (Windows PowerShell 5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/test_malwarebytes_download_diagnostics.ps1
+
+      - name: Download diagnostics classifier fixtures (pwsh)
+        shell: pwsh
+        run: ./tests/test_malwarebytes_download_diagnostics.ps1
 
       - name: Relay and bulk-export unit tests
         shell: pwsh
