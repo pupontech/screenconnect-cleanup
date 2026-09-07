@@ -3,7 +3,7 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
-## [Unreleased]
+## [1.7.49] - 2026-09-07
 - Scanner staging now fails closed if downloaded-file metadata or mandatory PE
   validation fails. Optional version text is kept separate from validation; an
   unvalidated replacement cannot overwrite the existing staged scanner.
@@ -15,9 +15,14 @@ and carries a `VERSION` file so each build is self-identifying.
   zero/singleton/multiple connections serialize consistently as arrays.
 - Escaped scanner JSON-parser errors in the HTML warning as well as the table.
   Malformed input containing HTML in a property name cannot inject report markup.
-- Added non-destructive behavior regressions and wired the new suites into
-  Windows CI under PowerShell 5.1 and 7. Local verification is Linux/pwsh only;
-  Windows execution and live-machine acceptance remain pending.
+- Added non-destructive behavior regressions, including MicroBin loopback
+  uploads, incident context/dates, and download-diagnostic classification.
+  Windows CI passed on Server 2022 and 2025 under PowerShell 5.1 and 7.
+  Destructive removal and live technician acceptance remain unverified.
+- Fixed prompt visibility under redirected stdin in Windows PowerShell 5.1.
+  Low-space probes now account for the Windows Server OS guard, and report
+  assertions tolerate PowerShell 5.1 JSON angle-bracket escaping.
+- Aligned script version banners and report metadata with VERSION (1.7.49).
 - Report sharing is now MicroBin only: removed the authenticated relay upload
   of the sanitized report ZIP (relay URL/token parameters, token file lookup,
   upload retry, and the relay invocation in Submit-ConnectWiseReport.ps1 are
