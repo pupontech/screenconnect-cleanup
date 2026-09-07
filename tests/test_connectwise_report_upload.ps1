@@ -96,7 +96,7 @@ try {
         Check 'installation identifier is retained' ($report.ScreenConnect.Instances[0].Identifier -eq 'ABCDEF123456') $reportText
         Check 'relay host is retained' ($report.ScreenConnect.Instances[0].RelayHost -eq 'evil-relay.example') $reportText
         Check 'secret fields are omitted' ($reportText -notmatch 'do-not-upload-this-secret' -and $reportText -notmatch 'RunAsUser') $reportText
-        Check 'user profile paths are normalized' ($reportText -notmatch 'C:\\Users\\Alice' -and $reportText -match '<USERPROFILE>') $reportText
+        Check 'user profile paths are normalized' ($reportText -notmatch 'C:' + [regex]::Escape('\Users\Alice') -and $reportText -match 'USERPROFILE') $reportText
     } finally {
         $archive.Dispose()
     }

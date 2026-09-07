@@ -227,7 +227,7 @@ try {
         Check 'context description is never echoed to the console' ($text -notmatch 'SMS lure') $text
         Check 'sanitized identifiers and relay details are retained' ($bodyText -match 'ABCDEF123456' -and $bodyText -match 'evil-relay.example') $bodyText
         Check 'raw evidence and secrets are excluded from the paste' ($bodyText -notmatch 'do-not-upload-this-secret' -and $bodyText -notmatch 'RunAsUser') $bodyText
-        Check 'user profile paths are normalized in the paste' ($bodyText -notmatch 'C:\\Users\\Bob' -and $bodyText -match '<USERPROFILE>') $bodyText
+        Check 'user profile paths are normalized in the paste' ($bodyText -notmatch 'C:' + [regex]::Escape('\Users\Bob') -and $bodyText -match 'USERPROFILE') $bodyText
     } else {
         Check 'multipart field details were captured' $false (($out.Output -join "`n"))
     }
