@@ -16,8 +16,9 @@
   Nothing destructive is reachable without explicit flags and the review gate.
   -ExecuteRemoval pre-authorizes Stage 4 for lab/VM testing: every detected
   ScreenConnect instance is auto-marked REMOVE and the typed confirmation is
-  waived (KEEP remains the default in the normal interactive review gate).
-  It still honors -sr. Do not use it on a client machine.
+  waived. The normal interactive review gate asks ONE typed confirmation to
+  remove all detected ScreenConnect instances. It still honors -sr. Do not
+  use -ExecuteRemoval on a client machine.
   PowerShell 5.1 compatible. Pure ASCII, no BOM.
 #>
 
@@ -42,14 +43,12 @@ param(
     # Debug / development
     [switch]$WhatIf,         # show what would run, execute nothing
     [switch]$VerboseLog,     # verbose stage logging
-    [string]$ReportRelayUrl = 'https://reports.aygross.xyz/v1/uploads',
-    [string]$ReportUploadTokenFile,
-    [switch]$NoReportUpload,  # create the package but do not send it
-    # Optional MicroBin paste sharing: pass-through values for the report
-    # uploader; entirely off when unset. MicroBin is a separate user-selected
-    # paste server, never a ConnectWise submission.
+    # Report sharing (MicroBin only; no relay): the report step shares the
+    # sanitized report JSON to the MicroBin server. The server base URL comes
+    # from microbin-url.txt beside the script unless -MicroBinUrl is given.
     [string]$MicroBinUrl,
     [string]$MicroBinUploaderPasswordFile,
+    [switch]$NoShare,         # create the local package but do not share it
     [switch]$Debug           # full debug logger: console transcript + debug
                              # detail to <WorkDir>\logs\debug.log (v1.7.26)
 )
@@ -399,7 +398,7 @@ Write-StageLog "Master log: $MasterLogPath"
 Add-Content -Path $MasterLogPath -Value "sc-cleanup.ps1 v$ScriptVersion - Master Log" -Encoding UTF8
 Add-Content -Path $MasterLogPath -Value "Started: $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))" -Encoding UTF8
 Add-Content -Path $MasterLogPath -Value "Host: $hostName  OS: $osCaption  PS: $psVersion  Admin: $isAdmin  Server: $isServer" -Encoding UTF8
-Add-Content -Path $MasterLogPath -Value "Flags: sa=$sa sr=$sr np=$np offline=$offline procmon=$procmon force=$force ExecuteRemoval=$ExecuteRemoval NoReportUpload=$NoReportUpload MinFreeGB=$MinFreeGB" -Encoding UTF8
+Add-Content -Path $MasterLogPath -Value "Flags: sa=$sa sr=$sr np=$np offline=$offline procmon=$procmon force=$force ExecuteRemoval=$ExecuteRemoval NoShare=$NoShare MinFreeGB=$MinFreeGB" -Encoding UTF8
 Add-Content -Path $MasterLogPath -Value "IncidentDate: $IncidentDate" -Encoding UTF8
 
 # --- Debug logger (v1.7.26): -Debug captures a full console transcript ---
@@ -415,7 +414,7 @@ if ($Debug) {
         Start-Transcript -Path $DebugLogPath -Force -ErrorAction Stop | Out-Null
         $DebugPreference = 'Continue'
         Write-StageLog ("DEBUG LOGGER ACTIVE - transcript: " + $DebugLogPath) 'Debug'
-        Write-Dbg ("sc-cleanup.ps1 v" + $ScriptVersion + " flags: sa=" + $sa + " sr=" + $sr + " avu=" + $avu + " np=" + $np + " offline=" + $offline + " procmon=" + $procmon + " force=" + $force + " ExecuteRemoval=" + $ExecuteRemoval + " NoReportUpload=" + $NoReportUpload + " IncidentDate=" + $IncidentDate + " OutRoot=" + $OutRoot + " ToolDir=" + $ToolDir)
+        Write-Dbg ("sc-cleanup.ps1 v" + $ScriptVersion + " flags: sa=" + $sa + " sr=" + $sr + " avu=" + $avu + " np=" + $np + " offline=" + $offline + " procmon=" + $procmon + " force=" + $force + " ExecuteRemoval=" + $ExecuteRemoval + " NoShare=" + $NoShare + " IncidentDate=" + $IncidentDate + " OutRoot=" + $OutRoot + " ToolDir=" + $ToolDir)
     } catch {
         Write-StageLog ("Could not start debug transcript: " + $_.Exception.Message) 'Warn'
         $DebugLogPath = $null
@@ -668,9 +667,9 @@ $stage2Result = Invoke-Stage -StageId 2 -StageName 'Detect' -SkipFlag '' -StageB
     $null = New-Item -ItemType Directory -Path $detectOutRoot -Force
 
     Write-StageLog ("Running detect-remote-access.ps1 -OutRoot " + $detectOutRoot)
-    # The top-level runner uploads once, after the final report. Suppress the
-    # detector's standalone uploader to avoid duplicate receipts.
-    $detectArgs = @('-OutRoot', $detectOutRoot, '-NoPause', '-NoZip', '-NoReportUpload', '-TranscriptCopyDir', $WorkDir)
+    # The top-level runner shares once, after the final report (Stage 9).
+    # Suppress the detector's standalone share so a run shares only once.
+    $detectArgs = @('-OutRoot', $detectOutRoot, '-NoPause', '-NoZip', '-NoReportShare', '-TranscriptCopyDir', $WorkDir)
     $rc = Invoke-ChildScript -ScriptPath $detectScript -ArgumentList $detectArgs -LogTag 'Detect'
     if ($rc -ne 0) { throw ("detect-remote-access.ps1 exited with code " + $rc) }
     Write-StageLog ("Detection complete. Output in " + $detectOutRoot)
@@ -717,40 +716,22 @@ $stage3Result = Invoke-Stage -StageId 3 -StageName 'Review Gate' -SkipFlag '' -S
         Write-Host ("ScreenConnect instance " + $instanceNumber + "/" + $instances.Count + ": " + $identifier)
         if ($installDir) { Write-Host ("  Install directory: " + $installDir) }
         Write-Host "  Owner policy: ScreenConnect is eligible for removal; other products are detect-only."
-        if ($ExecuteRemoval) {
-            $decision = 'REMOVE'
-            Write-Host "  -ExecuteRemoval: auto-selecting REMOVE (test mode)." -ForegroundColor Yellow
-        } else {
-            # KEEP is the default. ScreenConnect is legitimate software that a
-            # client's own IT may have installed on purpose, so a technician
-            # pressing Enter carelessly must NOT remove anything. Explicit 'y'
-            # is required to mark an instance for removal. This matches the
-            # safety model (docs/06: unknown must never silently become
-            # removal) and Invoke-ReviewAndRemove.ps1 identically.
-            do {
-                $answer = Read-Host 'Remove this instance? [y/N]'
-                if ([string]::IsNullOrWhiteSpace($answer)) { $answer = 'N' }
-                $answer = $answer.Trim().Substring(0,1).ToUpperInvariant()
-            } while ($answer -ne 'Y' -and $answer -ne 'N')
-            if ($answer -eq 'Y') { $decision = 'REMOVE' } else { $decision = 'KEEP' }
-        }
-        if ($decision -eq 'REMOVE') {
-            [void]$removeInstances.Add($instance)
-            Write-StageLog ("Marked for removal: " + $identifier)
-        } else { Write-StageLog ("Keeping: " + $identifier) }
+        [void]$removeInstances.Add($instance)
+        Write-StageLog ("Removal candidate: " + $identifier)
     }
 
     $removalConfirmed = $false
-    if ($removeInstances.Count -gt 0 -and -not $sr) {
+    if ($instances.Count -gt 0 -and -not $sr) {
         Write-Host ""
-        Write-Host ($removeInstances.Count.ToString() + " ScreenConnect instance(s) marked REMOVE.")
+        Write-Host ($instances.Count.ToString() + " ScreenConnect instance(s) detected. The review is a single typed")
+        Write-Host "confirmation for ALL of them - one prompt, remove once."
         if ($ExecuteRemoval) {
             $removalConfirmed = $true
             Write-StageLog "-ExecuteRemoval: removal pre-authorized, typed confirmation waived (TEST MODE)." 'Warn'
         } else {
-            Write-Host "Files are quarantined, never deleted. Type y to proceed."
+            Write-Host "Files are quarantined, never deleted. Type y to remove all detected instances."
             do {
-                $confirmation = Read-Host 'Proceed with removal? [y/N]'
+                $confirmation = Read-Host 'Remove all detected ScreenConnect instances? [y/N]'
                 if ([string]::IsNullOrWhiteSpace($confirmation)) { $confirmation = 'N' }
                 $confirmation = $confirmation.Trim().Substring(0,1).ToUpperInvariant()
             } while ($confirmation -ne 'Y' -and $confirmation -ne 'N')
@@ -759,12 +740,12 @@ $stage3Result = Invoke-Stage -StageId 3 -StageName 'Review Gate' -SkipFlag '' -S
                 Write-StageLog "Removal confirmed."
             } else { Write-StageLog "Removal declined; Stage 4 will remain a dry-run." 'Warn' }
         }
-    } elseif ($removeInstances.Count -gt 0 -and $sr) {
-        Write-StageLog "-sr set: removal decisions recorded but removal is disabled." 'Warn'
+    } elseif ($instances.Count -gt 0 -and $sr) {
+        Write-StageLog ("-sr set: " + $instances.Count + " removal candidate(s) recorded but removal is disabled.") 'Warn'
     }
 
     $decision = 'KEEP_ALL'
-    if ($removeInstances.Count -eq $instances.Count -and $instances.Count -gt 0) { $decision = 'ALL_REMOVE' }
+    if ($instances.Count -gt 0 -and $removeInstances.Count -eq $instances.Count) { $decision = 'ALL_REMOVE' }
     elseif ($removeInstances.Count -gt 0) { $decision = 'PARTIAL_REMOVE' }
     $sourceFindingsHash = (Get-FileHash -LiteralPath $findingsJson -Algorithm SHA256 -ErrorAction Stop).Hash
     $sourceRunId = Split-Path -Leaf (Split-Path -Parent $findingsJson)
@@ -1268,19 +1249,20 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
     $summary | ConvertTo-Json -Depth 5 | Set-Content -Path $resultsJson -Encoding UTF8 -NoNewline
     Write-StageLog "Results summary: $resultsJson"
 
-    # Create/upload the sanitized ConnectWise holding package after the final
-    # report exists. A relay failure is visible and fail-closed, but does not
-    # discard the local evidence already produced by this run.
+    # Create the sanitized holding package after the final report exists and
+    # share it to MicroBin (the only share path; the server URL comes from
+    # -MicroBinUrl or microbin-url.txt beside the uploader). A share failure is
+    # visible and fail-closed, but does not discard the local evidence already
+    # produced by this run.
     $uploadScript = Join-Path $ScriptRoot 'Submit-ConnectWiseReport.ps1'
     if (-not (Test-Path -LiteralPath $uploadScript)) {
         $reportUploadExitCode = 1
         Write-StageLog ("Report uploader not found: " + $uploadScript) 'Error'
     } else {
-        $uploadArgs = @('-FindingsJson', [string]$findingsJson, '-WorkDir', [string]$WorkDir, '-ReportHtml', [string]$reportHtml, '-RelayUrl', [string]$ReportRelayUrl)
-        if ($ReportUploadTokenFile) { $uploadArgs += @('-ReportUploadTokenFile', [string]$ReportUploadTokenFile) }
+        $uploadArgs = @('-FindingsJson', [string]$findingsJson, '-WorkDir', [string]$WorkDir, '-ReportHtml', [string]$reportHtml)
         if ($MicroBinUrl) { $uploadArgs += @('-MicroBinUrl', [string]$MicroBinUrl) }
         if ($MicroBinUploaderPasswordFile) { $uploadArgs += @('-MicroBinUploaderPasswordFile', [string]$MicroBinUploaderPasswordFile) }
-        if ($NoReportUpload) { $uploadArgs += '-NoUpload' }
+        if ($NoShare) { $uploadArgs += '-NoUpload' }
         $reportUploadExitCode = Invoke-ChildScript -ScriptPath $uploadScript -ArgumentList $uploadArgs -LogTag 'ReportUpload'
         if ($reportUploadExitCode -ne 0) {
             Write-StageLog ("Report upload exited with code " + $reportUploadExitCode + "; local package/evidence remain available.") 'Error'

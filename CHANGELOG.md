@@ -18,6 +18,24 @@ and carries a `VERSION` file so each build is self-identifying.
 - Added non-destructive behavior regressions and wired the new suites into
   Windows CI under PowerShell 5.1 and 7. Local verification is Linux/pwsh only;
   Windows execution and live-machine acceptance remain pending.
+- Report sharing is now MicroBin only: removed the authenticated relay upload
+  of the sanitized report ZIP (relay URL/token parameters, token file lookup,
+  upload retry, and the relay invocation in Submit-ConnectWiseReport.ps1 are
+  gone). The local connectwise-report.zip stays as a run archive; the sanitized
+  report JSON is shared to the configured MicroBin server (microbin-url.txt),
+  and a failed share never hides the local evidence.
+- START-HERE.bat no longer asks a per-run MicroBin opt-in question: the report
+  step shares automatically to the saved microbin-url.txt server. The guided
+  MicroBin URL prompt (Resolve-MicroBinRunUrl.ps1) was removed with the
+  opt-in flow; the uploader reads the URL file itself.
+- START-HERE.bat tool staging (step 1) and preflight (step 2) now run
+  automatically with no [Y/n] prompt, matching the other automatic steps.
+- ScreenConnect removal review is one prompt: a single typed confirmation
+  removes ALL detected ScreenConnect instances. The per-instance KEEP-default
+  questions and the second "Proceed with removal?" confirmation were removed
+  from both Invoke-ReviewAndRemove.ps1 and sc-cleanup.ps1 Stage 3 (owner
+  directive). Removal stays quarantine-never-delete and -ExecuteRemoval is
+  still the only automatic path.
 
 ## [1.7.48] - 2026-09-06
 - Every run now keeps copies of its two key artifacts in both places, with

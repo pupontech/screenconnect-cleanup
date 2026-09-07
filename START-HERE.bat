@@ -1,10 +1,10 @@
 @echo off
 rem ============================================================================
-rem  START-HERE.bat - one-by-one guided runner for the ScreenConnect Cleanup Tool
-rem  Walks the technician through each step in order, prompting before each one
-rem  that needs a decision. Steps 1-4 and 8-9 are read-only (steps 3, 4, 8 and 9
-rem  run automatically). Step 5 requires typed review and confirmation before
-rem  ScreenConnect removal. Self-elevates.
+rem  START-HERE.bat - guided runner for the ScreenConnect Cleanup Tool
+rem  Steps 1-4 and 8-9 run automatically (tool download, preflight, snapshots,
+rem  detection, diff, report share). Step 5 asks ONE typed confirmation before
+rem  ScreenConnect removal. Steps 6-7 launch attended scanner/AV-uninstall work.
+rem  Self-elevates.
 rem  Pure ASCII, no BOM.
 rem ============================================================================
 
@@ -43,101 +43,33 @@ set "PIPE_RC=0"
 echo.
 echo  ============================================================
 echo   SCREENCONNECT CLEANUP - guided run
-echo   Prompts mark decisions; Ctrl+C aborts.
+echo   Steps 1-4 and 8-9 run automatically. Step 5 asks ONE typed
+echo   confirmation before removal. Ctrl+C aborts.
 echo.
 echo   1 toolpack  2 preflight  3 snapshot  4 detect  5 remove
 echo   6 scanners  7 AV uninstall  8 diff  9 report
 echo  ============================================================
 echo.
 
-rem ---- Optional MicroBin report sharing opt-in (start of run) ---------------
-rem The sanitized report may additionally be posted to a MicroBin paste server
-rem of the operator's choice. Default is no: a blank or n answer never uploads
-rem anything anywhere. An explicit y resolves the server base URL from
-rem microbin-url.txt (first nonblank trimmed line) beside this tool; when that
-rem file is missing or empty the operator is asked once for an https:// base
-rem URL, which is saved there for future runs. The URL file never holds
-rem passwords. The default MicroBin server is passwordless, so no uploader
-rem password is prompted or stored by this runner. For a server that requires
-rem an uploader password the operator pre-configures it in the environment
-rem before the run (a password file path that is passed through unchanged, or
-rem the uploader's own password environment variable); this runner never
-rem creates, echoes, or deletes an uploader password.
-echo.
-echo  ------------------------------------------------------------
-echo   Optional: MicroBin report sharing - separate from the private
-echo   relay. Default no (relay-only run). Ctrl+C aborts.
-set /p GO="    Upload the sanitized report to MicroBin? [y/N] "
-if /i "%GO%"=="y" goto :microbin_optin
-if /i "%GO%"=="yes" goto :microbin_optin
-goto :microbin_optout
-:microbin_optin
-set "SCC_MICROBIN_URL="
-if exist "%~dp0Resolve-MicroBinRunUrl.ps1" (
-    for /f "delims=" %%U in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Resolve-MicroBinRunUrl.ps1" -ConfigFile "%~dp0microbin-url.txt" -SkipPrompt') do set "SCC_MICROBIN_URL=%%U"
-    if not defined SCC_MICROBIN_URL (
-        echo     [i] No saved MicroBin URL found - you will be asked for one now.
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Resolve-MicroBinRunUrl.ps1" -ConfigFile "%~dp0microbin-url.txt"
-        if errorlevel 4 (
-            echo     [WARN] MicroBin sharing skipped - no usable server URL was entered.
-        ) else if errorlevel 1 (
-            echo     [WARN] MicroBin configuration step failed - sharing skipped for this run.
-        ) else (
-            for /f "delims=" %%U in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Resolve-MicroBinRunUrl.ps1" -ConfigFile "%~dp0microbin-url.txt" -SkipPrompt') do set "SCC_MICROBIN_URL=%%U"
-        )
-    )
-    if defined SCC_MICROBIN_URL (
-        echo     [i] MicroBin report sharing enabled for this run's report.
-    ) else (
-        set "SCC_MICROBIN_URL="
-        echo     [i] MicroBin report sharing skipped - relay behavior unchanged.
-    )
-) else (
-    echo     [WARN] Resolve-MicroBinRunUrl.ps1 missing - MicroBin sharing skipped.
-)
-rem Optional uploader password file, only for servers that require one. The
-rem default MicroBin server is passwordless, so nothing is prompted and no
-rem secret file is created by this runner. When the operator pre-configured a
-rem password file in the environment (SCC_MICROBIN_UPLOADER_PASSWORD_FILE) it
-rem is passed through unchanged to the uploader at the report step and is
-rem never deleted here.
-if defined SCC_MICROBIN_URL (
-    if defined SCC_MICROBIN_UPLOADER_PASSWORD_FILE (
-        echo     [i] Using the pre-configured MicroBin uploader password file.
-    )
-)
-goto :microbin_done
-:microbin_optout
-set "SCC_MICROBIN_URL="
-echo     [i] MicroBin report sharing skipped - relay behavior unchanged.
-:microbin_done
-set GO=
-echo.
-
-rem ---- Step 1: tool pack -----------------------------------------------------
+rem ---- Step 1: tool pack (always runs) --------------------------------------
 echo  STEP 1/9: Tool pack + scanner staging
-set /p GO="    Run now? [Y/n] "
-if /i not "%GO%"=="n" (
-    if exist "%~dp0tools\Get-ToolPack.ps1" (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\Get-ToolPack.ps1" -Quiet
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\Get-ToolPack.ps1" -Verify
-    ) else (
-        echo     [WARN] tools\Get-ToolPack.ps1 missing - skipping pack.
-    )
-    if exist "%~dp0tools\Get-AVTools.ps1" (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\Get-AVTools.ps1" -ToolDir "%~dp0tools\AV"
-    ) else (
-        echo     [WARN] tools\Get-AVTools.ps1 missing - skipping AV scanner staging.
-    )
+if exist "%~dp0tools\Get-ToolPack.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\Get-ToolPack.ps1" -Quiet
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\Get-ToolPack.ps1" -Verify
+) else (
+    echo     [WARN] tools\Get-ToolPack.ps1 missing - skipping pack.
 )
-set GO=
+if exist "%~dp0tools\Get-AVTools.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\Get-AVTools.ps1" -ToolDir "%~dp0tools\AV"
+) else (
+    echo     [WARN] tools\Get-AVTools.ps1 missing - skipping AV scanner staging.
+)
 
 rem ---- Step 2: preflight (ALWAYS runs - owner directive 2026-08-28) ---------
 echo.
 echo  STEP 2/9: Preflight
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0preflight.ps1" -WorkingRoot "!SCC_RUN_ROOT!"
 if errorlevel 1 goto :preflight_failed
-set GO=
 
 rem ---- Step 3: BEFORE snapshot -----------------------------------------------
 echo.
@@ -149,14 +81,12 @@ if exist "!SCC_RUN_ROOT!\snapshot_before.json" (
 ) else (
     goto :before_snapshot_failed
 )
-set GO=
 
 rem ---- Step 4: detection -----------------------------------------------------
 echo.
 echo  STEP 4/9: Remote-access detection
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0detect-remote-access.ps1" -All -NoPause -NoZip -NoReportUpload -OutRoot "!SCC_RUN_ROOT!\detect" -TranscriptCopyDir "!SCC_RUN_ROOT!"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0detect-remote-access.ps1" -All -NoPause -NoZip -NoReportShare -OutRoot "!SCC_RUN_ROOT!\detect" -TranscriptCopyDir "!SCC_RUN_ROOT!"
 if errorlevel 1 goto :detection_failed
-set GO=
 set "FINDINGS_JSON="
 rem Only search the directory created for THIS run; historical findings are never
 rem eligible to authorize removal.
@@ -166,16 +96,16 @@ for /f "delims=" %%D in ('dir /b /ad /o-d "!SCC_RUN_ROOT!\detect\*_*" 2^>nul') d
     )
 )
 if not defined FINDINGS_JSON (
-    echo     [i] No findings.json found - steps 5 and 8 need it.
+    echo     [i] No findings.json found - steps 5 and 9 need it.
 ) else (
     echo     [i] Latest findings: !FINDINGS_JSON!
 )
 
-rem ---- Step 5: REMOVE (typed confirmation) ----------------------------------
+rem ---- Step 5: REMOVE (single typed confirmation) -----------------------------
 echo.
 echo  STEP 5/9: Review/remove ScreenConnect
-echo    Review each instance. Files are quarantined, never deleted.
-echo    Type y only after confirming the instance and removal.
+echo    One typed confirmation removes ALL detected ScreenConnect instances.
+echo    Files are quarantined, never deleted.
 if exist "%~dp0Invoke-ReviewAndRemove.ps1" (
     if defined FINDINGS_JSON (
         powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-ReviewAndRemove.ps1" -FindingsJson "!FINDINGS_JSON!" -WorkDir "!SCC_RUN_ROOT!"
@@ -191,7 +121,6 @@ if exist "%~dp0Invoke-ReviewAndRemove.ps1" (
     echo     [WARN] Invoke-ReviewAndRemove.ps1 missing - cannot remove.
     goto :removal_failed
 )
-set GO=
 
 rem ---- Step 6: antivirus scans - each one is its own step ---------------------
 echo.
@@ -301,9 +230,8 @@ if not exist "!SCC_RUN_ROOT!\snapshot_before.json" (
         )
     )
 )
-set GO=
 
-rem ---- Step 9: report ---------------------------------------------------------
+rem ---- Step 9: report + MicroBin share ----------------------------------------
 echo.
 echo  STEP 9/9: Report
 if not defined FINDINGS_JSON (
@@ -369,24 +297,22 @@ if not defined FINDINGS_JSON (
                 if "!PIPE_RC!"=="0" set "PIPE_RC=1"
             )
             if exist "%~dp0Submit-ConnectWiseReport.ps1" (
-                set "MICROBIN_EXTRA="
                 set "CTX_EXTRA="
                 if defined SCC_CTX_AUTH set "CTX_EXTRA=!CTX_EXTRA! -IncidentAuthorization "!SCC_CTX_AUTH!""
                 if defined SCC_CTX_DELIVERY set "CTX_EXTRA=!CTX_EXTRA! -IncidentDelivery "!SCC_CTX_DELIVERY!""
-                if defined SCC_MICROBIN_URL set "MICROBIN_EXTRA=!MICROBIN_EXTRA! -MicroBinUrl "!SCC_MICROBIN_URL!""
-                if defined SCC_MICROBIN_UPLOADER_PASSWORD_FILE set "MICROBIN_EXTRA=!MICROBIN_EXTRA! -MicroBinUploaderPasswordFile "!SCC_MICROBIN_UPLOADER_PASSWORD_FILE!""
-                powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Submit-ConnectWiseReport.ps1" -FindingsJson "!FINDINGS_JSON!" -WorkDir "!SCC_RUN_ROOT!" -ReportHtml "!SCC_RUN_ROOT!/report.html" -RelayUrl "https://reports.aygross.xyz/v1/uploads"!MICROBIN_EXTRA!!CTX_EXTRA!
+                rem MicroBin share is automatic (no relay): the uploader reads the
+                rem server base URL from microbin-url.txt beside the tool.
+                powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Submit-ConnectWiseReport.ps1" -FindingsJson "!FINDINGS_JSON!" -WorkDir "!SCC_RUN_ROOT!" -ReportHtml "!SCC_RUN_ROOT!/report.html"!CTX_EXTRA!
                 set "UPLOAD_RC=!errorlevel!"
-                set "MICROBIN_EXTRA="
                 set "CTX_EXTRA="
                 set SCC_CTX_AUTH=
                 set SCC_CTX_DELIVERY=
                 if not "!UPLOAD_RC!"=="0" (
-                    echo     [WARN] Report upload failed with errorlevel !UPLOAD_RC! - local evidence remains available.
+                    echo     [WARN] Report share failed with errorlevel !UPLOAD_RC! - local evidence remains available.
                     if "!PIPE_RC!"=="0" set "PIPE_RC=!UPLOAD_RC!"
                 )
             ) else (
-                echo     [WARN] Submit-ConnectWiseReport.ps1 missing - local report was kept but not uploaded.
+                echo     [WARN] Submit-ConnectWiseReport.ps1 missing - local report was kept but not shared.
                 if "!PIPE_RC!"=="0" set "PIPE_RC=1"
             )
         ) else (

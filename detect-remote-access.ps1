@@ -45,12 +45,13 @@ param(
     # Don't wait for Enter at the end (for unattended / piped runs).
     [switch]$NoPause,
 
-    # Automatic sanitized report relay. A missing token fails closed by
-    # skipping the network request; use -NoReportUpload to suppress packaging
-    # and upload for callers that will publish the final report themselves.
-    [string]$ReportRelayUrl = 'https://reports.aygross.xyz/v1/uploads',
-    [string]$ReportUploadTokenFile,
-    [switch]$NoReportUpload,
+    # Automatic MicroBin report share after detection (MicroBin only; no relay).
+    # The server base URL comes from microbin-url.txt beside the script unless
+    # -MicroBinUrl is given. Use -NoReportShare to suppress it for callers
+    # (sc-cleanup.ps1 / START-HERE.bat) that share once after the final report.
+    [string]$MicroBinUrl,
+    [string]$MicroBinUploaderPasswordFile,
+    [switch]$NoReportShare,
 
     # Optional folder that receives a copy of the console transcript (saved
     # there as "detect-remote-access.log"). The guided runner (START-HERE.bat)
@@ -59,12 +60,6 @@ param(
     # this run's results folder. The timestamped Desktop original is preserved
     # either way.
     [string]$TranscriptCopyDir,
-
-    # Optional MicroBin paste sharing: pass-through values for the report
-    # uploader; entirely off when unset. MicroBin is a separate user-selected
-    # paste server, never a ConnectWise submission.
-    [string]$MicroBinUrl,
-    [string]$MicroBinUploaderPasswordFile,
 
     # Run the parser against synthetic samples and exit. Proves the extraction
     # logic works without needing a live ScreenConnect install to hand.
@@ -209,8 +204,7 @@ function Invoke-ReportUploader {
         Write-Log "  ! PowerShell child-process host has no executable path." "Yellow"
         return 1
     }
-    $arguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $uploadScript, '-FindingsJson', $FindingsPath, '-WorkDir', $OutputDirectory, '-RelayUrl', $ReportRelayUrl)
-    if ($ReportUploadTokenFile) { $arguments += @('-ReportUploadTokenFile', $ReportUploadTokenFile) }
+    $arguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $uploadScript, '-FindingsJson', $FindingsPath, '-WorkDir', $OutputDirectory)
     if ($MicroBinUrl) { $arguments += @('-MicroBinUrl', $MicroBinUrl) }
     if ($MicroBinUploaderPasswordFile) { $arguments += @('-MicroBinUploaderPasswordFile', $MicroBinUploaderPasswordFile) }
     try {
@@ -1101,14 +1095,14 @@ try {
         }
     }
 
-    if (-not $NoReportUpload) {
+    if (-not $NoReportShare) {
         $uploadRc = Invoke-ReportUploader -FindingsPath $jsonPath -OutputDirectory $outDir
         if ($uploadRc -ne 0) {
-            Write-Log ("  ! Report upload exited with code " + $uploadRc + "; local findings remain available.") "Yellow"
+            Write-Log ("  ! Report share exited with code " + $uploadRc + "; local findings remain available.") "Yellow"
             $script:RunExitCode = 1
         }
     } else {
-        Write-Log "  Report upload disabled by caller; no package was sent." "Gray"
+        Write-Log "  Report share disabled by caller; the final report step will share once." "Gray"
     }
     Write-Host ""
 

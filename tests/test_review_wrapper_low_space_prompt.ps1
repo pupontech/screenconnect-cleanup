@@ -77,17 +77,24 @@ function Invoke-ReviewProbe {
 }
 
 try {
-    $yes = Invoke-ReviewProbe -Name 'yes' -MinFreeGB ([int]::MaxValue) -AnswerLines "Y`nY`nY"
+    # One instance in the fixture, ONE confirmation prompt (per-instance asks
+    # were removed): the first answer line confirms removal of all detected
+    # instances, the second continues past the low-space gate.
+    $yes = Invoke-ReviewProbe -Name 'yes' -MinFreeGB ([int]::MaxValue) -AnswerLines "Y`nY"
     Check 'wrapper Y continues after low-space confirmation' ($yes.ExitCode -eq 0 -and $yes.Text -match '(?i)Continue anyway\? \[y/N\]' -and $yes.Text -match '-WhatIfOnly') $yes.Text
     Check 'wrapper low-space prompt reports measured free space' ($yes.Text -match 'Only [0-9]+ GB free on') $yes.Text
+    Check 'wrapper asks a single remove-all confirmation' (([regex]::Matches($yes.Text, '(?i)Remove all detected ScreenConnect instances\?')).Count -eq 1) $yes.Text
 
-    $yesLong = Invoke-ReviewProbe -Name 'yes-long' -MinFreeGB ([int]::MaxValue) -AnswerLines "Y`nY`nYes"
+    $yesLong = Invoke-ReviewProbe -Name 'yes-long' -MinFreeGB ([int]::MaxValue) -AnswerLines "Yes`nYes"
     Check 'wrapper Yes alias continues after low-space confirmation' ($yesLong.ExitCode -eq 0 -and $yesLong.Text -match '(?i)Continue anyway\? \[y/N\]') $yesLong.Text
 
-    $no = Invoke-ReviewProbe -Name 'no' -MinFreeGB ([int]::MaxValue) -AnswerLines "Y`nY`nN"
+    $no = Invoke-ReviewProbe -Name 'no' -MinFreeGB ([int]::MaxValue) -AnswerLines "Y`nN"
     Check 'wrapper N aborts after low-space confirmation' ($no.ExitCode -ne 0 -and $no.Text -match '(?i)Continue anyway\? \[y/N\]') $no.Text
 
-    $invalid = Invoke-ReviewProbe -Name 'invalid' -MinFreeGB ([int]::MaxValue) -AnswerLines "Y`nY`nmaybe"
+    $declined = Invoke-ReviewProbe -Name 'declined' -MinFreeGB 0 -AnswerLines "N"
+    Check 'wrapper declining the remove-all confirmation removes nothing' ($declined.ExitCode -eq 0 -and $declined.Text -match '(?i)Confirmation not given') $declined.Text
+
+    $invalid = Invoke-ReviewProbe -Name 'invalid' -MinFreeGB ([int]::MaxValue) -AnswerLines "Y`nmaybe"
     Check 'wrapper invalid answer fails closed' ($invalid.ExitCode -ne 0 -and $invalid.Text -match '(?i)Continue anyway\? \[y/N\]') $invalid.Text
 } finally {
     Remove-Item -LiteralPath $probeRoot -Recurse -Force -ErrorAction SilentlyContinue
