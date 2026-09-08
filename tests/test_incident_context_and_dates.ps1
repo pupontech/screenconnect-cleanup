@@ -109,12 +109,11 @@ try {
     # ==========================================================================
     # 1. Source-level wiring contracts
     # ==========================================================================
-    Check 'launcher runs the incident-context resolver at the report stage' ($batSource.Contains('Resolve-IncidentContext.ps1') -and $batSource.Contains('-OutFile')) $batPath
-    Check 'launcher reads the validated pair into run-scoped variables' ($batSource.Contains('SCC_CTX_AUTH') -and $batSource.Contains('SCC_CTX_DELIVERY')) $batPath
-    Check 'launcher gates context args on the recorded values' ($batSource.Contains('if defined SCC_CTX_AUTH') -and $batSource.Contains('if defined SCC_CTX_DELIVERY')) $batPath
-    Check 'launcher forwards context to the report uploader' ($batSource.Contains('-IncidentAuthorization') -and $batSource.Contains('-IncidentDelivery')) $batPath
+    Check 'launcher has no interactive incident-context step' (-not $batSource.Contains('Resolve-IncidentContext.ps1')) $batPath
+    Check 'launcher has no incident-context answer variables' (-not $batSource.Contains('SCC_CTX_AUTH') -and -not $batSource.Contains('SCC_CTX_DELIVERY')) $batPath
+    Check 'launcher does not invent or forward prompted context' (-not $batSource.Contains('-IncidentAuthorization') -and -not $batSource.Contains('-IncidentDelivery')) $batPath
     Check 'launcher shares via the uploader with no relay or opt-in gate' (($batSource.Contains('Submit-ConnectWiseReport.ps1')) -and (-not $batSource.Contains('reports.aygross.xyz/v1/uploads')) -and (-not $batSource.Contains('SCC_MICROBIN_URL'))) $batPath
-    Check 'deploy bundle carries the incident-context resolver' ($bundleSource.Contains('Resolve-IncidentContext.ps1')) $bundlePath
+    Check 'deploy bundle omits the retired interactive context helper' (-not $bundleSource.Contains('Resolve-IncidentContext.ps1')) $bundlePath
     Check 'uploader declares the incident-context parameters' ($uploaderSource.Contains('$IncidentAuthorization') -and $uploaderSource.Contains('$IncidentDelivery') -and $uploaderSource.Contains('$RunPath')) $uploaderPath
     Check 'uploader validates explicit context values' ($uploaderSource.Contains('Assert-IncidentAuthorization') -and $uploaderSource.Contains('Assert-IncidentDelivery')) $uploaderPath
     Check 'uploader computes the observed install date from detector evidence' ($uploaderSource.Contains('Get-ObservedInstallDate')) $uploaderPath

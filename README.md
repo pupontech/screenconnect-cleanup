@@ -204,14 +204,14 @@ normalized. Review the local package and use the official ConnectWise Trust
 Center workflow when you are ready to send a batch - this tool never submits
 to ConnectWise automatically.
 
-Guided runs (`START-HERE.bat`) prompt once at the report step for the incident
-context that goes on the share: whether the activity was `Authorized` or
-`Not authorized` (default), and how it was delivered (`Email invite scam` by
-default, or `Other` with a short description). Blank answers resolve to the
-safe defaults; invalid or ambiguous input is refused and re-prompted
-(`Resolve-IncidentContext.ps1`). The validated pair is stored in the run root
-(`incident-context.txt`) and embedded in the JSON/TXT package and the MicroBin
-paste; unattended uploads without context report `Not available`.
+Guided runs (`START-HERE.bat`) no longer ask incident authorization or delivery
+questions. The report uses context already present in the findings, or marks
+missing context `Not available`; it never assumes an email invite scam.
+Explicit `-IncidentAuthorization` and `-IncidentDelivery` values remain
+available when invoking the uploader directly.
+
+The upload and paste-link annotation finish before the report is opened or
+copied to the Desktop, so both HTML copies include the successful share link.
 
 On a successful share the paste URL is appended to the run's generated HTML
 report (`report.html`): the runner passes the report path to the uploader

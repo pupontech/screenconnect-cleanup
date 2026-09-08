@@ -59,7 +59,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Constants & script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.7.49'
+$ScriptVersion = '1.7.50'
 $ScriptName = 'sc-cleanup.ps1'
 $PipelineStages = @(
     @{ Id = 0; Name = 'Preflight';            SkipFlag = '' },
@@ -1170,48 +1170,6 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
     if ($rc -ne 0) { throw ("New-InvestigationReport.ps1 exited with code " + $rc) }
     Write-StageLog ("Report generated: " + $reportHtml)
 
-    # Owner directive 2026-08-27: end a run by opening the report folder
-    # (Explorer) and the report itself (default browser) so the technician
-    # sees the result immediately. Failures here are non-fatal - the report
-    # already exists on disk.
-    try {
-        $null = Start-Process -FilePath explorer.exe -ArgumentList ('/select,"' + $reportHtml + '"') -ErrorAction Stop
-    } catch {
-        Write-StageLog ("Could not open report folder: " + $_.Exception.Message) 'Warn'
-    }
-    try {
-        $null = Start-Process -FilePath $reportHtml -ErrorAction Stop
-    } catch {
-        Write-StageLog ("Could not open report: " + $_.Exception.Message) 'Warn'
-    }
-
-    # Owner directive 2026-09-06: leave a copy of report.html on the current
-    # user's Desktop so the run's summary is easy to find and hand off. The
-    # run-root original is preserved; a failed copy is reported visibly (never
-    # silently swallowed) but does not fail the stage - the report exists in
-    # the run root either way.
-    try {
-        $desktopDir = [Environment]::GetFolderPath('Desktop')
-        if (-not $desktopDir) { $desktopDir = Join-Path $env:USERPROFILE 'Desktop' }
-        if ($desktopDir -and (Test-Path -LiteralPath $reportHtml)) {
-            $desktopReport = Join-Path $desktopDir 'report.html'
-            $reportOnDesktop = $false
-            try {
-                $reportOnDesktop = ([System.IO.Path]::GetFullPath($reportHtml) -ieq [System.IO.Path]::GetFullPath($desktopReport))
-            } catch {
-                $reportOnDesktop = $false
-            }
-            if ($reportOnDesktop) {
-                Write-StageLog "Report is already on the Desktop - no copy needed."
-            } else {
-                Copy-Item -LiteralPath $reportHtml -Destination $desktopReport -Force -ErrorAction Stop
-                Write-StageLog ("Report copy placed on the Desktop: " + $desktopReport)
-            }
-        }
-    } catch {
-        Write-StageLog ("Could not copy report.html to the Desktop: " + $_.Exception.Message) 'Warn'
-    }
-
     # Also produce a machine-readable results.json with key findings
     $findings = Get-Content $findingsJson -Raw | ConvertFrom-Json
     # Safe nested access - stages may have been skipped (Result = $null).
@@ -1285,6 +1243,49 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
     $summary['ConnectWisePackage'] = $reportUploadPackage
     $summary | ConvertTo-Json -Depth 5 | Set-Content -Path $resultsJson -Encoding UTF8 -NoNewline
     Write-StageLog "Results summary updated with report-upload status."
+
+    # Present the final annotated report, even when sharing failed.
+    # Owner directive 2026-08-27: end a run by opening the report folder
+    # (Explorer) and the report itself (default browser) so the technician
+    # sees the result immediately. Failures here are non-fatal - the report
+    # already exists on disk.
+    try {
+        $null = Start-Process -FilePath explorer.exe -ArgumentList ('/select,"' + $reportHtml + '"') -ErrorAction Stop
+    } catch {
+        Write-StageLog ("Could not open report folder: " + $_.Exception.Message) 'Warn'
+    }
+    try {
+        $null = Start-Process -FilePath $reportHtml -ErrorAction Stop
+    } catch {
+        Write-StageLog ("Could not open report: " + $_.Exception.Message) 'Warn'
+    }
+
+    # Owner directive 2026-09-06: leave a copy of report.html on the current
+    # user's Desktop so the run's summary is easy to find and hand off. The
+    # run-root original is preserved; a failed copy is reported visibly (never
+    # silently swallowed) but does not fail the stage - the report exists in
+    # the run root either way.
+    try {
+        $desktopDir = [Environment]::GetFolderPath('Desktop')
+        if (-not $desktopDir) { $desktopDir = Join-Path $env:USERPROFILE 'Desktop' }
+        if ($desktopDir -and (Test-Path -LiteralPath $reportHtml)) {
+            $desktopReport = Join-Path $desktopDir 'report.html'
+            $reportOnDesktop = $false
+            try {
+                $reportOnDesktop = ([System.IO.Path]::GetFullPath($reportHtml) -ieq [System.IO.Path]::GetFullPath($desktopReport))
+            } catch {
+                $reportOnDesktop = $false
+            }
+            if ($reportOnDesktop) {
+                Write-StageLog "Report is already on the Desktop - no copy needed."
+            } else {
+                Copy-Item -LiteralPath $reportHtml -Destination $desktopReport -Force -ErrorAction Stop
+                Write-StageLog ("Report copy placed on the Desktop: " + $desktopReport)
+            }
+        }
+    } catch {
+        Write-StageLog ("Could not copy report.html to the Desktop: " + $_.Exception.Message) 'Warn'
+    }
 
     return @{ ReportHtml = $reportHtml; ResultsJson = $resultsJson; FindingsJson = $findingsJson; ReportUploadExitCode = $reportUploadExitCode; ConnectWisePackage = $reportUploadPackage }
 }

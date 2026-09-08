@@ -135,12 +135,15 @@ passwords, private keys, or connection strings. User-profile paths are reduced
 to `<USERPROFILE>`. Review the local raw evidence separately before attaching
 anything more to an official incident report.
 
-Guided runs (`START-HERE.bat`) collect the incident context once per run at the
-report step (Authorization: Authorized / Not authorized, default Not
-authorized; Delivery: Email invite scam by default or Other with a
-description) via `Resolve-IncidentContext.ps1`, and pass it to
-`Submit-ConnectWiseReport.ps1`. Context never comes from unattended runs
-without operator input; those report `Not available` honestly.
+Guided runs (`START-HERE.bat`) do not ask incident authorization or delivery
+questions. Existing findings context is retained; missing context is reported
+as `Not available`, never guessed. The uploader still accepts explicit context
+parameters for direct invocations. The interactive context helper is no longer
+included in the deploy bundle.
+
+The report is opened and copied to the Desktop only after the MicroBin upload
+and link annotation finish. Upload failures still leave the local report
+available and return a nonzero run status.
 
 ### MicroBin share details
 
