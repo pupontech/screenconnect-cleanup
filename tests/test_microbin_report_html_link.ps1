@@ -370,8 +370,6 @@ try {
         $stage = $stage.Replace('-ReportHtml "!SCC_RUN_ROOT!/report.html"', '-ReportHtml "!SCC_RUN_ROOT!/report.html" -AllowInsecureRelay')
         $bat = Join-Path $guidedDir 'report-stage.bat'
         [System.IO.File]::WriteAllText($bat, ("@echo off`r`nsetlocal EnableDelayedExpansion`r`nset PIPE_RC=0`r`n" + $stage + "`r`nexit /b !PIPE_RC!`r`n"), [System.Text.Encoding]::ASCII)
-        $stdout = Join-Path $guidedDir 'stdout.txt'
-        $stderr = Join-Path $guidedDir 'stderr.txt'
         $savedRun = $env:SCC_RUN_ROOT
         $savedFindings = $env:FINDINGS_JSON
         $savedDesktop = $env:SCC_TEST_DESKTOP
@@ -380,11 +378,35 @@ try {
             $env:SCC_RUN_ROOT = $guidedRun
             $env:FINDINGS_JSON = $findingsPath
             $env:SCC_TEST_DESKTOP = $guidedDesktop
-            $child = Start-Process -FilePath $env:ComSpec -ArgumentList ('/d /c ""' + $bat + '""') -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+            # Use a retained .NET process handle: Start-Process -PassThru can
+            # expose a null ExitCode after external waits on PowerShell 5.1.
+            $processInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $processInfo.FileName = $env:ComSpec
+            $processInfo.Arguments = '/d /c ""' + $bat + '""'
+            $processInfo.UseShellExecute = $false
+            $processInfo.CreateNoWindow = $true
+            $processInfo.RedirectStandardOutput = $true
+            $processInfo.RedirectStandardError = $true
+            # A nonzero control verifies that the harness does not mask exits.
+            $processInfo.Arguments = '/d /c exit 7'
+            $statusProbe = [System.Diagnostics.Process]::Start($processInfo)
+            try {
+                if (-not $statusProbe.WaitForExit(10000)) { throw 'Exit-status control timed out' }
+                Check 'Windows process harness preserves nonzero exit codes' ($statusProbe.ExitCode -eq 7) ('ExitCode=' + $statusProbe.ExitCode)
+            } finally {
+                if (-not $statusProbe.HasExited) { $statusProbe.Kill() }
+                $statusProbe.Dispose()
+            }
+            $processInfo.Arguments = '/d /c ""' + $bat + '""'
+            $child = [System.Diagnostics.Process]::Start($processInfo)
+            $stdoutTask = $child.StandardOutput.ReadToEndAsync()
+            $stderrTask = $child.StandardError.ReadToEndAsync()
             if (-not $child.WaitForExit(120000)) { throw 'Guided report stage timed out' }
             $child.WaitForExit()
-            $guidedText = [System.IO.File]::ReadAllText($stdout) + [System.IO.File]::ReadAllText($stderr)
-            Check 'Windows guided report stage exits successfully' ($child.ExitCode -eq 0) $guidedText
+            if (-not $stdoutTask.Wait(5000) -or -not $stderrTask.Wait(5000)) { throw 'Guided report output streams did not close' }
+            $guidedText = $stdoutTask.Result + $stderrTask.Result
+            $guidedRc = $child.ExitCode
+            Check 'Windows guided report stage exits successfully' ($guidedRc -eq 0) ('ExitCode=' + $guidedRc + "`n" + $guidedText)
             $desktopHtmlPath = Join-Path $guidedDesktop 'report.html'
             $runHtmlPath = Join-Path $guidedRun 'report.html'
             Check 'Windows guided stage opens only the annotated report' (Test-Path -LiteralPath (Join-Path $guidedRun 'opened.marker')) $guidedText
