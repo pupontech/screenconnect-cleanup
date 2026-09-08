@@ -197,6 +197,32 @@ function Read-MicroBinLog {
 }
 
 try {
+    # Exercise the shipped default path, not only explicit -MicroBinUrl calls.
+    $configDir = Join-Path $probeRoot 'uploader copy with spaces'
+    $null = New-Item -ItemType Directory -Path $configDir -Force
+    $configUploader = Join-Path $configDir 'Submit-ConnectWiseReport.ps1'
+    Copy-Item -LiteralPath $uploaderPath -Destination $configUploader
+    $configPath = Join-Path $configDir 'microbin-url.txt'
+    $srvConfig = Start-MicroBinServer -Mode 'success'
+    $configUrl = 'http://127.0.0.1:' + $srvConfig.Port
+    [System.IO.File]::WriteAllText($configPath, ("`r`n  " + $configUrl + "  `r`n"))
+    $configArgs = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $configUploader,
+        '-FindingsJson', $findingsPath, '-WorkDir', $workDir, '-AllowInsecureRelay')
+    $configOutput = (& $psHost @configArgs 2>&1) -join "`n"
+    $configRc = $LASTEXITCODE
+    Check 'saved URL beside the uploader works without an explicit URL' ($configRc -eq 0 -and $configOutput.Contains('MICROBIN UPLOAD: ' + $configUrl + '/upload/pig-dog-cat')) $configOutput
+    Check 'saved URL sends exactly one request' ((Read-MicroBinLog $srvConfig.Log).Count -eq 1) $configOutput
+    Remove-Item -LiteralPath $configPath
+    $missingConfigOutput = (& $psHost @configArgs 2>&1) -join "`n"
+    Check 'missing saved URL skips sharing without an error' ($LASTEXITCODE -eq 0 -and $missingConfigOutput.Contains('skipped; no MicroBin server URL')) $missingConfigOutput
+    [System.IO.File]::WriteAllText($configPath, " `r`n`t`r`n")
+    $blankConfigOutput = (& $psHost @configArgs 2>&1) -join "`n"
+    Check 'blank saved URL skips sharing without an error' ($LASTEXITCODE -eq 0 -and $blankConfigOutput.Contains('skipped; no MicroBin server URL')) $blankConfigOutput
+    [System.IO.File]::WriteAllText($configPath, 'not-a-url')
+    $overrideArgs = $configArgs + @('-MicroBinUrl', $configUrl)
+    $overrideOutput = (& $psHost @overrideArgs 2>&1) -join "`n"
+    Check 'explicit URL overrides invalid saved configuration' ($LASTEXITCODE -eq 0 -and $overrideOutput.Contains('MICROBIN UPLOAD: ' + $configUrl)) $overrideOutput
+
     $secretFile = Join-Path $probeRoot 'microbin-uploader-password.txt'
     $fileSecret = 'MicroBinUploaderSecret-a1b2c3d4e5'
     Set-Content -LiteralPath $secretFile -Value $fileSecret -Encoding ASCII

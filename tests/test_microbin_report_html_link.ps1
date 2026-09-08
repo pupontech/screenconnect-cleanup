@@ -39,6 +39,17 @@ Check 'uploader has the paste-link annotator' $uploaderSource.Contains('Add-Repo
 Check 'annotator is only reachable after a successful upload' ($uploaderSource.LastIndexOf('Add-ReportPasteLink -ReportHtml') -gt $uploaderSource.IndexOf('MICROBIN UPLOAD: ')) $uploaderSource
 Check 'guided launcher passes the report path to the uploader' $startSource.Contains('-ReportHtml') $startSource
 Check 'cleanup runner passes the report path to the uploader' $cleanupSource.Contains('-ReportHtml') $cleanupSource
+$guidedUpload = $startSource.IndexOf(' -ReportHtml ')
+$guidedCopy = $startSource.IndexOf('Copy-Item -LiteralPath')
+$guidedOpen = $startSource.IndexOf('start "" "!SCC_RUN_ROOT!/report.html"')
+Check 'guided report is copied after the upload finishes' ($guidedUpload -ge 0 -and $guidedCopy -gt $guidedUpload) 'Report copy must follow the uploader invocation'
+Check 'guided report opens after the upload finishes' ($guidedUpload -ge 0 -and $guidedOpen -gt $guidedUpload) 'Browser must open the final annotated report'
+$directUpload = $cleanupSource.IndexOf('Invoke-ChildScript -ScriptPath $uploadScript')
+$directCopy = $cleanupSource.IndexOf('Copy-Item -LiteralPath $reportHtml')
+$directOpen = $cleanupSource.IndexOf('Start-Process -FilePath $reportHtml')
+Check 'direct report is copied after the upload finishes' ($directUpload -ge 0 -and $directCopy -gt $directUpload) 'Report copy must follow the uploader invocation'
+Check 'direct report opens after the upload finishes' ($directUpload -ge 0 -and $directOpen -gt $directUpload) 'Browser must open the final annotated report'
+
 
 $psHost = $null
 if ($PSVersionTable.PSEdition -eq 'Desktop') {
@@ -333,6 +344,89 @@ try {
     $text8 = $out8.Output
     Check 'marker-less report fails loudly' ($out8.Rc -ne 0 -and $text8 -match 'MICROBIN PASTE LINK FAILED: report HTML has no closing </body> marker') $text8
     Check 'marker-less report is left untouched' ((Read-ReportText $reportNoMarker) -eq $before8) $text8
+
+    # Replay the actual guided report-stage batch on Windows with synthetic data.
+    # Only desktop destination and shell presentation are redirected to probes;
+    # the real report builder, uploader, saved-URL lookup and command order run.
+    if ($env:OS -eq 'Windows_NT') {
+        $guidedDir = Join-Path $probeRoot 'guided stage'
+        $guidedRun = Join-Path $guidedDir 'run'
+        $guidedDesktop = Join-Path $guidedDir 'desktop'
+        $null = New-Item -ItemType Directory -Path $guidedRun, $guidedDesktop -Force
+        foreach ($name in @('New-InvestigationReport.ps1', 'Submit-ConnectWiseReport.ps1')) {
+            Copy-Item -LiteralPath (Join-Path $repoRoot $name) -Destination (Join-Path $guidedDir $name)
+        }
+        $srvGuided = Start-MicroBinServer -Mode 'success'
+        $guidedUrl = 'http://127.0.0.1:' + $srvGuided.Port
+        [System.IO.File]::WriteAllText((Join-Path $guidedDir 'microbin-url.txt'), $guidedUrl)
+        $stageStart = $startSource.IndexOf('rem ---- Step 9: report + MicroBin share')
+        $stageEnd = $startSource.IndexOf('set GO=', $stageStart)
+        if ($stageStart -lt 0 -or $stageEnd -le $stageStart) { throw 'Guided report stage markers missing' }
+        $stage = $startSource.Substring($stageStart, $stageEnd - $stageStart)
+        $stage = $stage.Replace("[Environment]::GetFolderPath('Desktop')", '$env:SCC_TEST_DESKTOP')
+        $stage = $stage.Replace('explorer /select,"!SCC_RUN_ROOT!/report.html"', 'rem Explorer suppressed in fixture')
+        $openProbe = 'powershell -NoProfile -Command "if (-not ([IO.File]::ReadAllText($env:SCC_RUN_ROOT + ''/report.html'').Contains(''Sanitized paste (MicroBin)''))) { exit 9 }; [IO.File]::WriteAllText($env:SCC_RUN_ROOT + ''/opened.marker'', ''ok'')"'
+        $stage = $stage.Replace('start "" "!SCC_RUN_ROOT!/report.html"', $openProbe)
+        $stage = $stage.Replace('-ReportHtml "!SCC_RUN_ROOT!/report.html"', '-ReportHtml "!SCC_RUN_ROOT!/report.html" -AllowInsecureRelay')
+        $bat = Join-Path $guidedDir 'report-stage.bat'
+        [System.IO.File]::WriteAllText($bat, ("@echo off`r`nsetlocal EnableDelayedExpansion`r`nset PIPE_RC=0`r`n" + $stage + "`r`nexit /b !PIPE_RC!`r`n"), [System.Text.Encoding]::ASCII)
+        $savedRun = $env:SCC_RUN_ROOT
+        $savedFindings = $env:FINDINGS_JSON
+        $savedDesktop = $env:SCC_TEST_DESKTOP
+        $child = $null
+        try {
+            $env:SCC_RUN_ROOT = $guidedRun
+            $env:FINDINGS_JSON = $findingsPath
+            $env:SCC_TEST_DESKTOP = $guidedDesktop
+            # Use a retained .NET process handle: Start-Process -PassThru can
+            # expose a null ExitCode after external waits on PowerShell 5.1.
+            $processInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $processInfo.FileName = $env:ComSpec
+            $processInfo.Arguments = '/d /c ""' + $bat + '""'
+            $processInfo.UseShellExecute = $false
+            $processInfo.CreateNoWindow = $true
+            $processInfo.RedirectStandardOutput = $true
+            $processInfo.RedirectStandardError = $true
+            $processInfo.EnvironmentVariables['PSModulePath'] = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'
+            # A nonzero control verifies that the harness does not mask exits.
+            $processInfo.Arguments = '/d /c exit 7'
+            $statusProbe = [System.Diagnostics.Process]::Start($processInfo)
+            try {
+                if (-not $statusProbe.WaitForExit(10000)) { throw 'Exit-status control timed out' }
+                Check 'Windows process harness preserves nonzero exit codes' ($statusProbe.ExitCode -eq 7) ('ExitCode=' + $statusProbe.ExitCode)
+            } finally {
+                if (-not $statusProbe.HasExited) { $statusProbe.Kill() }
+                $statusProbe.Dispose()
+            }
+            $processInfo.Arguments = '/d /c ""' + $bat + '""'
+            $child = [System.Diagnostics.Process]::Start($processInfo)
+            $stdoutTask = $child.StandardOutput.ReadToEndAsync()
+            $stderrTask = $child.StandardError.ReadToEndAsync()
+            if (-not $child.WaitForExit(120000)) { throw 'Guided report stage timed out' }
+            $child.WaitForExit()
+            if (-not $stdoutTask.Wait(5000) -or -not $stderrTask.Wait(5000)) { throw 'Guided report output streams did not close' }
+            $guidedText = $stdoutTask.Result + $stderrTask.Result
+            $guidedRc = $child.ExitCode
+            Check 'Windows guided report stage exits successfully' ($guidedRc -eq 0) ('ExitCode=' + $guidedRc + "`n" + $guidedText)
+            $desktopHtmlPath = Join-Path $guidedDesktop 'report.html'
+            $runHtmlPath = Join-Path $guidedRun 'report.html'
+            Check 'Windows guided stage opens only the annotated report' (Test-Path -LiteralPath (Join-Path $guidedRun 'opened.marker')) $guidedText
+            if (Test-Path -LiteralPath $desktopHtmlPath) {
+                $copiedHtml = [System.IO.File]::ReadAllText($desktopHtmlPath)
+                Check 'Windows Desktop report contains the created paste URL' ($copiedHtml.Contains($guidedUrl + '/upload/pig-dog-cat')) $guidedText
+                Check 'Windows Desktop and run report copies match' ($copiedHtml -eq [System.IO.File]::ReadAllText($runHtmlPath)) $guidedText
+            } else {
+                Check 'Windows guided stage produces the Desktop copy' $false $guidedText
+            }
+        } finally {
+            if ($child -and -not $child.HasExited) { Stop-Process -Id $child.Id -Force -ErrorAction SilentlyContinue }
+            $env:SCC_RUN_ROOT = $savedRun
+            $env:FINDINGS_JSON = $savedFindings
+            $env:SCC_TEST_DESKTOP = $savedDesktop
+        }
+    } else {
+        Write-Host 'SKIP  actual cmd.exe report-stage replay requires Windows'
+    }
 } finally {
     foreach ($proc in $scenarioProcesses) {
         if ($proc -and -not $proc.HasExited) {

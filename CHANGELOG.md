@@ -3,6 +3,20 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.50] - 2026-09-08
+- Fixed automatic MicroBin sharing: the uploader now locates microbin-url.txt
+  using its script directory. The previous function-scoped invocation lookup
+  failed before uploading when no explicit -MicroBinUrl was supplied.
+- Both runners now finish uploading and adding the paste link before opening
+  report.html or copying it to the Desktop. Local reports remain available
+  when sharing fails, and share failures retain their nonzero status.
+- Removed the entire interactive incident-context step from START-HERE.bat,
+  including authorization and delivery questions. The prompt helper is no
+  longer bundled. Missing context stays Not available; nothing is guessed.
+- Added saved-URL fallback regressions and report-presentation ordering checks,
+  plus a Windows cmd.exe replay of the real report stage with a loopback
+  receiver and disposable report/Desktop paths. No live removal is exercised.
+
 ## [1.7.49] - 2026-09-07
 - Scanner staging now fails closed if downloaded-file metadata or mandatory PE
   validation fails. Optional version text is kept separate from validation; an

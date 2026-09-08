@@ -11,8 +11,8 @@
 # escaping; a failed upload never touches the report, and a report path that is
 # missing or malformed fails loudly.
 #
-# The report carries the operator-recorded incident context (Authorization and
-# Delivery, prompted per run by Resolve-IncidentContext.ps1) and, per
+# The report carries incident context (Authorization and Delivery) from explicit
+# uploader parameters or existing findings, and, per
 # ScreenConnect instance, the best observed installation date with its basis.
 # The date is derived from the detector's own evidence with fixed precedence
 # (service-install event 7045 timestamp, then install-directory creation time,
@@ -32,8 +32,8 @@ param(
     [string]$DiffJson = '',
     [string]$MicroBinUrl = '',
     [string]$MicroBinUploaderPasswordFile = '',
-    # Operator-recorded incident context for this run (guided-run prompt in
-    # Resolve-IncidentContext.ps1). When absent the report falls back to
+    # Optional operator-recorded context for direct invocations. When absent,
+    # the report falls back to
     # context already present in the findings and finally to 'Not available';
     # it never guesses. Explicit values are validated to a closed set.
     [string]$IncidentAuthorization = '',
@@ -474,7 +474,7 @@ function Get-ConfiguredMicroBinUrl {
     # this script (the file the deploy bundle ships and the guided runner
     # used to maintain). A missing or empty file means no share is attempted.
     if (-not [string]::IsNullOrWhiteSpace($MicroBinUrl)) { return $MicroBinUrl.Trim() }
-    $configFile = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'microbin-url.txt'
+    $configFile = Join-Path $PSScriptRoot 'microbin-url.txt'
     if (-not (Test-Path -LiteralPath $configFile -PathType Leaf)) { return '' }
     foreach ($line in [System.IO.File]::ReadLines($configFile)) {
         $candidate = $line.Trim()
