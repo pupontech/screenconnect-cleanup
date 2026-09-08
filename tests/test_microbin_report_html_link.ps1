@@ -401,8 +401,30 @@ try {
             $child = [System.Diagnostics.Process]::Start($processInfo)
             $stdoutTask = $child.StandardOutput.ReadToEndAsync()
             $stderrTask = $child.StandardError.ReadToEndAsync()
-            if (-not $child.WaitForExit(120000)) { throw 'Guided report stage timed out' }
-            $child.WaitForExit()
+            # The child inherits this shell's PSModulePath. Log what the uploader
+            # actually sees when Get-FileHash or a module cmdlet is missing.
+            $envProbe = Join-Path $guidedDir 'env-probe.ps1'
+            $envProbeText = @'
+Write-Host ("probe PSModulePath=" + $env:PSModulePath)
+Write-Host ("probe has Get-FileHash=" + [bool](Get-Command Get-FileHash -ErrorAction SilentlyContinue))
+Import-Module Microsoft.PowerShell.Utility -ErrorAction SilentlyContinue
+Write-Host ("probe after import=" + [bool](Get-Command Get-FileHash -ErrorAction SilentlyContinue))
+'@
+            [System.IO.File]::WriteAllText($envProbe, ($envProbeText + "`r`n"), [System.Text.Encoding]::ASCII)
+            $envProbeInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $envProbeInfo.FileName = $env:ComSpec
+            $envProbeInfo.Arguments = '/d /c ""' + $envProbe + '""'
+            $envProbeInfo.UseShellExecute = $false
+            $envProbeInfo.CreateNoWindow = $true
+            $envProbeInfo.RedirectStandardOutput = $true
+            $envProbeInfo.RedirectStandardError = $true
+            $envProbeProcess = [System.Diagnostics.Process]::Start($envProbeInfo)
+            $envProbeStdout = $envProbeProcess.StandardOutput.ReadToEndAsync()
+            $envProbeStderr = $envProbeProcess.StandardError.ReadToEndAsync()
+            if (-not $envProbeProcess.WaitForExit(30000)) { $envProbeProcess.Kill(); throw 'Environment probe timed out' }
+            $envProbeProcess.WaitForExit()
+            $probeOutput = $envProbeStdout.Result + $envProbeStderr.Result
+            if ($envProbeProcess.ExitCode -ne 0) { $guidedText = $probeOutput + "`n" + $guidedText }
             if (-not $stdoutTask.Wait(5000) -or -not $stderrTask.Wait(5000)) { throw 'Guided report output streams did not close' }
             $guidedText = $stdoutTask.Result + $stderrTask.Result
             $guidedRc = $child.ExitCode
