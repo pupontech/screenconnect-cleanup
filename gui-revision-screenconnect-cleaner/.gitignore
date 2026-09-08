@@ -1,0 +1,15 @@
+# Build/test artifacts
+build/output/
+tests/TestResults/
+*.zip
+__pycache__/
+*.pyc
+
+# Local tool cache mirror (never commit downloaded tools)
+tools/cache/
+*.tmp
+
+# Editor noise
+.vs/
+.vscode/
+build/dev/

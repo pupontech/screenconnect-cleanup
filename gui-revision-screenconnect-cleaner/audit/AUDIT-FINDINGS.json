@@ -1,0 +1,102 @@
+[
+  {
+    "id": "SCC-001",
+    "area": "A/C",
+    "severity": "High",
+    "title": "Remediation unreachable from GUI/headless AND no GUI confirmation gate is implemented (latent Critical when -Execute is enabled)",
+    "file": "src/Scc.UI/Scc.UI.psm1",
+    "line": 233,
+    "description": "Invoke-SccBackendRemediation is called without -Execute (line 233), and Scc.Cleaner.ps1 exposes no -ExecuteRemoval switch, so removal is currently unreachable (fail-safe). However the intended confirmation UI (BtnApprovePlan in Findings.xaml:44, BtnExecuteRemediation in RemediationPreview.xaml:29) is never loaded or wired by Start-SccApp, which only imports Dashboard.xaml (line 672). There is no confirmation dialog in code. The moment someone enables removal by passing -Execute, safety invariant #2 (explicit GUI confirmation before destructive action) is violated because no gate exists to wire it to.",
+    "recommendation": "Implement and wire the GUI approval/execute flow: load Findings.xaml + RemediationPreview.xaml, bind BtnApprovePlan/BtnExecuteRemediation, and pass -Execute only after an explicit modal confirm. Add a test proving removal cannot run without the confirm dialog. Keep removal unreachable until that exists."
+  },
+  {
+    "id": "SCC-002",
+    "area": "E",
+    "severity": "High",
+    "title": "Detection inventory silently swallows errors and returns empty (fail-open false-negative)",
+    "file": "src/Scc.Detection/Scc.Detection.psm1",
+    "line": 269,
+    "description": "Get-SccServiceInventory (269-272), Get-SccProcessInventory (273-281), Get-SccUninstallInventory (282-313, inner & outer catch), Get-SccServiceInstallEvents (315-331), and Get-SccConnectionsForPids (333-350) catch exceptions and return @() / empty with NO logging. If WMI is corrupted, the registry is inaccessible, or the event-log query fails (realistic on a compromised/triaged host), detection reports no ScreenConnect instances and the operator sees a clean bill of health. This is the worst failure mode for a triage tool and is fail-open.",
+    "recommendation": "On inventory exception, record the error (Write-SccLog + add to Invoke-SccDetection Warnings/findings) and, where appropriate, mark the detection as inconclusive rather than clean. Mirror the fail-closed pattern already used in Scc.Evidence.psm1 (Add-CollectionError). Add a test asserting a CIM failure surfaces as a warning, not an empty clean result."
+  },
+  {
+    "id": "SCC-003",
+    "area": "C",
+    "severity": "Medium",
+    "title": "GUI progress/status is dead: $script:ActiveJob never assigned; job never cleared from $script:Jobs",
+    "file": "src/Scc.UI/Scc.UI.psm1",
+    "line": 709,
+    "description": "The three dashboard click handlers discard the job handle ($null = Start-SccJob ..., lines 686/693/700). $script:ActiveJob is declared (line 28) but never assigned, whereas the prior shipped build (build/output/.../Scc.UI.psm1:515) did $script:ActiveJob = $handle. The DispatcherTimer tick (708-711) polls Update-SccJob -Handle $script:ActiveJob, which is permanently null, so the operator gets no progress/state feedback. Additionally the runspace stays in $script:Jobs forever (only Reset-SccJob clears it, and nothing calls it), so a second button click throws 'Only one concurrent Scc job is allowed' (475-478). Regression vs 0.1.0-final.",
+    "recommendation": "Assign $script:ActiveJob = $handle inside Start-SccApp's click handlers (or capture the handle in the timer closure), and call Reset-SccJob when the workflow completes/fails/stops so the timer polls real state and a subsequent run is allowed. Add a test asserting $script:ActiveJob is set after a start."
+  },
+  {
+    "id": "SCC-004",
+    "area": "B",
+    "severity": "Medium",
+    "title": "Relay trust-bypass via relay-name spoofing (empty default fingerprint skips fingerprint check)",
+    "file": "src/Scc.Detection/Scc.Detection.psm1",
+    "line": 896,
+    "description": "Test-SccTrustedRelay matches the attacker-supplied RelayHost against trusted relays by name (line 896). When the trusted entry's fingerprint is empty/missing — which is the case for the embedded default (Scc.Core.psm1:94-105, config/trusted-relays.json: fingerprint:'') — the fingerprint comparison is skipped (lines 897-900) and a name match alone yields TrustMatch='Known'. An attacker who points a rogue client at a hostname matching a trusted entry (e.g. support.example.com) would be classified as an authorized relay, creating a false sense of safety. Note: this does not evade removal (any ScreenConnect instance is still remediated), but it corrupts the report's trust verdict.",
+    "recommendation": "Require a non-empty fingerprint for a 'Known' verdict; treat empty-fingerprint trusted entries as name-only hints (e.g. 'Hinted'/'Unknown'). Add a regression test for relay-name spoofing with an empty-fingerprint trusted entry."
+  },
+  {
+    "id": "SCC-005",
+    "area": "F",
+    "severity": "Medium",
+    "title": "Scanner config handling fragile: .ContainsKey()/['scanners'] on PSCustomObject + default name mismatch",
+    "file": "src/Scc.Scanners/Scc.Scanners.psm1",
+    "line": 322,
+    "description": "Get-SccScannerList uses $Config.ContainsKey('scanners') (line 322) and Invoke-SccScanner indexes $config['scanners'] (388-396). Get-SccConfig returns a PSCustomObject, which has no .ContainsKey() method and does not support ['key'] indexing, so these paths throw if a real config object is passed. Separately, the Core default config lists enabled scanners as 'Defender' (Scc.Core.psm1:61-64) while the scanners module's authoritative names are 'MicrosoftDefender'/'KVRT'/'MSERT' (Scc.Scanners.psm1:25-29, 327-329); a full config merge would disable every scanner.",
+    "recommendation": "Use PSObject.Properties.Name -contains 'scanners' and member access ($cfg.scanners) instead of .ContainsKey()/['key']; reconcile scanner names between Scc.Core default config and Scc.Scanners. Add a test feeding the default Get-SccConfig object into Get-SccScannerList/Invoke-SccScanner."
+  },
+  {
+    "id": "SCC-006",
+    "area": "F",
+    "severity": "Low",
+    "title": "Duplicated helper functions across modules",
+    "file": "src/Scc.Core/Scc.Core.psm1",
+    "line": 461,
+    "description": "Three admin checks exist: Test-SccAdmin (Scc.Core.psm1:461), Test-SccIsAdmin (Scc.Remedy.psm1:874), Test-IsAdmin (Scc.Evidence.psm1:111). Two SHA256 helpers: Get-Sha256Hex (Scc.Detection.psm1:123), Get-SccSha256Hex (Scc.Remedy.psm1:73). Two file-fact collectors: Get-FileFacts (Scc.Detection.psm1:233), Get-SccFileFacts (Scc.Core.psm1:524). Duplication risks drift and inconsistent behavior.",
+    "recommendation": "Consolidate into Scc.Core (single Test-SccAdmin, Get-SccSha256Hex, Get-SccFileFacts) and have other modules import them."
+  },
+  {
+    "id": "SCC-007",
+    "area": "F",
+    "severity": "Low",
+    "title": "Scc.Report.psm1 is a 1604-line single-function god-module",
+    "file": "src/Scc.Report/Scc.Report.psm1",
+    "line": 351,
+    "description": "New-SccReport (line 351) is one ~1250-line function building the entire HTML/JSON report inline. This harms maintainability and unit-testability; per-section builders would be easier to test in isolation.",
+    "recommendation": "Refactor into per-section builder functions (exec-summary, sc-findings, scanners, persistence, provenance, errors, timeline) invoked by New-SccReport."
+  },
+  {
+    "id": "SCC-008",
+    "area": "A/D",
+    "severity": "Low",
+    "title": "Self-elevation relays $MyInvocation.UnboundArguments verbatim into re-launched arg list",
+    "file": "Scc.Cleaner.ps1",
+    "line": 63,
+    "description": "The elevation re-launch (45-80) rebuilds the argument list by string join and quotes the script path plus a few named values (53-65), but forwards $MyInvocation.UnboundArguments verbatim (63-65). If a wrapper .bat passed unusual/unquoted tokens they would be appended unquoted. Low practical risk but should be reviewed.",
+    "recommendation": "Quote/validate forwarded unbound arguments when rebuilding the relaunch command line."
+  },
+  {
+    "id": "SCC-009",
+    "area": "B",
+    "severity": "Info",
+    "title": "ScreenConnect param-blob parsing is read-only; values never reach a shell (no command-injection vector)",
+    "file": "src/Scc.Detection/Scc.Detection.psm1",
+    "line": 117,
+    "description": "Find-ScParamBlob/ConvertFrom-ScParamBlob (174-222) parse and percent-decode h=/k=/etc. values. These values are used only for trust matching and reporting; they are never concatenated into a shell command or passed to a process, so a malicious h=/k= value cannot inject commands. The blob regex (line 117) excludes spaces, quotes, <, >, ), & which limits fidelity but is not exploitable.",
+    "recommendation": "No change required for injection safety. Consider documenting that untrusted blob values are display-only."
+  },
+  {
+    "id": "SCC-010",
+    "area": "A",
+    "severity": "Info",
+    "title": "Invariants #3/#4/#5 verified intact (fail-closed removal, no off-box transmission, copy-only evidence)",
+    "file": "src/Scc.Remedy/Scc.Remedy.psm1",
+    "line": 884,
+    "description": "Positive confirmation: Invoke-SccRemediation enforces admin gate (908), ScreenConnect-only (930-933), per-item re-verification (935-941), quarantine-never-delete, and a path-traversal guard on restore (Test-SccRestorePathSafe, 989-1010); Clear-SccQuarantine requires -Approved + literal 'PERMANENTLY DELETE' (1050-1068). No Invoke-WebRequest/Send-MailMessage/SMTP/webhook in Detection/Evidence/Remedy/Report/Scanners (only an opt-in internet probe in Scc.Core:858 and tool downloads in Scc.Tools). Evidence collection (Scc.Evidence:775-940) is read-only, writing only its own output JSON.",
+    "recommendation": "No change required. Preserve these guarantees when implementing SCC-001."
+  }
+]

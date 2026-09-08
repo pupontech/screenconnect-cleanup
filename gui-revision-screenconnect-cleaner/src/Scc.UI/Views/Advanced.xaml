@@ -1,0 +1,57 @@
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Width="1200" Height="800">
+  <UserControl.Resources>
+    <Style TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#1A1A1A"/>
+      <Setter Property="FontSize" Value="13"/>
+    </Style>
+    <Style TargetType="Button">
+      <Setter Property="Background" Value="#0A6EBE"/>
+      <Setter Property="Foreground" Value="#FFFFFF"/>
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="Margin" Value="4"/>
+      <Setter Property="Padding" Value="10,6"/>
+      <Setter Property="BorderThickness" Value="0"/>
+    </Style>
+  </UserControl.Resources>
+  <Grid Background="#F2F2F2" Margin="12">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+    <TextBlock Grid.Row="0" FontSize="22" FontWeight="Bold" Foreground="#0A6EBE" Text="Advanced Tools"/>
+    <TabControl Grid.Row="1" Margin="0,10,0,0">
+      <TabItem Header="Quarantine">
+        <StackPanel Margin="8">
+          <DataGrid x:Name="GrdQuarantine" AutoGenerateColumns="True" Height="260"/>
+          <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+            <Button x:Name="BtnRestoreQuarantine" Content="Restore Selected"/>
+            <Button x:Name="BtnClearQuarantine" Content="Clear Quarantine (permanent)"/>
+          </StackPanel>
+          <TextBlock x:Name="TxtQuarantineWarn" Foreground="#B26A00" FontWeight="Bold" Text="Clearing quarantine permanently deletes artifacts. Two confirmations required." TextWrapping="Wrap"/>
+        </StackPanel>
+      </TabItem>
+      <TabItem Header="Tool Acquisition">
+        <StackPanel Margin="8">
+          <DataGrid x:Name="GrdTools" AutoGenerateColumns="True" Height="200"/>
+          <Button x:Name="BtnAcquireTool" Content="Acquire Selected Tool" HorizontalAlignment="Left"/>
+        </StackPanel>
+      </TabItem>
+      <TabItem Header="Dry Run">
+        <StackPanel Margin="8">
+          <TextBlock Text="Run the remediation planner in dry-run mode to preview exact actions." TextWrapping="Wrap"/>
+          <Button x:Name="BtnRunDryRunner" Content="Run Dry-Run" HorizontalAlignment="Left"/>
+          <TextBox x:Name="TxtDryRunner" Height="160" IsReadOnly="True" FontFamily="Consolas" Background="#FFFFFF" Foreground="#1A1A1A"/>
+        </StackPanel>
+      </TabItem>
+      <TabItem Header="Headless CLI">
+        <TextBox x:Name="TxtHeadlessExamples" IsReadOnly="True" FontFamily="Consolas" FontSize="12"
+                 Background="#FFFFFF" Foreground="#1A1A1A" TextWrapping="Wrap"
+                 Text="Headless examples (run on Windows PowerShell 5.1):&#10;  Start-SccWorkflow -Workflow (New-SccWorkflow -Mode Full)&#10;  Start-SccWorkflow -Workflow (New-SccWorkflow -Mode DetectOnly)&#10;  Start-SccWorkflow -Workflow (New-SccWorkflow -Mode ScanOnly -SkipScanners)"/>
+      </TabItem>
+    </TabControl>
+    <Button Grid.Row="2" x:Name="BtnCloseAdvanced" Content="Close" HorizontalAlignment="Left"/>
+  </Grid>
+</UserControl>
