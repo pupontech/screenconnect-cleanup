@@ -134,6 +134,14 @@ jobs:
         shell: pwsh
         run: ./tests/test_report_scanner_section.ps1
 
+      - name: Scanner findings parser regression (Windows PowerShell 5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/test_scanner_findings_parser.ps1
+
+      - name: Scanner findings parser regression (pwsh)
+        shell: pwsh
+        run: ./tests/test_scanner_findings_parser.ps1
+
       - name: ConnectWise report package/upload regression (Windows PowerShell 5.1)
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/test_connectwise_report_upload.ps1

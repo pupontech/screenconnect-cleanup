@@ -611,9 +611,38 @@ if ($ScannerSummary -or $ScannersSkipped) {
 
         $rows = ''
         $scannerWarnings = ''
+        $findingsDisplay = ''
         foreach ($s in @($scannerData)) {
             if ($null -eq $s) { continue }
-            $rows += "<tr><td>$(Fmt (Get-Prop $s 'Scanner'))</td><td>$(Fmt (Get-Prop $s 'Tool'))</td><td>$(Fmt (Get-Prop $s 'Status'))</td><td>$(Fmt (Get-Prop $s 'ExitCode'))</td></tr>`n"
+
+            # Load per-scanner findings (threats detected) if available.
+            $scannerFindings = $null
+            $fPath = [string](Get-Prop $s 'FindingsPath')
+            if ($fPath -and (Test-Path -LiteralPath $fPath)) {
+                try { $scannerFindings = (Get-Content -LiteralPath $fPath -Raw) | ConvertFrom-Json } catch { }
+            }
+            if (-not $scannerFindings) {
+                $fObj = Get-Prop $s 'Findings'
+                if ($fObj) { $scannerFindings = $fObj }
+            }
+
+            $scannerName = [string](Get-Prop $s 'Scanner')
+            $findingsSummaryCell = ''
+            if ($scannerFindings) {
+                $notParseable = [string](Get-Prop $scannerFindings 'NotParseable')
+                if ($notParseable -match '(?i)^(true|1|yes)$') {
+                    $findingsSummaryCell = '<span class="muted">Not parseable</span>'
+                } else {
+                    $threatCount = [int](Get-Prop $scannerFindings 'ThreatCount')
+                    if ($threatCount -gt 0) {
+                        $findingsSummaryCell = '<span class="stat-danger">' + $threatCount + ' threat(s) detected</span>'
+                    } else {
+                        $findingsSummaryCell = '<span class="stat-ok">Clean</span>'
+                    }
+                }
+            }
+
+            $rows += "<tr><td>$(Fmt $scannerName)</td><td>$(Fmt (Get-Prop $s 'Tool'))</td><td>$(Fmt (Get-Prop $s 'Status'))</td><td>$(Fmt (Get-Prop $s 'ExitCode'))</td><td>$findingsSummaryCell</td></tr>`n"
             $filterSuspected = [string](Get-Prop $s 'FilterSuspected')
             if ($filterSuspected -match '(?i)^(true|1|yes)$') {
                 $classification = [string](Get-Prop $s 'FilterClassification')
@@ -624,10 +653,36 @@ if ($ScannerSummary -or $ScannersSkipped) {
                 $namesNote = if ($filterNames.Count -gt 0) { " Named filter evidence: $(Fmt ($filterNames -join ', '))." } else { '' }
                 $scannerWarnings += "<p class='warn-line'>Malwarebytes install failure: possible web-filter/proxy interference was reported ($(Fmt $classification)).$namesNote$pathNote</p>`n"
             }
+
+            # Build detailed findings display for this scanner
+            if ($scannerFindings) {
+                $np = [string](Get-Prop $scannerFindings 'NotParseable')
+                if ($np -match '(?i)^(true|1|yes)$') {
+                    $parseNote = [string](Get-Prop $scannerFindings 'Error')
+                    if ([string]::IsNullOrWhiteSpace($parseNote)) { $parseNote = 'Scan results are not available in a parseable format.' }
+                    $findingsDisplay += "<p class='muted'><strong>$(Fmt $scannerName):</strong> $(Fmt $parseNote)</p>`n"
+                } else {
+                    $threats = @(Get-Prop $scannerFindings 'Threats')
+                    if ($threats.Count -gt 0) {
+                        $findingsDisplay += "<h3>$(Fmt $scannerName) - $(Fmt $threats.Count) threat(s) detected</h3>`n"
+                        $scanDate = [string](Get-Prop $scannerFindings 'ScanDate')
+                        if (-not [string]::IsNullOrWhiteSpace($scanDate)) {
+                            $findingsDisplay += "<p class='muted'>Scan date: $(Fmt $scanDate)</p>`n"
+                        }
+                        $findingsDisplay += '<div class="table-scroll"><table class="data-table"><thead><tr><th>Threat</th><th>Type</th><th>Object</th><th>Action</th></tr></thead><tbody>' + "`n"
+                        foreach ($t in $threats) {
+                            $findingsDisplay += "<tr><td>$(Fmt (Get-Prop $t 'ThreatName'))</td><td>$(Fmt (Get-Prop $t 'ThreatType'))</td><td>$(Fmt (Get-Prop $t 'Object'))</td><td>$(Fmt (Get-Prop $t 'Action'))</td></tr>`n"
+                        }
+                        $findingsDisplay += '</tbody></table></div>' + "`n"
+                    } else {
+                        $findingsDisplay += "<p class='stat-ok'><strong>$(Fmt $scannerName):</strong> No threats detected.</p>`n"
+                    }
+                }
+            }
         }
         if (-not $rows) {
             if ($scannerError) {
-                $rows = "<tr><td colspan='4'>Could not load scanner results: $(Fmt $scannerError)</td></tr>"
+                $rows = "<tr><td colspan='5'>Could not load scanner results: $(Fmt $scannerError)</td></tr>"
             } else {
                 $rows = '<tr><td colspan="4">No scanner sessions were recorded.</td></tr>'
             }
@@ -642,7 +697,8 @@ if ($ScannerSummary -or $ScannersSkipped) {
 <section id="scanners">
   <h2>Antivirus / malware scanners</h2>
   $scannerNote
-  <div class="table-scroll"><table class="data-table"><thead><tr><th>Scanner</th><th>Tool</th><th>Status</th><th>Exit code</th></tr></thead><tbody>$rows</tbody></table></div>
+  <div class="table-scroll"><table class="data-table"><thead><tr><th>Scanner</th><th>Tool</th><th>Status</th><th>Exit code</th><th>Scan findings</th></tr></thead><tbody>$rows</tbody></table></div>
+  $findingsDisplay
 </section>
 "@
     }

@@ -881,6 +881,33 @@ $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 'sa' -St
             } else {
                 Write-StageLog ($launch.Scanner + " did not write its result artifact: " + $scannerResultPath) 'Warn'
             }
+            # Collect scanner-specific findings (threats detected) from the
+            # scanner's own log/report file. KVRT encrypts its traces so
+            # detections are not extractable; ESET and Malwarebytes leave
+            # parseable logs.
+            $findingsScript = Join-Path $ScriptRoot 'Get-ScannerFindings.ps1'
+            if ($status -eq 'Completed' -and (Test-Path -LiteralPath $findingsScript)) {
+                try {
+                    $findingsResult = & $findingsScript -Scanner $launch.Scanner
+                    if ($findingsResult) {
+                        $record['Findings'] = $findingsResult
+                        $record['FindingsPath'] = $null
+                        # Persist the findings as a standalone JSON so the
+                        # report generator can load it independently.
+                        $findingsJsonPath = Join-Path $logsDir ('scanner-' + $launch.Scanner + '-findings.json')
+                        try {
+                            $findingsResult | ConvertTo-Json -Depth 10 |
+                                Set-Content -LiteralPath $findingsJsonPath -Encoding UTF8 -NoNewline
+                            $record['FindingsPath'] = $findingsJsonPath
+                        } catch {
+                            Write-StageLog ("Could not write " + $launch.Scanner + " findings: " + $_.Exception.Message) 'Warn'
+                        }
+                    }
+                } catch {
+                    Write-StageLog ("Get-ScannerFindings failed for " + $launch.Scanner + ": " + $_.Exception.Message) 'Warn'
+                }
+            }
+
             $scannerResults += $record
         }
     } else {

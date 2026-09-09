@@ -183,7 +183,18 @@ else {
     if ($text -notmatch "Join-Path \`$scriptRoot \('tools\\AV\\' \+ \`$name\)") {
         Add-Failure 'Invoke-GUIScanner.ps1 does not search tools\\AV\\ (Get-AVTools.ps1 default staging sibling).'
     }
-    if ($script:failures.Count -eq 0) { Write-Host '  OK Invoke-GUIScanner.ps1: ValidateSet = KVRT/ESET/Malwarebytes; Malwarebytes via winget + GUI launch.' }
+    # KVRT report-format flags: -dontencrypt writes plain-text reports so
+    # Get-ScannerFindings.ps1 can parse detections (vendor doc kvrt2024/269475).
+    # The attended GUI model is preserved: -silent and -processlevel must not
+    # be passed (auto-neutralization would violate the attended model).
+    if ($text -notmatch "'-accepteula', '-dontencrypt', '-details'") { Add-Failure 'Invoke-GUIScanner.ps1 does not launch KVRT with -accepteula -dontencrypt -details (plain-text reports).' }
+    if ($text -match "'-silent'|'-processlevel'") { Add-Failure 'Invoke-GUIScanner.ps1 passes -silent or -processlevel to KVRT - the attended GUI model must be preserved.' }
+    # The 60s launch-grace probe and the UAC warning must still apply to the
+    # direct EXE scanners now that KVRT carries launch args (previously gated
+    # on $toolArgs.Count -eq 0, which the KVRT flags would silently bypass).
+    if ($text -notmatch 'if \(-not \$wingetViaCmd\)') { Add-Failure 'Invoke-GUIScanner.ps1 does not gate the launch-grace probe and UAC warning on -not $wingetViaCmd - KVRT args would bypass them.' }
+    if ($text -notmatch 'LaunchArgs') { Add-Failure 'Invoke-GUIScanner.ps1 does not record LaunchArgs in its result artifact.' }
+    if ($script:failures.Count -eq 0) { Write-Host '  OK Invoke-GUIScanner.ps1: ValidateSet = KVRT/ESET/Malwarebytes; Malwarebytes via winget + GUI launch; KVRT plain-text report flags.' }
 }
 
 # --- Contract 2b: pipeline preserves Malwarebytes diagnostics --------------
@@ -241,6 +252,24 @@ else {
     if ($text -notmatch ':mbam_found') { Add-Failure 'START-HERE.bat Step 6c missing the :mbam_found launch label.' }
     if ($text -notmatch '%ProgramFiles\(x86\)%\\Malwarebytes') { Add-Failure 'START-HERE.bat Step 6c missing the Program Files (x86) mbam.exe fallback path.' }
     if ($script:failures.Count -eq 0) { Write-Host '  OK START-HERE.bat: Step 6c installs Malwarebytes via winget, then launches the GUI.' }
+}
+
+# --- Contract 5: Get-ScannerFindings.ps1 parses scanner logs -----------
+Write-Host 'Section 5: Get-ScannerFindings.ps1 log parsing'
+$scannerFindings = Join-Path $repoRoot 'Get-ScannerFindings.ps1'
+if (-not (Test-Path -LiteralPath $scannerFindings)) { Add-Failure 'Get-ScannerFindings.ps1 is missing.' }
+else {
+    $sfText = [System.IO.File]::ReadAllText($scannerFindings)
+    if ($sfText -notmatch 'C:\\KVRT_Data\\Reports') { Add-Failure 'Get-ScannerFindings.ps1 does not read KVRT plain reports from C:\KVRT_Data\Reports.' }
+    if ($sfText -notmatch 'C:\\KVRT2020_Data\\Reports') { Add-Failure 'Get-ScannerFindings.ps1 does not cover the newer C:\KVRT2020_Data\Reports location.' }
+    if ($sfText -notmatch 'dontencrypt') { Add-Failure 'Get-ScannerFindings.ps1 does not explain the -dontencrypt remedy when KVRT reports are encrypted/missing.' }
+    if ($sfText -notmatch '\.klr') { Add-Failure 'Get-ScannerFindings.ps1 does not read .klr KVRT report files.' }
+    if ($sfText -notmatch 'HEUR:|UDS:|not-a-virus:') { Add-Failure 'Get-ScannerFindings.ps1 does not recognize Kaspersky verdict names.' }
+    if ($sfText -notmatch 'NotParseable') { Add-Failure 'Get-ScannerFindings.ps1 does not mark unparseable KVRT results (NotParseable).' }
+    if ($sfText -notmatch 'Temp\\log\.txt') { Add-Failure 'Get-ScannerFindings.ps1 does not read the ESET Online Scanner log at %LOCALAPPDATA%\Temp\log.txt.' }
+    if ($sfText -notmatch 'Encoding Unicode') { Add-Failure 'Get-ScannerFindings.ps1 does not read the ESET log as UTF-16 (Unicode).' }
+    if ($sfText -notmatch 'ProgramData.*Malwarebytes|Malwarebytes.*\.xml') { Add-Failure 'Get-ScannerFindings.ps1 does not search the Malwarebytes program-data folders for XML reports.' }
+    if ($script:failures.Count -eq 0) { Write-Host '  OK Get-ScannerFindings.ps1: KVRT plain reports (+encrypted fallback), ESET log, Malwarebytes XML.' }
 }
 
 # --- Fail/exit ----------------------------------------------------------

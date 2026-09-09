@@ -23,6 +23,7 @@ on:
     paths:
       - 'tools/Get-AVTools.ps1'
       - 'Invoke-GUIScanner.ps1'
+      - 'Get-ScannerFindings.ps1'
       - '.github/workflows/scanner-launch-probe.yml'
 
 jobs:
@@ -60,6 +61,22 @@ jobs:
           if ($rc -eq 5) { Write-Error "KVRT exited early (ExitedEarly) - launch failed on this Windows host"; exit 1 }
           if ($rc -eq 2 -or $rc -eq 3) { Write-Error "KVRT launch failed rc=$rc"; exit 1 }
           Write-Host "KVRT launch probe OK: process launched and stayed alive (rc=$rc)"
+          exit 0
+
+      - name: Diagnostic - KVRT plain-report findings (post-probe)
+        # Informational: after the KVRT probe the new -accepteula -dontencrypt
+        # -details flags should leave plain-text reports under
+        # C:\KVRT_Data\Reports. A headless runner may not have produced a
+        # scan report (no technician drove the GUI), so this step never fails
+        # the job - it shows which path Get-ScannerFindings.ps1 took.
+        shell: powershell
+        run: |
+          Write-Host "C:\KVRT_Data\Reports contents (if any):"
+          Get-ChildItem 'C:\KVRT_Data\Reports' -File -ErrorAction SilentlyContinue | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize | Out-String | Write-Host
+          Write-Host "C:\KVRT2020_Data\Reports contents (if any):"
+          Get-ChildItem 'C:\KVRT2020_Data\Reports' -File -ErrorAction SilentlyContinue | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize | Out-String | Write-Host
+          $f = powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./Get-ScannerFindings.ps1 -Scanner KVRT
+          $f | ConvertTo-Json -Depth 5
           exit 0
 
       - name: Probe ESET Online Scanner launch (elevated runner context)

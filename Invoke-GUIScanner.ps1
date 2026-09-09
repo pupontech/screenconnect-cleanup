@@ -24,6 +24,14 @@
   keeps the pipeline paused while they do, so later snapshots and the report are
   taken AFTER any GUI-driven cleaning has actually finished.
 
+  One exception: KVRT is launched with -accepteula -dontencrypt -details.
+  These are report-format flags only (vendor doc
+  https://support.kaspersky.com/kvrt2024/269475): they keep the attended GUI
+  and make KVRT write PLAIN-TEXT reports under C:\KVRT_Data\Reports so
+  Get-ScannerFindings.ps1 can parse detections for the HTML report. -silent
+  and -processlevel are never passed: -silent would drop the attended GUI and
+  -processlevel would auto-neutralize (disinfect/delete) detected objects.
+
   USAGE
     .\Invoke-GUIScanner.ps1 -Scanner KVRT            # KVRT.exe
     .\Invoke-GUIScanner.ps1 -Scanner ESET            # esetonlinescanner.exe
@@ -262,6 +270,20 @@ if (-not $target) {
     exit 3
 }
 
+# KVRT report-format flags (vendor doc:
+# https://support.kaspersky.com/kvrt2024/269475). -dontencrypt makes KVRT
+# write plain-text reports/traces under C:\KVRT_Data\Reports so
+# Get-ScannerFindings.ps1 can parse detections into the report; -details
+# logs every event; -accepteula accepts the EULA. The GUI stays visible and
+# attended. -silent and -processlevel are deliberately NOT passed: -silent
+# drops the attended GUI and -processlevel would auto-neutralize
+# (disinfect/delete) detected objects instead of leaving the decision to
+# the technician. Applied for -Scanner KVRT and also for -ToolPath launches
+# whose file name identifies KVRT.
+if (($Scanner -eq 'KVRT') -or ($toolLabel -match '(?i)^KVRT[^\\]*\.exe$')) {
+    $toolArgs = @('-accepteula', '-dontencrypt', '-details')
+}
+
 # The staged EXE must actually BE a Windows executable. A broken/truncated
 # file (partial download that is big enough to pass the staging size check)
 # used to "launch to nothing" silently. Name the failure instead.
@@ -277,11 +299,14 @@ if ($target -and -not $wingetViaCmd -and -not $peValid) {
     exit 3
 }
 
-if ($toolArgs.Count -gt 0) {
+if ($wingetViaCmd) {
     Write-Host ("Installing via winget: winget " + ($toolArgs -join ' ')) -ForegroundColor Cyan
     Write-Host "A console window opens for winget - wait until the install finishes." -ForegroundColor Cyan
 } else {
     Write-Host ("Launching GUI scanner: " + $target) -ForegroundColor Cyan
+    if ($toolArgs.Count -gt 0) {
+        Write-Host ("  Launch flags: " + ($toolArgs -join ' ')) -ForegroundColor DarkGray
+    }
     Write-Host "Drive the scanner UI now. This script waits until you close it." -ForegroundColor Cyan
 }
 Write-Host ("Hard cap: " + $TimeoutMinutes + " min (on timeout the process is LEFT running).") -ForegroundColor DarkGray
@@ -296,7 +321,7 @@ try {
     $uacValue = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name EnableLUA -ErrorAction SilentlyContinue).EnableLUA
     if ($uacValue -eq 0) { $uacDisabled = $true }
 } catch { $uacDisabled = $false }
-if ($uacDisabled -and $toolArgs.Count -eq 0) {
+if ($uacDisabled -and -not $wingetViaCmd) {
     Write-Host "  [WARN] UAC is DISABLED on this machine (EnableLUA=0)." -ForegroundColor Yellow
     Write-Host "  KVRT and ESET typically exit immediately without UAC - they need elevation semantics." -ForegroundColor Yellow
     Write-Host '  Enable UAC: reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 1 /f  (reboot required)' -ForegroundColor Yellow
@@ -362,7 +387,7 @@ $waitMs = $TimeoutMinutes * 60 * 1000
 # process. Name the failure instead of silently reporting Completed.
 # (The winget path is exempt: cmd.exe /c winget exits quickly by design.)
 # ---------------------------------------------------------------------------
-if ($toolArgs.Count -eq 0) {
+if (-not $wingetViaCmd) {
     $graceMs = 60000
     if ($proc.WaitForExit($graceMs)) {
         # Launched EXE exited within the grace window - suspicious.
@@ -520,6 +545,7 @@ $result = @{
     ProcessExitCode      = $exitCode
     InstallExitCode      = if ($installFailed) { $exitCode } else { $null }
     ScannerPath          = $target
+    LaunchArgs           = if ($toolArgs.Count -gt 0) { ($toolArgs -join ' ') } else { $null }
     FileSizeBytes        = $fileSizeBytes
     PeValid              = $peValid
     EarlyExit            = $earlyExit

@@ -46,11 +46,44 @@ $singleOut = Join-Path $tmp 'single-report.html'
 & $reportScript -FindingsJson $singleFindingsJson -OutputPath $singleOut *> $null
 $singleHtml = Get-Content -LiteralPath $singleOut -Raw
 
+# KVRT findings: encrypted traces are not parseable
+$kvrtFindings = @{
+    Scanner      = 'KVRT'
+    NotParseable = $true
+    Error        = 'KVRT reports are encrypted (.enc1) or missing. Re-run KVRT with -accepteula -dontencrypt -details to write plain-text reports under C:\KVRT_Data\Reports.'
+    Threats      = @()
+    ThreatCount  = 0
+    Stats        = $null
+    LogPath      = $null
+    ScanDate     = $null
+}
+$kvrtFindingsPath = Join-Path $tmp 'scanner-KVRT-findings.json'
+$kvrtFindings | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $kvrtFindingsPath -Encoding UTF8 -NoNewline
+
+# ESET findings: two threats detected (clean scan with detections)
+$esetFindings = @{
+    Scanner      = 'ESET'
+    NotParseable = $false
+    Error        = $null
+    Threats      = @(
+        @{ ThreatName = 'Win32/Adware.SomeAd'; ThreatType = 'a variant of Win32/Adware.SomeAd'; Object = 'C:\Users\test\file1.exe'; Action = 'cleaned by deleting' },
+        @{ ThreatName = 'JS/Redirector.NJU'; ThreatType = 'JS/Redirector.NJU'; Object = 'C:\Users\test\page.html'; Action = 'retained' }
+    )
+    ThreatCount  = 2
+    Stats        = @{ 'Scanned objects' = 15000; 'Infected objects' = 2; 'Cleaned objects' = 1 }
+    LogPath      = 'C:\Users\test\AppData\Local\Temp\log.txt'
+    ScanDate     = '2026-09-06 14:32:15'
+}
+$esetFindingsPath = Join-Path $tmp 'scanner-ESET-findings.json'
+$esetFindings | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $esetFindingsPath -Encoding UTF8 -NoNewline
+
 # scanner_results.json as sc-cleanup.ps1 Stage 5 writes it
+# KVRT gets NotParseable findings (encrypted traces); ESET has threats;
+# Malwarebytes is InstallFailed with no findings.
 $scannerResults = @(
-    @{ Tool = 'KVRT.exe'; Scanner = 'KVRT'; Status = 'Completed'; ExitCode = 0 },
-    @{ Tool = 'esetonlinescanner.exe'; Scanner = 'ESET'; Status = 'Timeout'; ExitCode = 4 },
-    @{ Tool = 'Malwarebytes.Malwarebytes (winget install)'; Scanner = '<script>alert(1)</script>'; Status = 'InstallFailed'; ExitCode = 6; FilterSuspected = $true; FilterClassification = 'FilterOrProxySuspected'; FilterNames = @('Techloq'); ResultPath = 'C:\\logs\\scanner-Malwarebytes-result.json' }
+    @{ Tool = 'KVRT.exe'; Scanner = 'KVRT'; Status = 'Completed'; ExitCode = 0; FindingsPath = $kvrtFindingsPath },
+    @{ Tool = 'esetonlinescanner.exe'; Scanner = 'ESET'; Status = 'Completed'; ExitCode = 0; FindingsPath = $esetFindingsPath },
+    @{ Tool = 'Malwarebytes.Malwarebytes (winget install)'; Scanner = '<script>alert(1)</script>'; Status = 'InstallFailed'; ExitCode = 6; FilterSuspected = $true; FilterClassification = 'FilterOrProxySuspected'; FilterNames = @('Techloq'); ResultPath = 'C:\logs\scanner-Malwarebytes-result.json' }
 )
 $scannerJson = Join-Path $tmp 'scanner_results.json'
 $scannerResults | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $scannerJson -Encoding UTF8 -NoNewline
@@ -70,12 +103,28 @@ $out1 = Join-Path $tmp 'report1.html'
 $html1 = Get-Content -LiteralPath $out1 -Raw
 Check 'report1 written' (Test-Path -LiteralPath $out1)
 Check 'report1 has scanners section' ($html1.Contains('<section id="scanners">'))
+Check 'report1 has Scan findings column header' ($html1.Contains('<th>Scan findings</th>'))
 Check 'report1 renders KVRT Completed' ($html1.Contains('>KVRT</td><td>KVRT.exe</td><td>Completed</td><td>0</td>'))
-Check 'report1 renders ESET Timeout' ($html1.Contains('>ESET</td><td>esetonlinescanner.exe</td><td>Timeout</td><td>4</td>'))
+Check 'report1 renders ESET Completed' ($html1.Contains('>ESET</td><td>esetonlinescanner.exe</td><td>Completed</td><td>0</td>'))
 Check 'report1 has 0 raw <script>' (-not $html1.Contains('<script>'))
 Check 'report1 hostile scanner escaped' ($html1.Contains('&lt;script&gt;alert(1)&lt;/script&gt;'))
 Check 'report1 surfaces suspected download filter interference' ($html1.Contains('possible web-filter/proxy interference') -and $html1.Contains('scanner-Malwarebytes-result.json'))
 Check 'report1 names suspected filter evidence' ($html1.Contains('Named filter evidence: Techloq'))
+# Findings column: KVRT shows Not parseable
+Check 'report1 KVRT findings shows Not parseable' ($html1.Contains('Not parseable'))
+Check 'report1 KVRT findings mentions encrypted' ($html1.Contains('KVRT reports are encrypted (.enc1) or missing'))
+Check 'report1 KVRT findings tells technician to re-run with -dontencrypt' ($html1.Contains('dontencrypt') -and $html1.Contains('KVRT_Data\Reports'))
+# Findings column: ESET shows threat count
+Check 'report1 ESET findings shows threat count' ($html1.Contains('2 threat(s) detected'))
+# Findings detail: ESET threat names appear
+Check 'report1 ESET threat name rendered' ($html1.Contains('Win32/Adware.SomeAd'))
+Check 'report1 ESET threat object rendered' ($html1.Contains('C:\Users\test\file1.exe'))
+Check 'report1 ESET scan date rendered' ($html1.Contains('2026-09-06 14:32:15'))
+# Findings detail: ESET threat values are escaped
+Check 'report1 ESET detail table has Threat/Type/Object/Action headers' ($html1.Contains('<th>Threat</th><th>Type</th><th>Object</th><th>Action</th>'))
+# Malwarebytes has no findings (InstallFailed), so no findings cell
+# Clean: check no raw hostile script tags leaked
+Check 'report1 findings display has 0 raw <script>' (-not ($html1 -match '(?s)id="scanners".*?<script>'))
 
 # 2. With -ScannersSkipped: explicit skip line, no table
 $out2 = Join-Path $tmp 'report2.html'
@@ -102,7 +151,7 @@ Check 'report4 missing-file error shown' ($html4.Contains('Could not load scanne
 # 5. A removal manifest is rendered when the orchestrator forwards it.
 $manifestJson = Join-Path $tmp 'removal-manifest.json'
 @{
-    Entries = @(@{ InstanceId = 'synth-instance'; Action = 'Quarantine'; Target = 'C:\\ScreenConnect'; Result = 'Success'; Details = 'moved' })
+    Entries = @(@{ InstanceId = 'synth-instance'; Action = 'Quarantine'; Target = 'C:\ScreenConnect'; Result = 'Success'; Details = 'moved' })
 } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestJson -Encoding UTF8 -NoNewline
 $out5 = Join-Path $tmp 'report5.html'
 & $reportScript -FindingsJson $findingsJson -OutputPath $out5 -RemovalManifest $manifestJson *> $null

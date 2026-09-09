@@ -695,6 +695,42 @@ Review scope: `scanners/Invoke-KVRTScan.ps1`, `scanners/Invoke-ESETScan.ps1`,
 `scanners/Invoke-DefenderScan.ps1`, the Stage 1 execution-artifact expansion in
 `collect-snapshot.ps1`, and `diff-snapshots.ps1`.
 
+### M5: AV scanner findings in the HTML report (KVRT -dontencrypt path)
+
+Stage 5 scanners previously reported only launch status in report.html. Now
+`Get-ScannerFindings.ps1` parses each scanner's own output after the technician
+closes it, and `New-InvestigationReport.ps1` renders per-scanner findings
+(threat name, type, object path, action) plus a clean/not-parseable verdict.
+
+- KVRT: reports are plain text under `C:\KVRT_Data\Reports` (older builds)
+  or `C:\KVRT2020_Data\Reports` (newer) ONLY when KVRT runs with
+  `-dontencrypt` (vendor doc: support.kaspersky.com/kvrt2024/269475;
+  files are `*.txt`/`*.klr`). `Invoke-GUIScanner.ps1` now launches KVRT with
+  `-accepteula -dontencrypt -details` - report-format flags only, GUI stays
+  attended. `-silent` and `-processlevel` are deliberately NOT passed:
+  `-processlevel` would auto-neutralize (disinfect/restore/delete) detected
+  objects instead of leaving the decision to the technician. Without
+  `-dontencrypt` the reports stay `.enc1`-encrypted and the findings record is
+  `NotParseable` with a re-run hint.
+- ESET: reads `%LOCALAPPDATA%\Temp\log.txt` (UTF-16; last scan block only,
+  `name=/threat=/object=/action=` lines).
+- Malwarebytes: newest XML report under `%ProgramData%\Malwarebytes\...`.
+- KVRT verdict parsing is tolerant: Kaspersky verdict names (HEUR:, UDS:,
+  PDM:, not-a-virus:, and Trojan./Virus./Worm./... families) plus
+  detection keywords; generic family prefixes use a negative lookbehind so a
+  plain file name like `C:\...\virus.exe` is never mistaken for a verdict.
+- `sc-cleanup.ps1` Stage 5 persists `scanner-<name>-findings.json` per
+  completed scanner and embeds `Findings`/`FindingsPath` into
+  `scanner_results.json`; the report renders a fifth "Scan findings" column
+  and per-scanner detail tables (threat/type/object/action). All values are
+  HTML-escaped.
+
+Tests: `tests/test_scanner_findings_parser.ps1` (synthetic ESET/Malwarebytes/
+KVRT fixtures incl. encrypted-fallback), extended
+`tests/test_report_scanner_section.ps1`, and new Section 5 +
+KVRT-flag checks in `tests/ci/Test-ScannerProcessContracts.ps1`.
+
+
 ### Checks actually run
 
 - Byte-level source checks: all five files have zero non-ASCII bytes and no BOM.

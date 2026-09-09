@@ -3,6 +3,33 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.52] - 2026-09-09
+- The HTML report now shows what each Stage 5 scanner actually FOUND, not
+  just launch status. New `Get-ScannerFindings.ps1` parses each scanner's
+  own output after the technician closes it; `sc-cleanup.ps1` persists
+  `scanner-<name>-findings.json` per completed scanner and embeds the
+  findings into `scanner_results.json`; `New-InvestigationReport.ps1`
+  renders a fifth "Scan findings" column (Clean / N threat(s) detected /
+  Not parseable) plus per-scanner detail tables (threat, type, object,
+  action). All values stay HTML-escaped.
+- KVRT is now launched with `-accepteula -dontencrypt -details` so reports
+  land as plain text under `C:\KVRT_Data\Reports` (or
+  `C:\KVRT2020_Data\Reports`, `*.txt`/`*.klr`) and detections are
+  parseable (vendor doc: support.kaspersky.com/kvrt2024/269475). The GUI
+  stays attended; `-silent` and `-processlevel` are never passed because
+  `-processlevel` would auto-neutralize (disinfect/delete) detected objects.
+  When reports are still encrypted (.enc1) or missing, the report shows a
+  Not-parseable note that tells the technician to re-run KVRT with
+  `-dontencrypt`.
+- `Invoke-GUIScanner.ps1` gates the 60s launch-grace probe and the UAC
+  warning on `-not $wingetViaCmd` (previously `$toolArgs.Count -eq 0`, which
+  the KVRT flags would have silently bypassed) and records `LaunchArgs` in
+  its result artifact.
+- New `tests/test_scanner_findings_parser.ps1` exercises the parser against
+  synthetic ESET (UTF-16 log), Malwarebytes (XML), and KVRT (plain report +
+  encrypted/missing fallback) fixtures; `test_report_scanner_section.ps1`
+  and `tests/ci/Test-ScannerProcessContracts.ps1` (new Section 5) extended.
+
 ## [1.7.51] - 2026-09-09
 - Successful MicroBin uploads now place the returned paste URL in a highlighted
   banner at the top of report.html, rather than a small footer line.
@@ -66,6 +93,7 @@ and carries a `VERSION` file so each build is self-identifying.
   from both Invoke-ReviewAndRemove.ps1 and sc-cleanup.ps1 Stage 3 (owner
   directive). Removal stays quarantine-never-delete and -ExecuteRemoval is
   still the only automatic path.
+)
 
 ## [1.7.48] - 2026-09-06
 - Every run now keeps copies of its two key artifacts in both places, with
