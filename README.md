@@ -213,10 +213,13 @@ available when invoking the uploader directly.
 The upload and paste-link annotation finish before the report is opened or
 copied to the Desktop, so both HTML copies include the successful share link.
 
-On a successful share the paste URL is appended to the run's generated HTML
-report (`report.html`): the runner passes the report path to the uploader
-(`-ReportHtml`), and the uploader appends a small "Sanitized paste
-(MicroBin)" line. The URL is HTML-escaped before it is written, so a crafted
+On a successful share the uploader puts the returned paste URL in a highlighted
+"Sanitized paste (MicroBin)" banner at the top of `report.html`. The guided
+runner passes `-ReportHtml`; direct uploads also discover `report.html` in the
+selected `-WorkDir` / `-RunPath` when that flag is omitted. No other run or
+Desktop file is guessed. Repeated uploads replace the previous banner (including
+older footer links) instead of leaving stale URLs. The URL is HTML-escaped
+before it is written, so a crafted
 server `Location` header can never close an attribute or inject markup. A
 failed share never touches the report, and the local
 `connectwise-report.zip` always stays on disk; an invalid URL or a failed

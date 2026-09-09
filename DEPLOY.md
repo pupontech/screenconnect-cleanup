@@ -183,12 +183,16 @@ powershell -ExecutionPolicy Bypass -File .\Submit-ConnectWiseReport.ps1 `
   `MICROBIN UPLOAD: <url>`. A server in read-only uploader-password mode that
   rejects the password answers with a redirect to `/incorrect`, which is
   reported as a credential failure.
-- After a successful upload the paste URL is appended to the run's generated
-  HTML report: the runner passes the report path (`-ReportHtml`) to the
-  uploader, which adds a small "Sanitized paste (MicroBin)" line with an
-  HTML-escaped link (never raw server text). A failed upload leaves the
-  report untouched, and a report path that is missing or malformed fails
-  loudly so a wiring problem cannot pass as an upload success.
+- After a successful upload the returned paste URL appears in a highlighted
+  "Sanitized paste (MicroBin)" banner at the top of the HTML report. The
+  runner passes `-ReportHtml`; direct uploads without that flag also annotate
+  an existing `report.html` in the selected `-WorkDir` / `-RunPath`. The
+  uploader never guesses another run's report or a Desktop file. Repeated
+  uploads replace the previous annotation. Links are HTML-escaped, never raw
+  server text. A failed upload leaves the report untouched, and an explicitly
+  supplied report path that is missing or malformed fails loudly. With no
+  explicit path and no report.html in the run root, sharing still succeeds
+  without an HTML annotation.
 - Guided runs (`START-HERE.bat`) share automatically at the report step: there
   is no per-run opt-in question and no URL prompt. Edit `microbin-url.txt`
   (first line) to point at a different server. The default server is

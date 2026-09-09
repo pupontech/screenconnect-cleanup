@@ -3,6 +3,17 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.51] - 2026-09-09
+- Successful MicroBin uploads now place the returned paste URL in a highlighted
+  banner at the top of report.html, rather than a small footer line.
+- Direct uploads discover an existing report.html in the selected run root when
+  -ReportHtml is omitted. Explicit paths still win; other runs and Desktop
+  files are never guessed. Guided runners still copy/open only after upload.
+- Repeated uploads replace the previous annotation, including old footer links.
+  Failed or disabled uploads leave the report unchanged.
+- Added loopback regressions for automatic report discovery, exact escaped URLs,
+  top-of-report placement, repeat uploads, and Windows Desktop copy contents.
+
 ## [1.7.50] - 2026-09-08
 - Fixed automatic MicroBin sharing: the uploader now locates microbin-url.txt
   using its script directory. The previous function-scoped invocation lookup
