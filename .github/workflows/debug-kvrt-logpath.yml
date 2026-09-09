@@ -1,0 +1,22 @@
+name: debug-kvrt-logpath
+
+# Throwaway debug workflow: print the KVRT LogPath mismatch seen on Windows
+# PowerShell 5.1 in the findings parser regression. Delete after diagnosis.
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parser regression with debug (Windows PowerShell 5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/test_scanner_findings_parser.ps1
+
+      - name: Parser regression with debug (pwsh)
+        shell: pwsh
+        run: ./tests/test_scanner_findings_parser.ps1

@@ -128,7 +128,7 @@ Check 'KVRT threat 1 object' ($kvrt.Threats[0].Object -eq 'C:\Users\test\virus.e
 Check 'KVRT threat 1 action' ($kvrt.Threats[0].Action -eq 'cleaned')
 Check 'KVRT threat 2 name' ($kvrt.Threats[1].ThreatName -eq 'not-a-virus:AdWare.Win32.DealPly')
 Check 'KVRT threat 2 action' ($kvrt.Threats[1].Action -eq 'skipped')
-Check 'KVRT report path recorded' ($kvrt.LogPath -eq $kvrtReport)
+if ($kvrt.LogPath -eq $kvrtReport) { Write-Host "PASS  KVRT report path recorded" } else { Write-Host ("FAIL  KVRT report path recorded: got [" + $kvrt.LogPath + "] expected [" + $kvrtReport + "]"); $script:failures++ }
 Check 'KVRT not marked NotParseable' (-not $kvrt.NotParseable)
 
 # KVRT: clean plain report -> 0 threats
