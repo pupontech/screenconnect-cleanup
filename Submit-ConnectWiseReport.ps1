@@ -7,7 +7,7 @@
 # nonblank line of microbin-url.txt beside this script). MicroBin is never a
 # ConnectWise submission. A failed share fails loudly but keeps the local
 # package; -NoUpload disables the share. After a successful MicroBin share the
-# paste URL is appended to the generated HTML report (-ReportHtml) with HTML
+# paste URL is shown at the top of the generated HTML report with HTML
 # escaping; a failed upload never touches the report, and a report path that is
 # missing or malformed fails loudly.
 #
@@ -24,9 +24,9 @@ param(
     [string]$WorkDir,
     [string]$RunPath = '',
     # Optional path to the generated HTML report (report.html). After a
-    # successful MicroBin upload the paste URL is HTML-escaped and appended
-    # to this file; an empty value leaves the report untouched, and a failed
-    # upload never annotates it.
+    # successful MicroBin upload the paste URL is HTML-escaped and shown at
+    # the top of this file. If omitted, use an existing report.html in the
+    # resolved run root. A failed upload never annotates either report.
     [string]$ReportHtml = '',
     [string]$ResultsJson = '',
     [string]$DiffJson = '',
@@ -706,12 +706,10 @@ function ConvertTo-HtmlEscapedText {
 }
 
 function Add-ReportPasteLink {
-    # Appends a small, self-contained "Sanitized paste (MicroBin)" line to the
-    # generated HTML report after a successful MicroBin upload. The URL is
-    # HTML-escaped before it is written. With no -ReportHtml nothing happens
-    # (the callers that do not generate an HTML report are unaffected); a
-    # missing or malformed report fails loudly instead of silently skipping
-    # the annotation.
+    # Put the returned URL in a visible banner at the top after upload. Replace
+    # our previous annotation without removing other report content. The caller
+    # resolves the explicit or default run-root report; a missing or malformed
+    # selected report fails loudly instead of silently skipping the annotation.
     param(
         [string]$ReportHtml,
         [string]$PasteUrl
@@ -727,16 +725,22 @@ function Add-ReportPasteLink {
     if ($html.IndexOf("`r`n") -lt 0) { $newline = "`n" }
     $linkBlock = $newline +
         '<!-- ScreenConnect Cleanup: sanitized MicroBin paste of this report (added after a successful upload). -->' + $newline +
-        '<p style="margin:0;padding:0.3em 0;">Sanitized paste (MicroBin): <a href="' + $escapedUrl + '">' + $escapedUrl + '</a></p>'
-    $footerIndex = $html.LastIndexOf('</footer>', [System.StringComparison]::OrdinalIgnoreCase)
+        '<p id="scc-microbin-paste" style="margin:1em 0;padding:1em;border:2px solid #2563eb;background:#eff6ff;color:#111827;overflow-wrap:anywhere;">Sanitized paste (MicroBin): <a href="' + $escapedUrl + '">' + $escapedUrl + '</a></p>'
     $bodyIndex = $html.LastIndexOf('</body>', [System.StringComparison]::OrdinalIgnoreCase)
-    if ($footerIndex -ge 0) {
-        $html = $html.Insert($footerIndex, $linkBlock + $newline)
-    } elseif ($bodyIndex -ge 0) {
-        $html = $html.Insert($bodyIndex, $linkBlock + $newline)
-    } else {
+    if ($bodyIndex -lt 0) {
         throw ('report HTML has no closing </body> marker; the paste link was not added: ' + $fullPath)
     }
+    $bodyOpen = [regex]::Match($html, '(?i)<body\b[^>]*>')
+    if (-not $bodyOpen.Success -or $bodyOpen.Index -ge $bodyIndex) {
+        throw ('report HTML has no opening <body> marker; the paste link was not added: ' + $fullPath)
+    }
+    # Replace only our own annotation paragraph, including the older footer
+    # form. Do not remove arbitrary links or any of the investigation content.
+    $annotationComment = '<!-- ScreenConnect Cleanup: sanitized MicroBin paste of this report (added after a successful upload). -->'
+    $annotationPattern = '(?:\r?\n)?' + [regex]::Escape($annotationComment) + '\s*<p\b[^>]*>Sanitized paste \(MicroBin\): <a href="[^"]*">[^<]*</a></p>(?:\r?\n)?'
+    $html = [regex]::Replace($html, $annotationPattern, '')
+    $bodyOpen = [regex]::Match($html, '(?i)<body\b[^>]*>')
+    $html = $html.Insert($bodyOpen.Index + $bodyOpen.Length, $linkBlock + $newline)
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($fullPath, $html, $utf8NoBom)
 }
@@ -844,6 +848,13 @@ try {
                 # successful upload can annotate the HTML report. Annotation
                 # is its own loud step: a wiring problem (missing/unreadable
                 # report) must not silently pass as an upload success.
+                # Direct uploads should not silently omit the link merely because
+                # the caller left out -ReportHtml. Only inspect this run root;
+                # never guess a Desktop report or another run's latest file.
+                if ([string]::IsNullOrWhiteSpace($ReportHtml)) {
+                    $runReport = Join-Path $workFullPath 'report.html'
+                    if (Test-Path -LiteralPath $runReport -PathType Leaf) { $ReportHtml = $runReport }
+                }
                 if (-not [string]::IsNullOrWhiteSpace($ReportHtml)) {
                     try {
                         Add-ReportPasteLink -ReportHtml $ReportHtml -PasteUrl $pasteUrl
