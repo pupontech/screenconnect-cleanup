@@ -3,7 +3,7 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
-## [Unreleased]
+## [1.7.51] - 2026-09-09
 - Successful MicroBin uploads now place the returned paste URL in a highlighted
   banner at the top of report.html, rather than a small footer line.
 - Direct uploads discover an existing report.html in the selected run root when
