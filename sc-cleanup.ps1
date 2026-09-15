@@ -611,7 +611,7 @@ $stage0Result = Invoke-Stage -StageId 0 -StageName 'Preflight' -SkipFlag '' -Sta
     # not a pipeline failure.
     $getAvTools = Join-Path $ScriptRoot 'tools/Get-AVTools.ps1'
     if ((Test-Path $getAvTools) -and -not $offline) {
-        Write-StageLog "Staging AV scanners (KVRT / ESET Online Scanner; Malwarebytes via winget)..."
+        Write-StageLog "Staging AV scanners (KVRT / ESET Online Scanner; Malwarebytes via winget with official offline fallback)..."
         $avToolDir = Join-Path $ToolDir 'AV'
         $avToolsExit = Invoke-ChildScript -ScriptPath $getAvTools -ArgumentList @('-ToolDir', $avToolDir, '-Quiet') -LogTag 'AVToolStaging'
         if ($avToolsExit -ne 0) {
@@ -842,7 +842,7 @@ $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 'sa' -St
         $scannerLaunches = @(
             @{ Scanner = 'KVRT'; Tool = 'KVRT.exe' },
             @{ Scanner = 'ESET'; Tool = 'esetonlinescanner.exe' },
-            @{ Scanner = 'Malwarebytes'; Tool = 'Malwarebytes.Malwarebytes (winget install)' }
+            @{ Scanner = 'Malwarebytes'; Tool = 'Malwarebytes (winget + offline fallback)' }
         )
         foreach ($launch in $scannerLaunches) {
             Write-StageLog ("Launching " + $launch.Scanner + " for attended scan (technician drives the GUI)...")
@@ -866,6 +866,12 @@ $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 'sa' -St
                     if ($null -ne $childFilterSuspected) { $record['FilterSuspected'] = [bool]$childFilterSuspected }
                     $childClassification = Get-PropertyValue $childResult 'FilterClassification'
                     if ($childClassification) { $record['FilterClassification'] = [string]$childClassification }
+                    $childFallbackUsed = Get-PropertyValue $childResult 'FallbackUsed'
+                    if ($null -ne $childFallbackUsed) { $record['FallbackUsed'] = [bool]$childFallbackUsed }
+                    $childFallbackStatus = Get-PropertyValue $childResult 'FallbackStatus'
+                    if ($childFallbackStatus) { $record['FallbackStatus'] = [string]$childFallbackStatus }
+                    $childFallbackError = Get-PropertyValue $childResult 'FallbackError'
+                    if ($childFallbackError) { $record['FallbackError'] = [string]$childFallbackError }
                     $childDiagnostics = Get-PropertyValue $childResult 'DownloadDiagnostics'
                     if ($childDiagnostics) {
                         $record['DownloadDiagnostics'] = $childDiagnostics

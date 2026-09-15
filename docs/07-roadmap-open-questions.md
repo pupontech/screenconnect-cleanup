@@ -51,7 +51,7 @@ Windows** — see the "Needs a Windows VM" column below.
 | `preflight.ps1` | 17 KB | OK | clean | **Yes** — `-SelfTest` rc=0, full run fail+succeed paths | Checkpoint-Computer, reg.exe hive save, elevation, Win32_OperatingSystem, C:\ free space |
 | `diff-snapshots.ps1` | 9.8 KB | OK | clean | **Yes** — real pair CLEAN rc=0; synthetic resurrection test rc=1; pytest suite | Windows-only section content (same caveat as Stage 1) |
 | `sc-cleanup.ps1` | 33 KB | OK | clean | **Yes** — full pipeline end-to-end rc=0; flags `-sa/-sr/-np/-offline/-WhatIf` functional | real Stage 2/4/5/6 Windows execution |
-| `Invoke-GUIScanner.ps1` | - | OK | clean | **Yes** - launches KVRT/ESET GUIs (and Malwarebytes via winget) and blocks until closed (4h cap) | real attended scanner runs |
+| `Invoke-GUIScanner.ps1` | - | OK | clean | **Yes** - launches KVRT/ESET GUIs; Malwarebytes tries winget, falls back to the official consumer offline installer when needed, and blocks until the attended GUI closes (4h cap) | real attended scanner runs |
 
 **Action for whoever continues:** the read-only half of the pipeline (Stages 0,1,2,7,8
 + the orchestrator) is built and proven on Linux to the extent a non-Windows host allows.

@@ -3,6 +3,18 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [Unreleased]
+- Malwarebytes Stage 5 now falls back when the winget path is unavailable,
+  returns a failure, or installs without a usable GUI.
+- The fallback downloads the official Malwarebytes consumer offline installer,
+  validates it as a Windows PE, stages it atomically through a `.part` file,
+  launches it visibly, then launches and waits on `mbam.exe` for the attended
+  scan.
+- `START-HERE.bat` delegates the whole Malwarebytes path to
+  `Invoke-GUIScanner.ps1`, avoiding a second divergent winget implementation.
+- Added deterministic fallback success/failure regression coverage and result
+  fields showing fallback use/status.
+
 ## [1.7.52] - 2026-09-09
 - The HTML report now shows what each Stage 5 scanner actually FOUND, not
   just launch status. New `Get-ScannerFindings.ps1` parses each scanner's

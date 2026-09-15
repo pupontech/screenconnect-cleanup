@@ -4,25 +4,29 @@
 
   WHY THIS EXISTS
     KVRT and ESET Online Scanner are used here as attended GUI technician
-    tools; Malwarebytes is INSTALLED here via winget (owner directive
-    2026-08-27 - no more MBSetup.exe staging). This script does only three
-    things:
+    tools; Malwarebytes is installed here via winget when available (owner
+    directive 2026-08-27). If winget is unavailable, its install fails, or the
+    installed GUI cannot be launched, the script downloads the official
+    Malwarebytes consumer offline installer and launches it visibly. This
+    script does only three things:
 
       1. resolve what to run - the scanner EXE (KVRT/ESET, found or explicit)
          or the winget install command (Malwarebytes),
       2. launch it as a NORMAL VISIBLE process (GUI for the scanners; a
-         console window for winget so the technician sees the install),
-      3. block until that process exits, then report elapsed time + exit code.
-         For Malwarebytes the script then also launches the freshly installed
-         Malwarebytes GUI (mbam.exe) and waits on it like any scanner, so the
-         pipeline stays paused while the technician runs the scan. If winget
-         fails, a read-only diagnostic pass checks the official endpoint,
-         Techloq/other filter evidence, proxy settings, and hosts-file entries.
+         console window for winget; the official offline installer on fallback),
+      3. block until the Malwarebytes GUI/scanner process exits, then report
+         elapsed time + exit code.
+         For Malwarebytes the script launches the GUI (mbam.exe) after either
+         installation path and waits on it like any scanner, so the pipeline
+         stays paused while the technician runs the scan. A fallback download
+         is validated as a PE and staged atomically through a .part file.
 
   It never passes scan/clean switches, never parses the scanner's output, and
   never fabricates a result: the technician drives the UI; this script just
   keeps the pipeline paused while they do, so later snapshots and the report are
-  taken AFTER any GUI-driven cleaning has actually finished.
+  taken AFTER any GUI-driven cleaning has actually finished. A failed winget
+  install still records the existing read-only endpoint diagnostics before the
+  offline fallback is attempted.
 
   One exception: KVRT is launched with -accepteula -dontencrypt -details.
   These are report-format flags only (vendor doc
@@ -35,7 +39,7 @@
   USAGE
     .\Invoke-GUIScanner.ps1 -Scanner KVRT            # KVRT.exe
     .\Invoke-GUIScanner.ps1 -Scanner ESET            # esetonlinescanner.exe
-    .\Invoke-GUIScanner.ps1 -Scanner Malwarebytes    # winget install -e --id Malwarebytes.Malwarebytes; then launches the GUI
+    .\Invoke-GUIScanner.ps1 -Scanner Malwarebytes    # winget, then official offline fallback, then GUI
     .\Invoke-GUIScanner.ps1 -DiagnosticsOnly -InstallerExitCode 1 -ResultPath C:\path\result.json
     .\Invoke-GUIScanner.ps1 -ToolPath C:\path\tool.exe   # any explicit EXE
 
@@ -44,11 +48,11 @@
     script root, then ..\tools\AV, then the user's Downloads folder, then TEMP.
     If not found: exits 3 with a clear message; nothing is downloaded here -
     staging is tools\Get-AVTools.ps1's job.
-    Malwarebytes does not use the file search: it requires winget and runs
-    `winget install -e --id Malwarebytes.Malwarebytes` (exits 3 if winget is
-    missing). After a successful install it locates mbam.exe under Program
-    Files / Program Files (x86) and launches the Malwarebytes GUI, waiting
-    for the technician to close it (same timeout cap as the scanners).
+    Malwarebytes tries `winget install -e --id Malwarebytes.Malwarebytes` first.
+    If winget is missing, returns a nonzero code, or installs without a usable
+    GUI, the official `https://downloads.malwarebytes.com/file/mb5_offline`
+    installer is downloaded to TEMP, validated, launched visibly, and followed
+    by the attended mbam.exe GUI launch.
 
   NOTES
     - Use inside sc-cleanup.ps1 runs: the runner launches each scanner and waits.
@@ -59,7 +63,7 @@
       3 tool not found; 4 timeout reached (process still running);
       5 launched EXE exited within the 60s launch-grace window with no
       surviving GUI process (reported as failure, never as a completed scan);
-      6 Malwarebytes winget installation failed after the diagnostic pass.
+      6 Malwarebytes winget and official offline fallback both failed.
 
   House rules: PS 5.1 compatible, pure ASCII, no BOM.
 #>
@@ -120,6 +124,131 @@ function Test-PeExecutable {
     } catch {
         return $false
     }
+}
+
+$script:MalwarebytesFallbackUrl = 'https://downloads.malwarebytes.com/file/mb5_offline'
+$script:MalwarebytesFallbackMinimumBytes = 1048576
+
+function Get-MalwarebytesGuiPath {
+    $candidates = @()
+    if ($env:ProgramFiles) {
+        $candidates += (Join-Path $env:ProgramFiles 'Malwarebytes\Anti-Malware\mbam.exe')
+    }
+    if (${env:ProgramFiles(x86)}) {
+        $candidates += (Join-Path ${env:ProgramFiles(x86)} 'Malwarebytes\Anti-Malware\mbam.exe')
+    }
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate) { return $candidate }
+    }
+    return $null
+}
+
+function Invoke-MalwarebytesOfflineFallback {
+    param(
+        [int]$TimeoutMinutes,
+        [string]$DestinationRoot,
+        [string]$FallbackUrl
+    )
+
+    $fallback = [ordered]@{
+        Success          = $false
+        Status           = 'FallbackFailed'
+        DownloadUrl      = $FallbackUrl
+        InstallerPath    = $null
+        InstallerExitCode = $null
+        GuiPath          = $null
+        GuiExitCode      = $null
+        TimedOut         = $false
+        Error            = $null
+    }
+    $part = $null
+
+    try {
+        if (-not $DestinationRoot) {
+            $DestinationRoot = Join-Path (Get-TempRoot) 'ScreenConnectCleanup\Malwarebytes'
+        }
+        if (-not (Test-Path -LiteralPath $DestinationRoot)) {
+            $null = New-Item -ItemType Directory -Path $DestinationRoot -Force
+        }
+
+        $installer = Join-Path $DestinationRoot 'MalwarebytesOfflineSetup.exe'
+        $part = $installer + '.part'
+        $validExisting = $false
+        if (Test-Path -LiteralPath $installer) {
+            try {
+                $existing = Get-Item -LiteralPath $installer -ErrorAction Stop
+                $validExisting = ($existing.Length -ge $script:MalwarebytesFallbackMinimumBytes -and
+                                  (Test-PeExecutable -Path $installer))
+            } catch { $validExisting = $false }
+        }
+
+        if (-not $validExisting) {
+            if (Test-Path -LiteralPath $part) {
+                Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
+            }
+            Write-Host ("Downloading Malwarebytes fallback installer: " + $FallbackUrl) -ForegroundColor Cyan
+            Invoke-WebRequest -Uri $FallbackUrl -OutFile $part -UseBasicParsing -ErrorAction Stop
+            $downloaded = Get-Item -LiteralPath $part -ErrorAction Stop
+            if ($downloaded.Length -lt $script:MalwarebytesFallbackMinimumBytes -or
+                -not (Test-PeExecutable -Path $part)) {
+                throw 'Malwarebytes fallback download is not a valid Windows executable.'
+            }
+            Move-Item -LiteralPath $part -Destination $installer -Force -ErrorAction Stop
+        }
+
+        $fallback.InstallerPath = $installer
+        Write-Host ("Launching Malwarebytes fallback installer: " + $installer) -ForegroundColor Cyan
+        $installerProc = Start-Process -FilePath $installer -PassThru -ErrorAction Stop
+        if ($null -eq $installerProc) {
+            throw 'Start-Process returned no process handle for the Malwarebytes fallback installer.'
+        }
+        if (-not $installerProc.WaitForExit($TimeoutMinutes * 60 * 1000)) {
+            $fallback.Status = 'Timeout'
+            $fallback.TimedOut = $true
+            return [pscustomobject]$fallback
+        }
+        $fallback.InstallerExitCode = $installerProc.ExitCode
+        if ($fallback.InstallerExitCode -ne 0) {
+            throw ("Malwarebytes fallback installer exited with code " + $fallback.InstallerExitCode + '.')
+        }
+
+        $gui = $null
+        $deadline = (Get-Date).AddSeconds(30)
+        do {
+            $gui = Get-MalwarebytesGuiPath
+            if ($gui) { break }
+            if ((Get-Date) -ge $deadline) { break }
+            Start-Sleep -Seconds 1
+        } while (-not $gui)
+        if (-not $gui) {
+            throw 'Malwarebytes fallback installed but mbam.exe was not found at a standard path.'
+        }
+
+        $fallback.GuiPath = $gui
+        Write-Host ("Launching Malwarebytes GUI: " + $gui) -ForegroundColor Cyan
+        Write-Host "Drive a scan in the Malwarebytes UI - this script waits until you close it." -ForegroundColor Cyan
+        $guiProc = Start-Process -FilePath $gui -PassThru -ErrorAction Stop
+        if ($null -eq $guiProc) {
+            throw 'Start-Process returned no process handle for the Malwarebytes GUI.'
+        }
+        if (-not $guiProc.WaitForExit($TimeoutMinutes * 60 * 1000)) {
+            $fallback.Status = 'Timeout'
+            $fallback.TimedOut = $true
+            return [pscustomobject]$fallback
+        }
+        $fallback.GuiExitCode = $guiProc.ExitCode
+        $fallback.Status = 'Completed'
+        $fallback.Success = $true
+    } catch {
+        $fallback.Error = $_.Exception.Message
+        Write-Host ("  [WARN] Malwarebytes offline fallback failed: " + $fallback.Error) -ForegroundColor Yellow
+    } finally {
+        if ($part -and (Test-Path -LiteralPath $part)) {
+            Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    return [pscustomobject]$fallback
 }
 
 # Scanners that are INSTALLED via winget instead of being staged as EXEs
@@ -201,6 +330,10 @@ $target = $null
 $toolArgs = @()
 $toolLabel = $null
 $wingetViaCmd = $false
+$fallbackRequested = $false
+$fallbackUsed = $false
+$fallbackResult = $null
+$fallbackFailed = $false
 
 if ($ToolPath) {
     if (-not (Test-Path -LiteralPath $ToolPath)) {
@@ -241,31 +374,32 @@ if ($ToolPath) {
         # Malwarebytes: winget install (attended - visible console).
         $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
         if (-not $wingetCmd) {
-            Write-Host ("winget not found - cannot install " + $Scanner + " (" + $wingetScanners[$Scanner] + ").") -ForegroundColor Red
-            Write-Host "Install winget (App Installer) first, or pass -ToolPath <MBSetup.exe> explicitly." -ForegroundColor Yellow
-            exit 3
+            Write-Host "winget not found - using the official Malwarebytes offline installer fallback." -ForegroundColor Yellow
+            $toolLabel = 'Malwarebytes (official offline fallback installer)'
+            $fallbackRequested = $true
+        } else {
+            $target   = $wingetCmd.Source
+            # --accept-package-agreements / --accept-source-agreements: never let
+            # the install stall on an interactive agreement prompt (owner directive
+            # 2026-08-28 - accept the msstore/source agreements by default).
+            $toolArgs = @('install', '-e', '--id', $wingetScanners[$Scanner],
+                          '--accept-package-agreements', '--accept-source-agreements')
+            $toolLabel = $wingetScanners[$Scanner] + ' (winget install)'
+            # winget on Windows 10/11 is an App Execution Alias: a 0-byte reparse
+            # stub under WindowsApps. Start-Process -FilePath on the stub is
+            # unreliable in PS 5.1 (silent $null process handle, or 'not a valid
+            # Win32 application'), which used to crash the launcher right after
+            # "launching Malwarebytes". Launch it through cmd.exe instead - the OS
+            # resolves the alias and the console stays visible for the technician.
+            $wingetViaCmd = $true
         }
-        $target   = $wingetCmd.Source
-        # --accept-package-agreements / --accept-source-agreements: never let
-        # the install stall on an interactive agreement prompt (owner directive
-        # 2026-08-28 - accept the msstore/source agreements by default).
-        $toolArgs = @('install', '-e', '--id', $wingetScanners[$Scanner],
-                      '--accept-package-agreements', '--accept-source-agreements')
-        $toolLabel = $wingetScanners[$Scanner] + ' (winget install)'
-        # winget on Windows 10/11 is an App Execution Alias: a 0-byte reparse
-        # stub under WindowsApps. Start-Process -FilePath on the stub is
-        # unreliable in PS 5.1 (silent $null process handle, or 'not a valid
-        # Win32 application'), which used to crash the launcher right after
-        # "launching Malwarebytes". Launch it through cmd.exe instead - the OS
-        # resolves the alias and the console stays visible for the technician.
-        $wingetViaCmd = $true
     }
 } else {
     Write-Error "Specify -Scanner KVRT|ESET|Malwarebytes or -ToolPath <exe>."
     exit 3
 }
 
-if (-not $target) {
+if (-not $target -and -not $fallbackRequested) {
     Write-Host ("Scanner not found: " + $Scanner) -ForegroundColor Red
     exit 3
 }
@@ -302,6 +436,8 @@ if ($target -and -not $wingetViaCmd -and -not $peValid) {
 if ($wingetViaCmd) {
     Write-Host ("Installing via winget: winget " + ($toolArgs -join ' ')) -ForegroundColor Cyan
     Write-Host "A console window opens for winget - wait until the install finishes." -ForegroundColor Cyan
+} elseif ($fallbackRequested) {
+    Write-Host "winget is unavailable; the official Malwarebytes offline installer will be downloaded and launched." -ForegroundColor Cyan
 } else {
     Write-Host ("Launching GUI scanner: " + $target) -ForegroundColor Cyan
     if ($toolArgs.Count -gt 0) {
@@ -321,7 +457,7 @@ try {
     $uacValue = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name EnableLUA -ErrorAction SilentlyContinue).EnableLUA
     if ($uacValue -eq 0) { $uacDisabled = $true }
 } catch { $uacDisabled = $false }
-if ($uacDisabled -and -not $wingetViaCmd) {
+if ($uacDisabled -and -not $wingetViaCmd -and -not $fallbackRequested) {
     Write-Host "  [WARN] UAC is DISABLED on this machine (EnableLUA=0)." -ForegroundColor Yellow
     Write-Host "  KVRT and ESET typically exit immediately without UAC - they need elevation semantics." -ForegroundColor Yellow
     Write-Host '  Enable UAC: reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 1 /f  (reboot required)' -ForegroundColor Yellow
@@ -331,6 +467,13 @@ if ($uacDisabled -and -not $wingetViaCmd) {
 # ---------------------------------------------------------------------------
 # Launch VISIBLE (no CreateNoWindow, no redirects) and wait
 # ---------------------------------------------------------------------------
+$timedOut = $false
+$earlyExit = $false
+$earlyExitCode = $null
+$exitCode = $null
+$proc = $null
+$installFailed = $false
+if (-not $fallbackRequested) {
 try {
     if ($toolArgs.Count -gt 0) {
         if ($wingetViaCmd) {
@@ -348,29 +491,41 @@ try {
         $proc = Start-Process -FilePath $target -PassThru -ErrorAction Stop
     }
 } catch {
-    Write-Host ("Failed to launch: " + $_.Exception.Message) -ForegroundColor Red
-    $result = @{
-        Tool       = $toolLabel
-        Status     = 'LaunchFailed'
-        StartedUtc = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
-        Error      = $_.Exception.Message
+    if ($wingetViaCmd) {
+        $installFailed = $true
+        $fallbackRequested = $true
+        Write-Host ("Malwarebytes winget launch failed: " + $_.Exception.Message) -ForegroundColor Yellow
+    } else {
+        Write-Host ("Failed to launch: " + $_.Exception.Message) -ForegroundColor Red
+        $result = @{
+            Tool       = $toolLabel
+            Status     = 'LaunchFailed'
+            StartedUtc = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+            Error      = $_.Exception.Message
+        }
+        $result | ConvertTo-Json -Compress | Write-Output
+        exit 2
     }
-    $result | ConvertTo-Json -Compress | Write-Output
-    exit 2
 }
 
 # Guard: Start-Process can return $null on some alias/handle paths - a null
 # method call below would crash the launcher instead of failing cleanly.
 if ($null -eq $proc) {
-    Write-Host "Failed to launch: Start-Process returned no process handle." -ForegroundColor Red
-    $result = @{
-        Tool       = $toolLabel
-        Status     = 'LaunchFailed'
-        StartedUtc = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
-        Error      = 'Start-Process returned no process handle'
+    if ($wingetViaCmd) {
+        $installFailed = $true
+        $fallbackRequested = $true
+        Write-Host "Malwarebytes winget returned no process handle; using the offline fallback." -ForegroundColor Yellow
+    } else {
+        Write-Host "Failed to launch: Start-Process returned no process handle." -ForegroundColor Red
+        $result = @{
+            Tool       = $toolLabel
+            Status     = 'LaunchFailed'
+            StartedUtc = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+            Error      = 'Start-Process returned no process handle'
+        }
+        $result | ConvertTo-Json -Compress | Write-Output
+        exit 2
     }
-    $result | ConvertTo-Json -Compress | Write-Output
-    exit 2
 }
 
 $timedOut = $false
@@ -387,6 +542,7 @@ $waitMs = $TimeoutMinutes * 60 * 1000
 # process. Name the failure instead of silently reporting Completed.
 # (The winget path is exempt: cmd.exe /c winget exits quickly by design.)
 # ---------------------------------------------------------------------------
+if ($null -ne $proc) {
 if (-not $wingetViaCmd) {
     $graceMs = 60000
     if ($proc.WaitForExit($graceMs)) {
@@ -444,19 +600,23 @@ if (-not $wingetViaCmd) {
         $timedOut = $true   # deliberately NOT killed: mid-scan kill could corrupt a cleanup
     }
 }
+}
+}
 
 $end = Get-Date
 $duration = [int]($end - $start).TotalSeconds
-$exitCode = $null
-if (-not $timedOut) {
-    if ($earlyExit) { $exitCode = $earlyExitCode }
-    else { try { $exitCode = $proc.ExitCode } catch { } }
+if (-not $fallbackRequested) {
+    $exitCode = $null
+    if (-not $timedOut) {
+        if ($earlyExit) { $exitCode = $earlyExitCode }
+        else { try { $exitCode = $proc.ExitCode } catch { } }
+    }
 }
+$wingetExitCode = if ($wingetViaCmd) { $exitCode } else { $null }
 
 # A failed winget install is not a completed scanner session. Run a bounded,
 # read-only diagnostic pass before returning so the technician can distinguish
 # a possible Techloq/web-filter block from a normal winget/App Installer error.
-$installFailed = $false
 $downloadDiagnostics = $null
 if ($wingetViaCmd -and -not $timedOut -and ($null -eq $exitCode -or $exitCode -ne 0)) {
     $installFailed = $true
@@ -497,14 +657,7 @@ if ($wingetViaCmd -and -not $timedOut -and ($null -eq $exitCode -or $exitCode -n
 # to close; the scan happens inside it).
 $launchFailed = $false
 if ($wingetViaCmd -and -not $timedOut -and $exitCode -eq 0) {
-    $mbam = $null
-    $candidates = @((Join-Path $env:ProgramFiles 'Malwarebytes\Anti-Malware\mbam.exe'))
-    if (${env:ProgramFiles(x86)}) {
-        $candidates += (Join-Path ${env:ProgramFiles(x86)} 'Malwarebytes\Anti-Malware\mbam.exe')
-    }
-    foreach ($candidate in $candidates) {
-        if (Test-Path -LiteralPath $candidate) { $mbam = $candidate; break }
-    }
+    $mbam = Get-MalwarebytesGuiPath
     if ($mbam) {
         Write-Host ("Launching Malwarebytes GUI: " + $mbam) -ForegroundColor Cyan
         Write-Host "Drive a scan in the Malwarebytes UI - this script waits until you close it." -ForegroundColor Cyan
@@ -530,29 +683,72 @@ if ($wingetViaCmd -and -not $timedOut -and $exitCode -eq 0) {
     }
 }
 
+# If winget is unavailable, or its install/GUI path failed, use the official
+# Malwarebytes offline consumer installer. The installer and the resulting
+# Malwarebytes GUI are both launched visibly and the GUI remains attended.
+if ($fallbackRequested -or $installFailed -or $launchFailed) {
+    $fallbackUsed = $true
+    $fallbackRoot = Join-Path (Get-TempRoot) 'ScreenConnectCleanup\Malwarebytes'
+    $fallbackResult = Invoke-MalwarebytesOfflineFallback `
+        -TimeoutMinutes $TimeoutMinutes `
+        -DestinationRoot $fallbackRoot `
+        -FallbackUrl $script:MalwarebytesFallbackUrl
+    if ($fallbackResult.Success) {
+        $installFailed = $false
+        $launchFailed = $false
+        $timedOut = [bool]$fallbackResult.TimedOut
+        $earlyExit = $false
+        if ($null -ne $fallbackResult.GuiExitCode) {
+            $exitCode = $fallbackResult.GuiExitCode
+        } else {
+            $exitCode = $fallbackResult.InstallerExitCode
+        }
+        $end = Get-Date
+        $duration = [int]($end - $start).TotalSeconds
+    } else {
+        $fallbackFailed = $true
+        $timedOut = [bool]$fallbackResult.TimedOut
+        if ($null -ne $fallbackResult.GuiExitCode) {
+            $exitCode = $fallbackResult.GuiExitCode
+        } elseif ($null -ne $fallbackResult.InstallerExitCode) {
+            $exitCode = $fallbackResult.InstallerExitCode
+        }
+        $end = Get-Date
+        $duration = [int]($end - $start).TotalSeconds
+    }
+}
+
 $status = 'Completed'
-if ($installFailed) { $status = 'InstallFailed' }
+if ($timedOut) { $status = 'Timeout' }
+elseif ($fallbackFailed) { $status = 'FallbackFailed' }
+elseif ($installFailed) { $status = 'InstallFailed' }
 elseif ($launchFailed) { $status = 'LaunchFailed' }
-elseif ($timedOut) { $status = 'Timeout' }
 elseif ($earlyExit) { $status = 'ExitedEarly' }
 
 $result = @{
-    Tool                 = $toolLabel
-    Status               = $status
-    StartTimeUtc         = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
-    EndTimeUtc           = $end.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
-    DurationSeconds      = $duration
-    ProcessExitCode      = $exitCode
-    InstallExitCode      = if ($installFailed) { $exitCode } else { $null }
-    ScannerPath          = $target
-    LaunchArgs           = if ($toolArgs.Count -gt 0) { ($toolArgs -join ' ') } else { $null }
-    FileSizeBytes        = $fileSizeBytes
-    PeValid              = $peValid
-    EarlyExit            = $earlyExit
-    UacDisabled          = $uacDisabled
-    FilterSuspected      = if ($downloadDiagnostics) { [bool]$downloadDiagnostics.FilterSuspected } else { $false }
-    FilterClassification  = if ($downloadDiagnostics) { $downloadDiagnostics.Classification } else { $null }
-    DownloadDiagnostics  = $downloadDiagnostics
+    Tool                  = $toolLabel
+    Status                = $status
+    StartTimeUtc          = $start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+    EndTimeUtc            = $end.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+    DurationSeconds       = $duration
+    ProcessExitCode       = $exitCode
+    WingetExitCode        = $wingetExitCode
+    InstallExitCode       = if ($installFailed) { $exitCode } else { $null }
+    FallbackUsed          = $fallbackUsed
+    FallbackStatus        = if ($fallbackResult) { $fallbackResult.Status } else { $null }
+    FallbackUrl           = if ($fallbackResult) { $fallbackResult.DownloadUrl } else { $null }
+    FallbackInstallerPath = if ($fallbackResult) { $fallbackResult.InstallerPath } else { $null }
+    FallbackInstallerExitCode = if ($fallbackResult) { $fallbackResult.InstallerExitCode } else { $null }
+    FallbackError         = if ($fallbackResult) { $fallbackResult.Error } else { $null }
+    ScannerPath           = $target
+    LaunchArgs            = if ($toolArgs.Count -gt 0) { ($toolArgs -join ' ') } else { $null }
+    FileSizeBytes         = $fileSizeBytes
+    PeValid               = $peValid
+    EarlyExit             = $earlyExit
+    UacDisabled           = $uacDisabled
+    FilterSuspected       = if ($downloadDiagnostics) { [bool]$downloadDiagnostics.FilterSuspected } else { $false }
+    FilterClassification   = if ($downloadDiagnostics) { $downloadDiagnostics.Classification } else { $null }
+    DownloadDiagnostics   = $downloadDiagnostics
 }
 $json = $result | ConvertTo-Json -Depth 10 -Compress
 if ($ResultPath) {
@@ -569,16 +765,20 @@ if ($ResultPath) {
 }
 $json | Write-Output
 
+if ($timedOut) {
+    Write-Host ("TIMEOUT after " + $TimeoutMinutes + " min - scanner or fallback installer still running; pipeline result marked Timeout.") -ForegroundColor Yellow
+    exit 4
+}
+if ($fallbackFailed) {
+    Write-Host "Malwarebytes winget and official offline fallback both failed; no attended scan was completed." -ForegroundColor Red
+    exit 6
+}
 if ($installFailed) {
     exit 6
 }
 if ($launchFailed) {
     Write-Host "Malwarebytes GUI launch failed; no attended scan was completed." -ForegroundColor Red
     exit 2
-}
-if ($timedOut) {
-    Write-Host ("TIMEOUT after " + $TimeoutMinutes + " min - scanner still running; pipeline result marked Timeout.") -ForegroundColor Yellow
-    exit 4
 }
 if ($earlyExit) {
     Write-Host ("SUSPICIOUS: " + $toolLabel + " exited " + $duration + "s after launch (exit code " + $earlyExitCode + ") with no GUI - NOT a completed scan.") -ForegroundColor Yellow

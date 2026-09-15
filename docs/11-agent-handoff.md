@@ -19,7 +19,7 @@ is distinguished throughout — trust only what the notes say was executed.**
 Windows PowerShell 5.1 technician tool, Tron-style staged orchestrator for
 removing ScreenConnect remote-access agents from incident machines. 10 stages
 (0–9): Preflight / Snapshot-before / Detect / Review-plan / Contain+Remove /
-Scanners (KVRT, ESET, Malwarebytes via winget — attended GUIs) / Uninstall AV /
+(KVRT, ESET, Malwarebytes via winget with an official consumer offline-installer fallback - attended GUIs) / Uninstall AV /
 Procmon (opt-in) / Snapshot-after+Diff / Report. All scripts are **pure ASCII,
 no BOM, PS 5.1 compatible**. Owner tests live on Windows himself; agents do
 Linux-verifiable checks only (parse, ASCII, self-tests, synthetic runs) and

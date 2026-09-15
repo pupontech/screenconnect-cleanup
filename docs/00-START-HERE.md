@@ -91,7 +91,8 @@ screenconnect-cleanup/
   diff-snapshots.ps1              Stage 8 before/after diff. BUILT.
   New-InvestigationReport.ps1     Stage 9 report. BUILT (XSS + empty-case verified).
   scanners are staged by `tools/Get-AVTools.ps1` and launched through
-  `Invoke-GUIScanner.ps1` (KVRT/ESET attended GUI; Malwarebytes via winget).
+  `Invoke-GUIScanner.ps1` (KVRT/ESET attended GUI; Malwarebytes via winget with
+  the official consumer offline-installer fallback).
   targets.json                    What to look for. 15 products, toggleable.
   START-HERE.bat                  Guided 9-step launcher (Steps 4 = read-only detection; Step 5 = typed review + confirmation).
   RUN-REMOVAL-TEST.bat            Lab-only -ExecuteRemoval test launcher.
