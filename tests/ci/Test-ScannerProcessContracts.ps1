@@ -1,8 +1,8 @@
 <#
   Test-ScannerProcessContracts.ps1 - CI contract for the attended scanner
-  line-up (owner update 2026-08-27: restore KVRT and ESET as official
-  downloads; Malwarebytes install/uninstall via winget - no MBSetup.exe
-  staging anymore; AdwCleaner and Defender remain removed).
+  line-up (owner update 2026-09-15: restore KVRT and ESET as official
+  downloads; Malwarebytes installs via winget with an official consumer
+  offline-installer fallback; AdwCleaner and Defender remain removed).
 
   Contracts checked:
     1. Get-AVTools.ps1 stages KVRT.exe + esetonlinescanner.exe and does NOT
@@ -10,11 +10,11 @@
     2. Get-AVTools.ps1 uses official vendor download URLs as the ONLY source -
        no internal-share/NAS fallback (removed v1.7.22).
     3. Invoke-GUIScanner.ps1 accepts KVRT, ESET and Malwarebytes; KVRT/ESET
-       are staged EXEs, Malwarebytes runs winget install (no MBSetup mapping)
-       and then launches the installed Malwarebytes GUI (mbam.exe).
+       are staged EXEs, Malwarebytes tries winget and falls back to the
+       official Malwarebytes consumer offline installer, then launches mbam.exe.
     4. Invoke-AVUninstaller.ps1 uninstalls Malwarebytes via winget.
-    5. START-HERE.bat Step 6c installs Malwarebytes via winget and launches
-       the Malwarebytes GUI (mbam.exe) after a successful install.
+    5. START-HERE.bat Step 6c delegates Malwarebytes to Invoke-GUIScanner so
+       the same winget + offline-installer fallback is used.
 
   PS 5.1 compatible. Pure ASCII, no BOM.
 #>
@@ -159,6 +159,14 @@ else {
     if ($text -notmatch 'Start-Process returned no process handle') { Add-Failure 'Invoke-GUIScanner.ps1 missing the null-process guard after Start-Process.' }
     if ($text -notmatch "'Malwarebytes\\Anti-Malware\\mbam\.exe'") { Add-Failure 'Invoke-GUIScanner.ps1 does not launch the Malwarebytes GUI (mbam.exe) after a successful winget install.' }
     if ($text -notmatch '\$\{env:ProgramFiles\(x86\)\}') { Add-Failure 'Invoke-GUIScanner.ps1 missing the braced ${env:ProgramFiles(x86)} mbam.exe lookup (PS 5.1-safe).' }
+    if ($text -notmatch 'function Invoke-MalwarebytesOfflineFallback') { Add-Failure 'Invoke-GUIScanner.ps1 is missing the official Malwarebytes offline fallback function.' }
+    if ($text -notmatch 'downloads\.malwarebytes\.com/file/mb5_offline') { Add-Failure 'Invoke-GUIScanner.ps1 is missing the official Malwarebytes consumer offline fallback URL.' }
+    if ($text -notmatch 'MalwarebytesOfflineSetup\.exe') { Add-Failure 'Invoke-GUIScanner.ps1 does not stage the fallback installer under a stable executable name.' }
+    if ($text -notmatch '\$part = \$installer \+ ''\.part''') { Add-Failure 'Invoke-GUIScanner.ps1 does not use an atomic .part download for the Malwarebytes fallback.' }
+    if ($text -notmatch 'FallbackUsed') { Add-Failure 'Invoke-GUIScanner.ps1 does not record fallback usage in the scanner result.' }
+    if ($text -notmatch '\$fallbackRequested -or \$installFailed -or \$launchFailed') { Add-Failure 'Invoke-GUIScanner.ps1 does not fall back after winget absence, install failure, or GUI launch failure.' }
+    if ($text -notmatch 'Malwarebytes winget launch failed') { Add-Failure 'Invoke-GUIScanner.ps1 does not fall back when launching the winget command itself fails.' }
+    if ($text -notmatch 'winget returned no process handle') { Add-Failure 'Invoke-GUIScanner.ps1 does not fall back when winget returns a null process handle.' }
     if ($text -notmatch 'Drive a scan in the Malwarebytes UI') { Add-Failure 'Invoke-GUIScanner.ps1 missing the Malwarebytes GUI attended-scan prompt.' }
     if ($text -notmatch 'Test-PeExecutable') { Add-Failure 'Invoke-GUIScanner.ps1 missing the launch-time PE-header guard - a corrupt staged exe would launch to nothing silently.' }
     if ($text -notmatch 'Scanner file is corrupt/truncated') { Add-Failure 'Invoke-GUIScanner.ps1 missing the corrupt-scanner error message.' }
@@ -208,6 +216,7 @@ if (-not (Test-Path -LiteralPath $cleanup)) {
     if ($pipelineText -notmatch 'FilterSuspected') { Add-Failure 'sc-cleanup.ps1 does not forward filter-suspected state into scanner_results.json.' }
     if ($pipelineText -notmatch 'FilterNames') { Add-Failure 'sc-cleanup.ps1 does not forward named filter evidence into scanner_results.json.' }
     if ($pipelineText -notmatch 'DownloadDiagnostics') { Add-Failure 'sc-cleanup.ps1 does not forward Malwarebytes download diagnostics into scanner_results.json.' }
+    if ($pipelineText -notmatch 'FallbackUsed') { Add-Failure 'sc-cleanup.ps1 does not forward Malwarebytes offline-fallback state into scanner_results.json.' }
     if ($pipelineText -notmatch 'ConvertTo-Json -Depth 10') { Add-Failure 'sc-cleanup.ps1 scanner summary depth is too shallow for endpoint diagnostics.' }
     if ($script:failures.Count -eq 0) { Write-Host '  OK sc-cleanup.ps1: per-scanner result artifacts and Malwarebytes diagnostics are preserved.' }
 }
@@ -233,25 +242,19 @@ else {
     if ($script:failures.Count -eq 0) { Write-Host '  OK Invoke-AVUninstaller.ps1: attended-only, Defender excluded, Malwarebytes via winget, quarantine sweep.' }
 }
 
-# --- Contract 4: START-HERE.bat Step 6c launches Malwarebytes after install --
-Write-Host 'Section 4: START-HERE.bat Step 6c installs then launches Malwarebytes'
+# --- Contract 4: START-HERE.bat delegates Malwarebytes to the wrapper -----
+Write-Host 'Section 4: START-HERE.bat uses the Malwarebytes fallback wrapper'
 $startHere = Join-Path $repoRoot 'START-HERE.bat'
 if (-not (Test-Path -LiteralPath $startHere)) { Add-Failure 'START-HERE.bat missing.' }
 else {
     $text = [System.IO.File]::ReadAllText($startHere)
-    if ($text -notmatch 'winget install -e --id Malwarebytes\.Malwarebytes') { Add-Failure 'START-HERE.bat Step 6c does not run winget install for Malwarebytes.' }
-    if ($text -notmatch 'accept-package-agreements') { Add-Failure 'START-HERE.bat Step 6c winget install does not pass --accept-package-agreements - the install would stall on an agreement prompt.' }
-    if ($text -match 'MBSetup\.exe') { Add-Failure 'START-HERE.bat still advertises the removed MBSetup.exe fallback.' }
-    if ($text -notmatch 'DiagnosticsOnly') { Add-Failure 'START-HERE.bat does not run the read-only Malwarebytes diagnostics after a failed install.' }
-    if ($text -notmatch 'InstallerExitCode') { Add-Failure 'START-HERE.bat does not pass the failed winget exit code into the diagnostics wrapper.' }
-    if ($text -notmatch 'scanner-Malwarebytes-result\.json') { Add-Failure 'START-HERE.bat does not persist Malwarebytes diagnostics in the current-run logs.' }
-    if ($text -notmatch ':mbam_install_failed') { Add-Failure 'START-HERE.bat is missing the dedicated failed-winget diagnostic label.' }
-    if ($text -notmatch 'mbam\.exe not found[\s\S]*goto :skip_6c[\s\S]*:mbam_install_failed') { Add-Failure 'START-HERE.bat can fall through from a successful install with missing mbam.exe into the failed-winget diagnostic label.' }
-    if ($text -notmatch 'Invoke-GUIScanner\.ps1.*-ToolPath "%MBAMEXE%"') { Add-Failure 'START-HERE.bat Step 6c does not use the waited/validated GUI wrapper for Malwarebytes.' }
-    if ($text -match 'start "" "%MBAMEXE%"') { Add-Failure 'START-HERE.bat Step 6c launches Malwarebytes asynchronously; it must wait for the attended GUI to close.' }
-    if ($text -notmatch ':mbam_found') { Add-Failure 'START-HERE.bat Step 6c missing the :mbam_found launch label.' }
-    if ($text -notmatch '%ProgramFiles\(x86\)%\\Malwarebytes') { Add-Failure 'START-HERE.bat Step 6c missing the Program Files (x86) mbam.exe fallback path.' }
-    if ($script:failures.Count -eq 0) { Write-Host '  OK START-HERE.bat: Step 6c installs Malwarebytes via winget, then launches the GUI.' }
+    if ($text -notmatch 'Invoke-GUIScanner\.ps1.*-Scanner Malwarebytes') { Add-Failure 'START-HERE.bat Step 6c does not delegate Malwarebytes to Invoke-GUIScanner.' }
+    if ($text -notmatch 'scanner-Malwarebytes-result\.json') { Add-Failure 'START-HERE.bat does not persist the Malwarebytes scanner result in the current-run logs.' }
+    if ($text -match 'MBSetup\.exe') { Add-Failure 'START-HERE.bat still advertises the removed MBSetup.exe path.' }
+    if ($text -match 'winget install -e --id Malwarebytes\.Malwarebytes') { Add-Failure 'START-HERE.bat duplicates the winget install instead of using the wrapper fallback path.' }
+    if ($text -match 'DiagnosticsOnly') { Add-Failure 'START-HERE.bat bypasses the automatic offline fallback with diagnostics-only mode.' }
+    if ($text -match 'start "" "%MBAMEXE%"') { Add-Failure 'START-HERE.bat launches Malwarebytes asynchronously instead of using the waited GUI wrapper.' }
+    if ($script:failures.Count -eq 0) { Write-Host '  OK START-HERE.bat: Step 6c delegates winget plus official offline fallback to the GUI wrapper.' }
 }
 
 # --- Contract 5: Get-ScannerFindings.ps1 parses scanner logs -----------

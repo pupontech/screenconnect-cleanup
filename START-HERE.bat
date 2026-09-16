@@ -52,7 +52,7 @@ echo  ============================================================
 echo.
 
 rem ---- Step 1: tool pack (always runs) --------------------------------------
-echo  STEP 1/9: Tool pack + scanner staging
+echo  STEP 1/9: Tool pack + KVRT/ESET staging (Malwarebytes fallback at Step 6)
 if exist "%~dp0tools\Get-ToolPack.ps1" (
     powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\Get-ToolPack.ps1" -Quiet
     powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\Get-ToolPack.ps1" -Verify
@@ -153,41 +153,14 @@ if /i not "%GO%"=="n" (
 )
 set GO=
 
+rem ---- Step 6c: Malwarebytes (winget, then official offline fallback) -----
 echo.
 echo    -- 6c: Malwarebytes --
-set /p GO="    Install Malwarebytes via winget now? [Y/n] "
+set /p GO="    Install and launch Malwarebytes now? [Y/n] "
 if /i "%GO%"=="n" goto :skip_6c
-where winget >nul 2>&1
-if errorlevel 1 (
-    echo        [WARN] winget not found on this machine - install the App
-    echo        Installer first, then retry Malwarebytes.
-    if not exist "!SCC_RUN_ROOT!\logs" mkdir "!SCC_RUN_ROOT!\logs"
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-GUIScanner.ps1" -DiagnosticsOnly -InstallerExitCode -1 -ResultPath "!SCC_RUN_ROOT!\logs\scanner-Malwarebytes-result.json"
-    if errorlevel 1 echo        [WARN] Malwarebytes diagnostic wrapper exited with errorlevel !errorlevel!
-    goto :skip_6c
-)
-echo        Installing Malwarebytes via winget - id Malwarebytes.Malwarebytes
-set "MB_WINGET_RC="
-winget install -e --id Malwarebytes.Malwarebytes --accept-package-agreements --accept-source-agreements
-if errorlevel 1 set "MB_WINGET_RC=!errorlevel!"
-if defined MB_WINGET_RC goto :mbam_install_failed
-echo        Launching Malwarebytes UI...
-set "MBAMEXE="
-if exist "%ProgramFiles%\Malwarebytes\Anti-Malware\mbam.exe" set "MBAMEXE=%ProgramFiles%\Malwarebytes\Anti-Malware\mbam.exe"
-if defined MBAMEXE goto :mbam_found
-if exist "%ProgramFiles(x86)%\Malwarebytes\Anti-Malware\mbam.exe" set "MBAMEXE=%ProgramFiles(x86)%\Malwarebytes\Anti-Malware\mbam.exe"
-if defined MBAMEXE goto :mbam_found
-echo        [WARN] mbam.exe not found at standard paths - launch Malwarebytes from the Start Menu.
-goto :skip_6c
-:mbam_install_failed
-echo        [WARN] Malwarebytes winget install failed with errorlevel !MB_WINGET_RC!.
 if not exist "!SCC_RUN_ROOT!\logs" mkdir "!SCC_RUN_ROOT!\logs"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-GUIScanner.ps1" -DiagnosticsOnly -InstallerExitCode !MB_WINGET_RC! -ResultPath "!SCC_RUN_ROOT!\logs\scanner-Malwarebytes-result.json"
-if errorlevel 1 echo        [WARN] Malwarebytes diagnostic wrapper exited with errorlevel !errorlevel!
-goto :skip_6c
-:mbam_found
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-GUIScanner.ps1" -ToolPath "%MBAMEXE%"
-if errorlevel 1 echo        [WARN] Malwarebytes GUI wrapper exited with errorlevel !errorlevel!
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-GUIScanner.ps1" -Scanner Malwarebytes -ResultPath "!SCC_RUN_ROOT!\logs\scanner-Malwarebytes-result.json"
+if errorlevel 1 echo        [WARN] Malwarebytes wrapper exited with errorlevel !errorlevel! - see the result JSON and message above
 echo        Malwarebytes session ended - continuing.
 :skip_6c
 set GO=

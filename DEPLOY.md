@@ -21,7 +21,7 @@ targets.json
 New-InvestigationReport.ps1
 Submit-ConnectWiseReport.ps1    <- sanitized package + automatic MicroBin paste share
 microbin-url.txt                <- MicroBin server base URL used by the uploader (first nonblank line)
-Invoke-GUIScanner.ps1          <- launches KVRT/ESET GUI scanners (and Malwarebytes via winget) and waits (Stage 5)
+Invoke-GUIScanner.ps1          <- launches KVRT/ESET GUI scanners; Malwarebytes tries winget and falls back to the official consumer offline installer (Stage 5)
 Get-MalwarebytesDownloadDiagnostics.ps1 <- read-only Malwarebytes filter/proxy failure diagnostics (Stage 5)
 Invoke-AVUninstaller.ps1        <- opens installed-AV uninstallers, attended (Stage 6)
 tools\Get-ToolPack.ps1          <- downloader ONLY; do NOT copy tools\* exes
