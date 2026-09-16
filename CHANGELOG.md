@@ -3,7 +3,8 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
-## [Unreleased]
+## [1.7.53] - 2026-09-16
+**TESTING ONLY - not production-validated. Owner live Windows testing is required before production use.**
 - Malwarebytes Stage 5 now falls back when the winget path is unavailable,
   returns a failure, or installs without a usable GUI.
 - The fallback downloads the official Malwarebytes consumer offline installer,
