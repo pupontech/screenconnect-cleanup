@@ -104,6 +104,9 @@ jobs:
           if-no-files-found: ignore
 
   gui-revision-tests:
+    # The dedicated GUI workflow covers PRs and GUI-branch pushes. Keep this
+    # legacy main-branch backstop without running the same Windows matrix twice.
+    if: github.ref == 'refs/heads/main'
     name: GUI revision Pester (gui-revision-screenconnect-cleaner)
     strategy:
       fail-fast: false
