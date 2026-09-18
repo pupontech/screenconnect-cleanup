@@ -1,0 +1,45 @@
+{
+  "SchemaVersion": 1,
+  "nas": {
+    "enabled": true,
+    "path": "\\\\NAS\\TechnicianTools\\Security",
+    "priorityOrder": ["local", "nas", "official"],
+    "timeoutSeconds": 15
+  },
+  "paths": {
+    "reportRoot": "%USERPROFILE%\\Documents\\ScreenConnect Cleanup\\Reports",
+    "programData": "%ProgramData%\\ScreenConnectCleaner",
+    "userData": "%LocalAppData%\\ScreenConnectCleaner"
+  },
+  "scanners": {
+    "enabled": ["Defender", "KVRT", "MSERT"],
+    "order": ["Defender", "KVRT", "MSERT"],
+    "attended": ["AdwCleaner", "ESETOnline", "Malwarebytes"],
+    "defaultTimeoutMinutes": 120
+  },
+  "download": {
+    "allowed": true,
+    "maxAttempts": 2,
+    "timeoutSeconds": 300
+  },
+  "detection": {
+    "incidentWindowDays": 7,
+    "defaultTargets": ["screenconnect"]
+  },
+  "logging": {
+    "level": "INFO",
+    "retentionDays": 90
+  },
+  "safety": {
+    "serverOsRefusal": true,
+    "dryRunDefault": true,
+    "removableProducts": ["screenconnect"]
+  },
+  "evidence": {
+    "retentionDays": 30
+  },
+  "ui": {
+    "confirmDestructive": true,
+    "language": "en"
+  }
+}

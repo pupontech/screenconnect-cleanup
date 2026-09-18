@@ -1,0 +1,51 @@
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Width="1200" Height="800">
+  <UserControl.Resources>
+    <Style TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#1A1A1A"/>
+      <Setter Property="FontSize" Value="13"/>
+    </Style>
+    <Style TargetType="Button">
+      <Setter Property="Background" Value="#0A6EBE"/>
+      <Setter Property="Foreground" Value="#FFFFFF"/>
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="Margin" Value="4"/>
+      <Setter Property="Padding" Value="10,6"/>
+      <Setter Property="BorderThickness" Value="0"/>
+    </Style>
+  </UserControl.Resources>
+  <Grid Background="#F2F2F2" Margin="12">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+    <TextBlock Grid.Row="0" FontSize="22" FontWeight="Bold" Foreground="#0A6EBE" Text="Settings"/>
+    <ScrollViewer Grid.Row="1" Margin="0,10,0,0">
+      <StackPanel>
+        <TextBlock FontWeight="Bold" Text="NAS path"/>
+        <StackPanel Orientation="Horizontal">
+          <TextBox x:Name="TxtNasPath" Width="500" VerticalAlignment="Center"/>
+          <Button x:Name="BtnTestNas" Content="Test"/>
+        </StackPanel>
+        <TextBlock FontWeight="Bold" Text="Report root" Margin="0,8,0,0"/>
+        <TextBox x:Name="TxtReportRoot" Width="500" VerticalAlignment="Center"/>
+        <TextBlock FontWeight="Bold" Text="Scanner order" Margin="0,8,0,0"/>
+        <TextBox x:Name="TxtScannerOrder" Width="500" VerticalAlignment="Center"/>
+        <TextBlock FontWeight="Bold" Text="Logging level" Margin="0,8,0,0"/>
+        <ComboBox x:Name="CboLogLevel" Width="160" VerticalAlignment="Center"/>
+        <TextBlock FontWeight="Bold" Text="Evidence retention (days)" Margin="0,8,0,0"/>
+        <TextBox x:Name="TxtRetention" Width="120" VerticalAlignment="Center"/>
+        <TextBlock FontWeight="Bold" Text="Trusted relays" Margin="0,8,0,0"/>
+        <DataGrid x:Name="GrdTrustedRelays" AutoGenerateColumns="True" Height="160"/>
+        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+          <Button x:Name="BtnAddRelay" Content="Add"/>
+          <Button x:Name="BtnRemoveRelay" Content="Remove"/>
+          <Button x:Name="BtnEditRelay" Content="Edit"/>
+        </StackPanel>
+      </StackPanel>
+    </ScrollViewer>
+    <Button Grid.Row="2" x:Name="BtnSaveSettings" Content="Save Settings" HorizontalAlignment="Left"/>
+  </Grid>
+</UserControl>
