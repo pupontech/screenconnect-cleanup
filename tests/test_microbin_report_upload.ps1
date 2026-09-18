@@ -156,6 +156,11 @@ if (-not $pythonCommand) { $pythonCommand = Get-Command python -ErrorAction Sile
 if (-not $pythonCommand) { throw 'python is required for the disposable MicroBin receiver test' }
 $pythonPath = if ($pythonCommand.Source) { $pythonCommand.Source } else { $pythonCommand.Path }
 
+$receiverStartBudgetSeconds = 30
+if ($env:SCC_RECEIVER_START_TIMEOUT_SECONDS -and $env:SCC_RECEIVER_START_TIMEOUT_SECONDS -match '^[0-9]+$') {
+    $receiverStartBudgetSeconds = [int]$env:SCC_RECEIVER_START_TIMEOUT_SECONDS
+}
+
 function Start-MicroBinServer {
     param([string]$Mode)
     $suffix = [guid]::NewGuid().ToString('N')
@@ -168,13 +173,41 @@ function Start-MicroBinServer {
         -RedirectStandardOutput $stdOut -RedirectStandardError $stdErr
     $script:scenarioProcesses += $proc
     $port = $null
-    for ($i = 0; $i -lt 50; $i++) {
+    # A cold interpreter start on a loaded Windows runner can exceed the old 5s
+    # cap, and a port file observed before the receiver writes its real port
+    # yields a bogus 0 - both produced misleading upload failures against
+    # http://127.0.0.1:0. Wait on a deadline, ignore non-positive readings, and
+    # fail fast with diagnostics when the launcher is already gone.
+    $startDeadline = (Get-Date).AddSeconds($receiverStartBudgetSeconds)
+    while ((Get-Date) -lt $startDeadline) {
         if (Test-Path -LiteralPath $portFile) {
-            try { $port = [int](Get-Content -LiteralPath $portFile -Raw); break } catch { }
+            try {
+                $candidate = [int](Get-Content -LiteralPath $portFile -Raw)
+                if ($candidate -gt 0) { $port = $candidate; break }
+            } catch { }
         }
+        if ($proc.HasExited) { break }
         Start-Sleep -Milliseconds 100
     }
-    if ($null -eq $port) { throw 'MicroBin receiver did not start' }
+    if ($null -eq $port) {
+        $details = New-Object System.Text.StringBuilder
+        [void]$details.AppendLine('mode=' + $Mode + ' interpreter=' + $pythonPath)
+        [void]$details.AppendLine('no usable port file: ' + $portFile)
+        if ($proc.HasExited) {
+            [void]$details.AppendLine('receiver process exited with code ' + $proc.ExitCode)
+        } else {
+            [void]$details.AppendLine('receiver still running after ' + $receiverStartBudgetSeconds + 's (set SCC_RECEIVER_START_TIMEOUT_SECONDS to extend)')
+        }
+        foreach ($artifact in @($stdErr, $stdOut, $logFile)) {
+            if (Test-Path -LiteralPath $artifact) {
+                try {
+                    [void]$details.AppendLine('--- ' + (Split-Path -Leaf $artifact) + ' ---')
+                    [void]$details.AppendLine([string](Get-Content -LiteralPath $artifact -Raw -ErrorAction Stop))
+                } catch { }
+            }
+        }
+        throw ('MicroBin receiver did not start' + [Environment]::NewLine + $details.ToString())
+    }
     return @{ Port = $port; Log = $logFile; ProcessId = $proc.Id; StdOut = $stdOut; StdErr = $stdErr }
 }
 
