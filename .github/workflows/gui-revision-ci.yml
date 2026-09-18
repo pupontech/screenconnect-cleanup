@@ -23,9 +23,16 @@ name: gui-revision-ci
 
 on:
   push:
-    branches: [gui-revision-screenconnect-cleaner]
+    branches: [main, gui-revision-screenconnect-cleaner]
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   linux-static:
@@ -191,7 +198,7 @@ jobs:
           if (-not (Test-Path -LiteralPath $sidecar)) { Write-Host "ERROR: sha256 sidecar not produced"; exit 1 }
           Write-Host "Build produced: $zip"
 
-      - name: Verify package opens cleanly (Expand-Archive)
+      - name: Verify portable package integrity
         shell: pwsh
         run: |
           $ver = $env:GITHUB_REF
@@ -200,26 +207,7 @@ jobs:
           else { $ver = '0.1.0' }
           $out = Join-Path $env:RUNNER_TEMP "sccbuild"
           $zip = Join-Path $out ("ScreenConnectCleaner-$ver-portable.zip")
-          $extract = Join-Path $env:RUNNER_TEMP "sccverify"
-          if (Test-Path -LiteralPath $extract) { Remove-Item -LiteralPath $extract -Recurse -Force }
-          New-Item -ItemType Directory -Path $extract -Force | Out-Null
-          Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force
-          $root = Join-Path $extract ("ScreenConnectCleaner-$ver")
-          $expected = @(
-            (Join-Path $root 'Scc.Cleaner.ps1'),
-            (Join-Path $root 'Start-ScreenConnectCleaner.bat'),
-            (Join-Path $root 'src'),
-            (Join-Path $root 'config'),
-            (Join-Path $root 'docs'),
-            (Join-Path $root 'SHA256SUMS.txt')
-          )
-          $missing = $expected | Where-Object { -not (Test-Path -LiteralPath $_) }
-          if (@($missing).Count -gt 0) {
-            Write-Host "ERROR: extracted package missing expected items:"
-            foreach ($m in $missing) { Write-Host "  $m" }
-            exit 1
-          }
-          Write-Host "Package verified: archive opens, expected dirs/files present."
+          ./gui-revision-screenconnect-cleaner/tests/ci/Test-PortablePackage.ps1 -ZipPath $zip
 
       - name: Upload package + hashes
         if: always()
