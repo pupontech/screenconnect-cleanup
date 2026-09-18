@@ -2,17 +2,23 @@
 
 ## Deterministic merge checks
 
-Pull requests run two required deterministic workflows:
+Pull requests run two deterministic workflows:
 
 - **windows-ci** tests the root cleanup tool on Windows Server 2022 and 2025,
   under Windows PowerShell 5.1 and pwsh where the test applies.
 - **gui-revision-ci** runs GUI static, Pester, WPF-smoke, headless-smoke,
-  malformed-config, and portable-package checks. It also runs after merges to
-  `main` and on the GUI revision branch.
+  malformed-config, and portable-package checks. Once this workflow is on
+  `main` it also runs after merges to `main`, in addition to every pull request
+  and GUI-branch push.
 
-GitHub branch protection for `main` requires both Windows matrix legs from each
-workflow plus the GUI Linux static job. The scanner probe and AI review are not
-merge gates because they depend on external vendors or an LLM.
+Branch protection for `main` currently requires the two `windows-tests` matrix
+legs, which are the contexts `main` can produce today. `gui-revision-ci`'s
+`Linux static checks` and `Windows dynamic (windows-2022/2025)` contexts must be
+added to the required list in the same change that first lands
+`gui-revision-ci.yml` on `main`; requesting them earlier leaves them
+permanently "Expected - waiting for status to be reported" and blocks every
+merge. The scanner probe and AI review are never merge gates because they depend
+on an external vendor and an LLM endpoint respectively.
 
 ## Portable release process
 
