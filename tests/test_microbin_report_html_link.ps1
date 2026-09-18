@@ -242,7 +242,10 @@ function Start-MicroBinServer {
     $startDeadline = (Get-Date).AddSeconds($receiverStartBudgetSeconds)
     while ((Get-Date) -lt $startDeadline) {
         if (Test-Path -LiteralPath $portFile) {
-            try { $port = [int](Get-Content -LiteralPath $portFile -Raw); break } catch { }
+            try {
+                $candidate = [int](Get-Content -LiteralPath $portFile -Raw)
+                if ($candidate -gt 0) { $port = $candidate; break }
+            } catch { }
         }
         if ($proc.HasExited) { break }
         Start-Sleep -Milliseconds 100
