@@ -10,7 +10,9 @@ name: windows-ci
 
 on:
   push:
-    branches: [main]
+    # The GUI revision branch carries root-tool changes too, so keep the
+    # root-tool matrix on its pushes; the GUI matrix lives in gui-revision-ci.
+    branches: [main, gui-revision-screenconnect-cleaner]
   pull_request:
   workflow_dispatch:
 
