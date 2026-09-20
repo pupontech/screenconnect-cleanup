@@ -1,0 +1,51 @@
+name: OpenCodeReview
+
+# Reviews pull-request diffs and posts a sticky PR summary plus non-duplicated
+# inline findings. The action checks out the trusted base and fetches PR blobs
+# only; it never executes PR code, so pull_request_target can access the LLM
+# secrets for forked pull requests. Set repository variable OCR_ENABLED=true
+# only after configuring the required OCR_LLM_* secrets and variables below.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# The action needs read access to the trusted base and write access only to post
+# pull-request review comments.
+permissions:
+  contents: read
+  pull-requests: write
+
+# A newer revision supersedes an in-progress review of the same PR.
+concurrency:
+  group: ocr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Drafts are reviewed when GitHub emits ready_for_review, not on each save.
+    if: github.event.pull_request.draft == false && vars.OCR_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Review pull request
+        # v1.12.5: pin the action source and CLI independently for reproducibility.
+        uses: alibaba/open-code-review@189be5b024d3309dd10fdc8cd8ee31b2530c210b # v1.12.5
+        with:
+          # Configure these in Settings -> Secrets and variables -> Actions.
+          llm_url: ${{ secrets.OCR_LLM_URL }}
+          llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+          llm_model: ${{ vars.OCR_LLM_MODEL }}
+          # The action selects the Anthropic protocol when this input is empty,
+          # so default an unset variable to the OpenAI-compatible protocol.
+          llm_use_anthropic: ${{ vars.OCR_LLM_USE_ANTHROPIC || 'false' }}
+          ocr_version: "1.12.5"
+          effort: "medium"
+          review_task_timeout: "15"
+          llm_timeout: "300"
+          sticky_summary: "true"
+          incremental: "true"
+          upload_artifacts: "true"
+          stream_progress: "false"
+          # Re-read the whole PR range on each update; this avoids checkpoint
+          # trust assumptions while incremental posting prevents duplicates.
+          checkpoint_range: "false"

@@ -1,0 +1,117 @@
+name: Release portable package
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to rebuild and publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and verify (windows-2022)
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Build portable package
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "scc-release"
+          ./gui-revision-screenconnect-cleaner/build/Build-Portable.ps1 -OutDir $out -Version $env:RELEASE_TAG -Zip $true -IncludeConfigs $true
+
+      - name: Verify portable package integrity
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "scc-release"
+          $zip = Join-Path $out ("ScreenConnectCleaner-$env:RELEASE_TAG-portable.zip")
+          ./gui-revision-screenconnect-cleaner/tests/ci/Test-PortablePackage.ps1 -ZipPath $zip
+
+      - name: Upload verified package
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable-release-package
+          path: |
+            ${{ runner.temp }}/scc-release/ScreenConnectCleaner-*-portable.zip
+            ${{ runner.temp }}/scc-release/ScreenConnectCleaner-*-portable.zip.sha256
+          if-no-files-found: error
+
+  verify-windows-2025:
+    name: Verify package extraction (windows-2025)
+    needs: build
+    runs-on: windows-2025
+    timeout-minutes: 20
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout release verifier
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Download package built on windows-2022
+        uses: actions/download-artifact@v4
+        with:
+          name: portable-release-package
+          path: ${{ runner.temp }}/portable-release-package
+
+      - name: Verify portable package integrity
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP "portable-release-package"
+          $zip = Get-ChildItem -LiteralPath $dir -Filter '*.zip' -File | Select-Object -First 1
+          if ($null -eq $zip) { Write-Error "Release artifact ZIP was not downloaded."; exit 1 }
+          ./gui-revision-screenconnect-cleaner/tests/ci/Test-PortablePackage.ps1 -ZipPath $zip.FullName
+
+  publish:
+    name: Publish and re-download release asset
+    needs: verify-windows-2025
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # gh resolves the target repository from a git remote unless GH_REPO (or
+      # --repo) names it; this job deliberately has no checkout, so GH_REPO is
+      # required for every gh release command below.
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Download verified package
+        uses: actions/download-artifact@v4
+        with:
+          name: portable-release-package
+          path: release-assets
+
+      - name: Publish assets and verify GitHub Release copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip=$(printf '%s\n' release-assets/*.zip)
+          sidecar=$(printf '%s\n' release-assets/*.zip.sha256)
+          test -f "$zip"
+          test -f "$sidecar"
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --title "$RELEASE_TAG" --generate-notes
+          fi
+          gh release upload "$RELEASE_TAG" "$zip" "$sidecar" --clobber
+          mkdir downloaded
+          gh release download "$RELEASE_TAG" --pattern "$(basename "$zip")" --dir downloaded --clobber
+          test "$(sha256sum "$zip" | cut -d' ' -f1)" = "$(sha256sum "downloaded/$(basename "$zip")" | cut -d' ' -f1)"
