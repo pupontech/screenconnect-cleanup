@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Changed - single stage catalog
+
+- `Scc.UI` now derives workflow records, runbook labels/defaults, mode
+  applicability, and prerequisite gates from one stage catalog. Stage dispatch
+  uses stable names instead of numeric positions, reducing GUI/headless drift
+  without changing the 12-stage safety order.
+- Added unit coverage for catalog parity and the `ScanOnly` mode selection.
+
+---
+
 ## [0.2.0] - 2026-08-27
 
 ### Fixed - GUI shell actually opens and runs

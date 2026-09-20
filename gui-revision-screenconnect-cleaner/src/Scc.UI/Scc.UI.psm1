@@ -39,16 +39,179 @@ $script:RunbookBoxes = @()
 # Private helpers
 # ---------------------------------------------------------------------------
 
+function Get-SccStageCatalog {
+    # The catalog is the single source of truth for workflow order, runbook
+    # text, mode applicability, defaults, and dependency gates. Keep stage
+    # execution in Invoke-SccStageBody, but do not repeat stage identity in
+    # every caller or UI surface.
+    return @(
+        [pscustomobject]@{
+            Index = 0
+            Name = 'ToolPack'
+            Skippable = $true
+            DefaultSelected = $true
+            ApplicableModes = @('Full', 'DetectOnly', 'ScanOnly')
+            DisplayName = 'Step 1 - Build/verify tool pack'
+            Description = 'KVRT, ESET Online, Malwarebytes (Scc.Tools resolve + verify)'
+            Prerequisites = @()
+        }
+        [pscustomobject]@{
+            Index = 1
+            Name = 'Preflight'
+            Skippable = $false
+            DefaultSelected = $true
+            ApplicableModes = @('Full', 'DetectOnly')
+            DisplayName = 'Step 2 - Preflight checks'
+            Description = 'Admin, disk, config, restore point (cmd step 2)'
+            Prerequisites = @()
+        }
+        [pscustomobject]@{
+            Index = 2
+            Name = 'SnapshotBefore'
+            Skippable = $false
+            DefaultSelected = $true
+            ApplicableModes = @('Full', 'DetectOnly')
+            DisplayName = 'Step 3 - BEFORE snapshot'
+            Description = 'Baseline evidence (cmd step 3)'
+            Prerequisites = @()
+        }
+        [pscustomobject]@{
+            Index = 3
+            Name = 'Detection'
+            Skippable = $false
+            DefaultSelected = $true
+            ApplicableModes = @('Full', 'DetectOnly')
+            DisplayName = 'Step 4 - Remote-access detection'
+            Description = 'Read-only, automatic (cmd step 4)'
+            Prerequisites = @()
+        }
+        [pscustomobject]@{
+            Index = 4
+            Name = 'Review'
+            Skippable = $false
+            DefaultSelected = $true
+            ApplicableModes = @('Full', 'DetectOnly')
+            DisplayName = 'Review findings (plan gate)'
+            Description = 'Internal gate - approve remediation plan (no cmd step)'
+            Prerequisites = @()
+        }
+        [pscustomobject]@{
+            Index = 5
+            Name = 'Remediate'
+            Skippable = $true
+            DefaultSelected = $false
+            ApplicableModes = @('Full')
+            DisplayName = 'Step 5 - REMOVE ScreenConnect'
+            Description = 'Dry-run default; plan-gated, quarantine-never-delete (cmd step 5)'
+            Prerequisites = @(
+                [pscustomobject]@{
+                    StageName = 'Review'
+                    AllowedStatuses = @('Completed')
+                    Detail = 'Requires stage 4 (Review) Completed with a plan'
+                }
+            )
+        }
+        [pscustomobject]@{
+            Index = 6
+            Name = 'Scanners'
+            Skippable = $true
+            DefaultSelected = $true
+            ApplicableModes = @('Full', 'ScanOnly')
+            DisplayName = 'Step 6 - Antivirus scans'
+            Description = 'KVRT / ESET / Malwarebytes, attended (cmd step 6)'
+            Prerequisites = @()
+        }
+        [pscustomobject]@{
+            Index = 7
+            Name = 'Tikun'
+            Skippable = $true
+            DefaultSelected = $false
+            ApplicableModes = @('Full')
+            DisplayName = 'Step 7 - Tikun (general fix)'
+            Description = 'Attended GeneralFix runner; DESTRUCTIVE, opt-in (cmd step 7)'
+            Prerequisites = @()
+        }
+        [pscustomobject]@{
+            Index = 8
+            Name = 'UninstallAV'
+            Skippable = $true
+            DefaultSelected = $false
+            ApplicableModes = @('Full')
+            DisplayName = 'Step 8 - Uninstall installed AV'
+            Description = 'Attended vendor uninstallers, opt-in (cmd step 8)'
+            Prerequisites = @()
+        }
+        [pscustomobject]@{
+            Index = 9
+            Name = 'SnapshotAfter'
+            Skippable = $false
+            DefaultSelected = $true
+            ApplicableModes = @('Full', 'DetectOnly')
+            DisplayName = 'Step 9 - AFTER snapshot'
+            Description = 'Post-run evidence (cmd step 9)'
+            Prerequisites = @(
+                [pscustomobject]@{
+                    StageName = 'Scanners'
+                    AllowedStatuses = @('Completed', 'Skipped')
+                    Detail = 'Requires stage 6 (Scanners) Completed or Skipped'
+                }
+            )
+        }
+        [pscustomobject]@{
+            Index = 10
+            Name = 'Compare'
+            Skippable = $false
+            DefaultSelected = $true
+            ApplicableModes = @('Full', 'DetectOnly')
+            DisplayName = 'Step 9b - Before/After diff'
+            Description = 'Resurrection check (cmd step 9)'
+            Prerequisites = @(
+                [pscustomobject]@{
+                    StageName = 'SnapshotAfter'
+                    AllowedStatuses = @('Completed')
+                    Detail = 'Requires stage 9 (SnapshotAfter) Completed'
+                }
+            )
+        }
+        [pscustomobject]@{
+            Index = 11
+            Name = 'Report'
+            Skippable = $false
+            DefaultSelected = $true
+            ApplicableModes = @('Full', 'DetectOnly', 'ScanOnly')
+            DisplayName = 'Step 10 - Investigation report'
+            Description = 'HTML / JSON / technician summary (cmd step 10)'
+            Prerequisites = @()
+        }
+    )
+}
+
+function Get-SccStageDefinition {
+    param([int]$Index = -1, [string]$Name)
+    foreach ($definition in @(Get-SccStageCatalog)) {
+        if (($Index -ge 0 -and $definition.Index -eq $Index) -or
+            ($Name -and $definition.Name -eq $Name)) {
+            return $definition
+        }
+    }
+    return $null
+}
+
 function New-SccStageRecord {
-    param([int]$Index, [string]$Name, [bool]$Skippable)
+    param([Parameter(Mandatory = $true)]$Definition)
     return [pscustomobject]@{
-        Index      = $Index
-        Name       = $Name
-        Status     = 'Pending'
-        StartedUtc  = $null
-        EndedUtc   = $null
-        Detail     = ''
-        Skippable  = [bool]$Skippable
+        Index = $Definition.Index
+        Name = $Definition.Name
+        DisplayName = $Definition.DisplayName
+        Description = $Definition.Description
+        DefaultSelected = [bool]$Definition.DefaultSelected
+        ApplicableModes = @($Definition.ApplicableModes)
+        Prerequisites = @($Definition.Prerequisites)
+        Status = 'Pending'
+        StartedUtc = $null
+        EndedUtc = $null
+        Detail = ''
+        Skippable = [bool]$Definition.Skippable
     }
 }
 
@@ -121,14 +284,31 @@ function Import-SccResumeState {
 
 function Test-SccStageApplicable {
     param($Workflow, [int]$StageIndex)
-    $mode = $Workflow.Mode
-    $applicable = @(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
-    # DetectOnly is read-only: tool pack, preflight, snapshots, detection,
-    # review (auto-passes), compare, report. No remediation/scanners/tikun/AV.
-    if ($mode -eq 'DetectOnly') { $applicable = @(0, 1, 2, 3, 4, 9, 10, 11) }
-    elseif ($mode -eq 'ScanOnly') { $applicable = @(0, 6, 11) }
-    if ($StageIndex -eq 6 -and $Workflow.SkipScanners) { return $false }
-    return ($applicable -contains $StageIndex)
+    $definition = Get-SccStageDefinition -Index $StageIndex
+    if ($null -eq $definition) { return $false }
+    if (@($definition.ApplicableModes) -notcontains $Workflow.Mode) { return $false }
+    if ($definition.Name -eq 'Scanners' -and $Workflow.SkipScanners) { return $false }
+    return $true
+}
+
+function Test-SccStagePrerequisites {
+    param($Workflow, $Stage)
+    $definition = Get-SccStageDefinition -Name $Stage.Name
+    if ($null -eq $definition) {
+        throw ('No stage definition found for ' + $Stage.Name)
+    }
+    foreach ($prerequisite in @($definition.Prerequisites)) {
+        $required = $Workflow.Stages |
+            Where-Object { $_.Name -eq $prerequisite.StageName } |
+            Select-Object -First 1
+        if ($null -eq $required -or @($prerequisite.AllowedStatuses) -notcontains $required.Status) {
+            return [pscustomobject]@{
+                Satisfied = $false
+                Detail = $prerequisite.Detail
+            }
+        }
+    }
+    return [pscustomobject]@{ Satisfied = $true; Detail = '' }
 }
 
 # ---------------------------------------------------------------------------
@@ -332,14 +512,14 @@ function Invoke-SccBackendReport {
 function Invoke-SccStageBody {
     param($Workflow, $Stage)
 
-    switch ($Stage.Index) {
-        0 {
+    switch ($Stage.Name) {
+        'ToolPack' {
             $Workflow.Data.ToolPack = Invoke-SccBackendToolPack -Run $Workflow.Run
             $missing = @($Workflow.Data.ToolPack | Where-Object { $_.Status -ne 'Ready' })
             $Stage.Detail = ('Tool pack: ' + @($Workflow.Data.ToolPack).Count + ' tools, ' + @($missing).Count + ' missing')
             $Stage.Status = 'Completed'
         }
-        1 {
+        'Preflight' {
             $r = Invoke-SccBackendPreflight
             $Workflow.Data.ComputerInfo = $r.ComputerInfo
             $Workflow.Data.Internet = $r.Internet
@@ -348,17 +528,17 @@ function Invoke-SccStageBody {
             $Stage.Detail = 'Preflight checks collected'
             $Stage.Status = 'Completed'
         }
-        2 {
+        'SnapshotBefore' {
             $Workflow.Data.SnapshotBefore = Invoke-SccBackendSnapshot -Run $Workflow.Run -Label before -Days $Workflow.IncidentWindowDays
             $Stage.Detail = 'Snapshot (before) collected'
             $Stage.Status = 'Completed'
         }
-        3 {
+        'Detection' {
             $Workflow.Data.Findings = Invoke-SccBackendDetection -Run $Workflow.Run
             $Stage.Detail = 'Detection complete'
             $Stage.Status = 'Completed'
         }
-        4 {
+        'Review' {
             # Review gate
             if ($Workflow.Mode -ne 'Full') {
                 $Stage.Status = 'Completed'
@@ -376,7 +556,7 @@ function Invoke-SccStageBody {
             $Stage.Status = 'AwaitingReview'
             $Stage.Detail = 'Awaiting remediation plan approval (headless stops here; provide -PlanPath or approve in GUI)'
         }
-        5 {
+        'Remediate' {
             $plan = $Workflow.Data.Plan
             if ($null -eq $plan) { $plan = Get-SccPlanFromRun -Workflow $Workflow }
             if ($null -eq $plan) { throw 'No remediation plan available for stage 5 (Remediate).' }
@@ -391,37 +571,40 @@ function Invoke-SccStageBody {
             }
             $Stage.Status = 'Completed'
         }
-        6 {
+        'Scanners' {
             $Workflow.Data.ScannerResults = Invoke-SccBackendScanners -Run $Workflow.Run -Timeout $Workflow.ScannerTimeout
             $Stage.Detail = ('Scanners run: ' + @($Workflow.Data.ScannerResults).Count)
             $Stage.Status = 'Completed'
         }
-        7 {
+        'Tikun' {
             $Workflow.Data.Tikun = Invoke-SccBackendTikun -Run $Workflow.Run
             $Stage.Detail = $Workflow.Data.Tikun.Detail
             $Stage.Status = 'Completed'
         }
-        8 {
+        'UninstallAV' {
             $Workflow.Data.AVUninstall = Invoke-SccBackendAVUninstall -Run $Workflow.Run
             $n = 0
             if ($Workflow.Data.AVUninstall -and $Workflow.Data.AVUninstall.Results) { $n = @($Workflow.Data.AVUninstall.Results).Count }
             $Stage.Detail = ('AV uninstaller: ' + $n + ' product(s) handled (attended)')
             $Stage.Status = 'Completed'
         }
-        9 {
+        'SnapshotAfter' {
             $Workflow.Data.SnapshotAfter = Invoke-SccBackendSnapshot -Run $Workflow.Run -Label after -Days $Workflow.IncidentWindowDays
             $Stage.Detail = 'Snapshot (after) collected'
             $Stage.Status = 'Completed'
         }
-        10 {
+        'Compare' {
             $Workflow.Data.Diff = Invoke-SccBackendCompare -Before $Workflow.Data.SnapshotBefore -After $Workflow.Data.SnapshotAfter -Run $Workflow.Run
             $Stage.Detail = 'Before/After comparison complete'
             $Stage.Status = 'Completed'
         }
-        11 {
+        'Report' {
             $Workflow.Data.Report = Invoke-SccBackendReport -Run $Workflow.Run
             $Stage.Detail = 'Report generated'
             $Stage.Status = 'Completed'
+        }
+        default {
+            throw ('No handler registered for stage ' + $Stage.Name)
         }
     }
 }
@@ -454,24 +637,12 @@ function New-SccWorkflow {
         }
     }
 
-    # NOTE: local is $stageList - never $stages (case-insensitive collision
-    # with the -Stages parameter would clobber the caller's selection).
-    # 12 stages = the cmd version's runbook 1:1 (Review is the internal
-    # plan gate, not a cmd step; Procmon stays opt-in/advanced).
-    $stageList = @(
-        (New-SccStageRecord 0  'ToolPack'       $true)
-        (New-SccStageRecord 1  'Preflight'      $false)
-        (New-SccStageRecord 2  'SnapshotBefore' $false)
-        (New-SccStageRecord 3  'Detection'      $false)
-        (New-SccStageRecord 4  'Review'         $false)
-        (New-SccStageRecord 5  'Remediate'      $true)
-        (New-SccStageRecord 6  'Scanners'       $true)
-        (New-SccStageRecord 7  'Tikun'          $true)
-        (New-SccStageRecord 8  'UninstallAV'    $true)
-        (New-SccStageRecord 9  'SnapshotAfter'  $false)
-        (New-SccStageRecord 10 'Compare'        $false)
-        (New-SccStageRecord 11 'Report'         $false)
-    )
+    # The stage catalog owns order and identity for both the state machine and
+    # the GUI runbook. Keep the local name distinct from the -Stages parameter.
+    $stageList = @()
+    foreach ($definition in @(Get-SccStageCatalog)) {
+        $stageList += (New-SccStageRecord -Definition $definition)
+    }
 
     # Runbook stage selection: only the named stages run; everything else is
     # pre-skipped. Unknown names are rejected (typo protection for the GUI
@@ -517,20 +688,17 @@ function New-SccWorkflow {
 # internal plan gate (no cmd step); Procmon stays opt-in/advanced.
 # ---------------------------------------------------------------------------
 function Get-SccRunbookStages {
-    return @(
-        ([pscustomobject]@{ Index = 0;  Name = 'ToolPack';       DisplayName = 'Step 1 - Build/verify tool pack';          Description = 'KVRT, ESET Online, Malwarebytes (Scc.Tools resolve + verify)' })
-        ([pscustomobject]@{ Index = 1;  Name = 'Preflight';      DisplayName = 'Step 2 - Preflight checks';                Description = 'Admin, disk, config, restore point (cmd step 2)' })
-        ([pscustomobject]@{ Index = 2;  Name = 'SnapshotBefore'; DisplayName = 'Step 3 - BEFORE snapshot';                 Description = 'Baseline evidence (cmd step 3)' })
-        ([pscustomobject]@{ Index = 3;  Name = 'Detection';      DisplayName = 'Step 4 - Remote-access detection';         Description = 'Read-only, automatic (cmd step 4)' })
-        ([pscustomobject]@{ Index = 4;  Name = 'Review';         DisplayName = 'Review findings (plan gate)';             Description = 'Internal gate - approve remediation plan (no cmd step)' })
-        ([pscustomobject]@{ Index = 5;  Name = 'Remediate';      DisplayName = 'Step 5 - REMOVE ScreenConnect';            Description = 'Dry-run default; plan-gated, quarantine-never-delete (cmd step 5)' })
-        ([pscustomobject]@{ Index = 6;  Name = 'Scanners';       DisplayName = 'Step 6 - Antivirus scans';                Description = 'KVRT / ESET / Malwarebytes, attended (cmd step 6)' })
-        ([pscustomobject]@{ Index = 7;  Name = 'Tikun';          DisplayName = 'Step 7 - Tikun (general fix)';            Description = 'Attended GeneralFix runner; DESTRUCTIVE, opt-in (cmd step 7)' })
-        ([pscustomobject]@{ Index = 8;  Name = 'UninstallAV';    DisplayName = 'Step 8 - Uninstall installed AV';          Description = 'Attended vendor uninstallers, opt-in (cmd step 8)' })
-        ([pscustomobject]@{ Index = 9;  Name = 'SnapshotAfter';  DisplayName = 'Step 9 - AFTER snapshot';                 Description = 'Post-run evidence (cmd step 9)' })
-        ([pscustomobject]@{ Index = 10; Name = 'Compare';        DisplayName = 'Step 9b - Before/After diff';              Description = 'Resurrection check (cmd step 9)' })
-        ([pscustomobject]@{ Index = 11; Name = 'Report';         DisplayName = 'Step 10 - Investigation report';          Description = 'HTML / JSON / technician summary (cmd step 10)' })
-    )
+    $out = @()
+    foreach ($definition in @(Get-SccStageCatalog)) {
+        $out += [pscustomobject]@{
+            Index = $definition.Index
+            Name = $definition.Name
+            DisplayName = $definition.DisplayName
+            Description = $definition.Description
+            DefaultSelected = [bool]$definition.DefaultSelected
+        }
+    }
+    return $out
 }
 
 function Get-SccNextStage {
@@ -561,24 +729,12 @@ function Step-SccWorkflow {
         return $Workflow
     }
 
-    # Hard prerequisite checks (ARCHITECTURE section 4)
-    if ($stage.Index -eq 5 -and $Workflow.Stages[4].Status -ne 'Completed') {
+    # Dependency gates are declared with the stage definition rather than
+    # coupling this transition function to numeric array positions.
+    $prerequisites = Test-SccStagePrerequisites -Workflow $Workflow -Stage $stage
+    if (-not $prerequisites.Satisfied) {
         $stage.Status = 'Skipped'
-        $stage.Detail = 'Requires stage 4 (Review) Completed with a plan'
-        $stage.EndedUtc = [datetime]::UtcNow
-        Save-SccStageState -Workflow $Workflow -Stage $stage
-        return $Workflow
-    }
-    if ($stage.Index -eq 9 -and $Workflow.Stages[6].Status -notin @('Completed', 'Skipped')) {
-        $stage.Status = 'Skipped'
-        $stage.Detail = 'Requires stage 6 (Scanners) Completed or Skipped'
-        $stage.EndedUtc = [datetime]::UtcNow
-        Save-SccStageState -Workflow $Workflow -Stage $stage
-        return $Workflow
-    }
-    if ($stage.Index -eq 10 -and $Workflow.Stages[9].Status -ne 'Completed') {
-        $stage.Status = 'Skipped'
-        $stage.Detail = 'Requires stage 9 (SnapshotAfter) Completed'
+        $stage.Detail = $prerequisites.Detail
         $stage.EndedUtc = [datetime]::UtcNow
         Save-SccStageState -Workflow $Workflow -Stage $stage
         return $Workflow
@@ -1036,16 +1192,13 @@ function Update-SccRunbookList {
         $list.Children.Clear()
         $script:RunbookCatalog = @(Get-SccRunbookStages)
         $script:RunbookBoxes = @()
-        # Destructive/attended-removal steps are OFF by default (detect-only
-        # default preserved): Remediate (5), Tikun (7), UninstallAV (8).
-        $defaultOff = @(5, 7, 8)
         foreach ($rec in $script:RunbookCatalog) {
             $box = [System.Windows.Controls.CheckBox]::new()
             $box.Margin = [System.Windows.Thickness]::new(2, 4, 2, 4)
             $box.FontSize = 13
             $box.Foreground = [System.Windows.Media.Brushes]::Black
             $box.Content = ($rec.DisplayName + ' - ' + $rec.Description)
-            $box.IsChecked = ($defaultOff -notcontains $rec.Index)
+            $box.IsChecked = [bool]$rec.DefaultSelected
             $box.Tag = $rec.Index
             # NOTE: use the SENDER's Tag for the chain comparison, never a
             # loop variable - PowerShell scriptblocks capture variables by

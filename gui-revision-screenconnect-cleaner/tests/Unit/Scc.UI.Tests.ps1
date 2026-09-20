@@ -73,6 +73,19 @@ Describe 'State machine and jobs (mocked backend)' {
             $cat[7].Name | Should -Be 'Tikun'
             $cat[8].Name | Should -Be 'UninstallAV'
         }
+        It 'uses the same catalog metadata for workflow records and the runbook' {
+            $wf = New-SccWorkflow -Mode Full
+            $cat = @(Get-SccRunbookStages)
+            @($wf.Stages | ForEach-Object { $_.Name }) | Should -BeExactly @($cat | ForEach-Object { $_.Name })
+            foreach ($i in 0..11) {
+                $wf.Stages[$i].DisplayName | Should -Be $cat[$i].DisplayName
+                $wf.Stages[$i].Description | Should -Be $cat[$i].Description
+                $wf.Stages[$i].DefaultSelected | Should -Be $cat[$i].DefaultSelected
+            }
+            $cat[5].DefaultSelected | Should -BeFalse
+            $cat[7].DefaultSelected | Should -BeFalse
+            $cat[8].DefaultSelected | Should -BeFalse
+        }
     }
 
     Describe 'State machine - full happy path (headless, mocked)' {
@@ -114,6 +127,13 @@ Describe 'State machine and jobs (mocked backend)' {
             $wf.Stages[8].Status | Should -Be 'Skipped'
             $wf.Status | Should -Be 'Completed'
             $wf.Stages[11].Status | Should -Be 'Completed'
+        }
+        It 'ScanOnly mode runs only the catalog-selected tool pack, scanners, and report' {
+            $wf = New-SccWorkflow -Mode ScanOnly
+            Start-SccWorkflow -Workflow $wf -Mode ScanOnly
+            @($wf.Stages | Where-Object { $_.Status -eq 'Completed' } | ForEach-Object { $_.Name }) |
+                Should -BeExactly @('ToolPack', 'Scanners', 'Report')
+            @($wf.Stages | Where-Object { $_.Status -eq 'Skipped' }).Count | Should -Be 9
         }
         It 'SkipScanners marks stage 6 Skipped' {
             $wf = New-SccWorkflow -Mode Full -SkipScanners

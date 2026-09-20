@@ -365,6 +365,14 @@ in the runbook), 4 (detect-only mode auto-passes it).
 Resume: reload runstate.json, re-open run, re-enter at first non-Completed stage;
 Completed stages never re-run automatically.
 
+`Scc.UI` keeps one private stage catalog as the source of truth for this
+identity, order, runbook text, mode applicability, default checkbox state, and
+named prerequisite gates. `New-SccWorkflow` copies stage records from that
+catalog and `Get-SccRunbookStages` projects the same records for the WPF
+checklist; stage handlers dispatch by stable stage name rather than numeric
+array position. Adding or reordering a stage therefore has one metadata change
+point, while the GUI and headless state machine retain the same contract.
+
 ## 5. Windows file placement
 
 - App binaries: portable folder (anywhere, including NAS share); optional install to
