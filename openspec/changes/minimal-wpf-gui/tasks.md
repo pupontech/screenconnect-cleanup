@@ -7,8 +7,8 @@
 
 ## 1. Static four-view WPF shell
 
-- [ ] 1.1 Create a single .NET 10 WPF project with MVVM toolkit and synthetic Home/Investigation/Review/Results data; verify `dotnet build` and Windows CI compilation.
-- [ ] 1.2 Wire keyboard navigation, accessible labels, system theme, DPI layout and command-state tests; verify Windows UI smoke and unit tests without any PowerShell invocation.
+- [x] 1.1 Create a single .NET 10 WPF project with MVVM toolkit and synthetic Home/Investigation/Review/Results data; verified `dotnet build` locally and Windows 2022/2025 CI compilation on fd37277.
+- [x] 1.2 Wire keyboard navigation, accessible labels, system theme, DPI layout and command-state tests; verified 13/13 local tests and Windows CI startup smoke on fd37277 without any PowerShell invocation.
 
 ## 2. Read-only detection
 
