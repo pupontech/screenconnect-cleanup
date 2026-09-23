@@ -1,4 +1,6 @@
-# Architecture
+# Architecture (CLI pipeline; historical design decisions)
+
+> GUI implementation authority: [GUI architecture audit](GUI-ARCHITECTURE-AUDIT.md) and [GUI contract](GUI-CONTRACT.md). Some older statements below (per-instance review, Procmon stub, rejection of a compiled GUI) no longer reflect the current implementation or GUI decision; use `sc-cleanup.ps1` for the current CLI stage order.
 
 Tron's shape, our scope. A staged orchestrator that drives existing tools.
 
