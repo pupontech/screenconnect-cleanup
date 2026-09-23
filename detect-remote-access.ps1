@@ -255,11 +255,36 @@ function Get-DirsMatching {
     $expanded = Expand-Env $Pattern
     $parent   = Split-Path -Path $expanded -Parent
     $leaf     = Split-Path -Path $expanded -Leaf
-    if (-not $parent -or -not (Test-Path -LiteralPath $parent)) { return @() }
+    if (-not $parent) {
+        Add-CollectionError -Source 'InstallDirectories' -ErrorMessage ("{0}: pattern has no parent directory" -f $expanded)
+        return @()
+    }
+
     try {
-        return @(Get-ChildItem -LiteralPath $parent -Directory -ErrorAction SilentlyContinue |
-                 Where-Object { $_.Name -like $leaf })
-    } catch { return @() }
+        $parentItem = Get-Item -LiteralPath $parent -ErrorAction Stop
+    } catch {
+        $isMissing = ($_.CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::ObjectNotFound) -or
+                     ($_.Exception -is [System.IO.DirectoryNotFoundException]) -or
+                     ($_.Exception -is [System.IO.FileNotFoundException]) -or
+                     ($_.Exception -is [System.Management.Automation.ItemNotFoundException])
+        if ($isMissing) { return @() }
+        Add-CollectionError -Source 'InstallDirectories' -ErrorMessage ("{0}: {1}" -f $parent, $_.Exception.Message)
+        return @()
+    }
+
+    if (-not $parentItem.PSIsContainer) {
+        Add-CollectionError -Source 'InstallDirectories' -ErrorMessage ("{0}: pattern parent is not a directory" -f $parent)
+        return @()
+    }
+
+    $matches = New-Object System.Collections.ArrayList
+    try {
+        Get-ChildItem -LiteralPath $parent -Directory -ErrorAction Stop |
+            ForEach-Object { if ($_.Name -like $leaf) { [void]$matches.Add($_) } }
+    } catch {
+        Add-CollectionError -Source 'InstallDirectories' -ErrorMessage ("{0}: {1}" -f $parent, $_.Exception.Message)
+    }
+    return $matches.ToArray()
 }
 
 function Test-AnyLike {
@@ -361,11 +386,23 @@ function Get-FileFacts {
 # ---------------------------------------------------------------------------
 # System inventory (collected once, reused by every target)
 # ---------------------------------------------------------------------------
+function Add-CollectionError {
+    param([string]$Source, [string]$ErrorMessage)
+    if ($null -eq $script:CollectionErrors) {
+        $script:CollectionErrors = New-Object System.Collections.ArrayList
+    }
+    [void]$script:CollectionErrors.Add([PSCustomObject]@{
+        Source = $Source
+        Error  = $ErrorMessage
+    })
+}
+
 function Get-AllServices {
     try {
         return @(Get-CimInstance -ClassName Win32_Service -ErrorAction Stop |
             Select-Object Name, DisplayName, PathName, State, StartMode, StartName, ProcessId, Description)
     } catch {
+        Add-CollectionError -Source 'Services' -ErrorMessage $_.Exception.Message
         Write-Log "  ! Could not enumerate services: $($_.Exception.Message)" "Yellow"
         return @()
     }
@@ -376,6 +413,7 @@ function Get-AllProcesses {
         return @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop |
             Select-Object ProcessId, ParentProcessId, Name, ExecutablePath, CommandLine, CreationDate)
     } catch {
+        Add-CollectionError -Source 'Processes' -ErrorMessage $_.Exception.Message
         Write-Log "  ! Could not enumerate processes: $($_.Exception.Message)" "Yellow"
         return @()
     }
@@ -389,26 +427,38 @@ function Get-AllUninstallEntries {
     )
     $out = New-Object System.Collections.ArrayList
     foreach ($r in $roots) {
-        if (-not (Test-Path -LiteralPath $r)) { continue }
         try {
-            foreach ($k in (Get-ChildItem -LiteralPath $r -ErrorAction SilentlyContinue)) {
-                try {
-                    $p = Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction SilentlyContinue
-                    if (-not $p.DisplayName) { continue }
-                    [void]$out.Add([PSCustomObject]@{
-                        RegistryKey          = ($k.PSPath -replace '^Microsoft\.PowerShell\.Core\\Registry::', '')
-                        KeyName              = $k.PSChildName
-                        DisplayName          = $p.DisplayName
-                        DisplayVersion       = $p.DisplayVersion
-                        Publisher            = $p.Publisher
-                        InstallDate          = $p.InstallDate
-                        InstallLocation      = $p.InstallLocation
-                        UninstallString      = $p.UninstallString
-                        QuietUninstallString = $p.QuietUninstallString
-                    })
-                } catch { }
+            if (-not (Test-Path -LiteralPath $r -ErrorAction Stop)) { continue }
+        } catch {
+            Add-CollectionError -Source 'UninstallRegistry' -ErrorMessage ("{0}: {1}" -f $r, $_.Exception.Message)
+            continue
+        }
+        try {
+            $keys = @(Get-ChildItem -LiteralPath $r -ErrorAction Stop)
+        } catch {
+            Add-CollectionError -Source 'UninstallRegistry' -ErrorMessage ("{0}: {1}" -f $r, $_.Exception.Message)
+            continue
+        }
+        foreach ($k in $keys) {
+            try {
+                $p = Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction Stop
+            } catch {
+                Add-CollectionError -Source 'UninstallRegistry' -ErrorMessage ("{0}: {1}" -f $k.PSPath, $_.Exception.Message)
+                continue
             }
-        } catch { }
+            if (-not $p.DisplayName) { continue }
+            [void]$out.Add([PSCustomObject]@{
+                RegistryKey          = ($k.PSPath -replace '^Microsoft\.PowerShell\.Core\\Registry::', '')
+                KeyName              = $k.PSChildName
+                DisplayName          = $p.DisplayName
+                DisplayVersion       = $p.DisplayVersion
+                Publisher            = $p.Publisher
+                InstallDate          = $p.InstallDate
+                InstallLocation      = $p.InstallLocation
+                UninstallString      = $p.UninstallString
+                QuietUninstallString = $p.QuietUninstallString
+            })
+        }
     }
     return $out.ToArray()
 }
@@ -918,6 +968,7 @@ try {
 
     # --- Inventory ---
     Write-Section "Collecting system inventory"
+    $script:CollectionErrors = New-Object System.Collections.ArrayList
     $script:EventLogError = $null
     $services  = Get-AllServices;        Write-Log ("  services:           {0}" -f $services.Count)
     $processes = Get-AllProcesses;       Write-Log ("  processes:          {0}" -f $processes.Count)
@@ -1059,6 +1110,8 @@ try {
         TargetsSource   = $targetsSrc
         TargetsSelected = @($selected | ForEach-Object { $_.id })
         EventLogError   = $script:EventLogError
+        CollectionComplete = ($script:CollectionErrors.Count -eq 0)
+        CollectionErrors   = @($script:CollectionErrors.ToArray())
         ScreenConnect   = $scResult
         OtherTargets    = $genericResult.ToArray()
     }

@@ -1,0 +1,99 @@
+name: gui-phase2-ci
+
+on:
+  pull_request:
+    paths:
+      - 'detect-remote-access.ps1'
+      - 'gui/**'
+      - 'tests/gui/phase1/**'
+      - 'tests/gui/phase2/**'
+      - '.github/workflows/gui-phase1-ci.yml'
+      - '.github/workflows/gui-phase2-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  phase2-windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Detector collection regression and PS 5.1 JSON proof (no removal execution)
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) {
+            throw "This proof must run under Windows PowerShell 5.1; got $($PSVersionTable.PSVersion)."
+          }
+          Write-Host "Windows PowerShell $($PSVersionTable.PSVersion)"
+
+          $testPath = (Resolve-Path './tests/gui/phase2/DetectorCollectionTests.ps1').Path
+          $tokens = $null
+          $parseErrors = $null
+          $testAst = [System.Management.Automation.Language.Parser]::ParseFile($testPath, [ref]$tokens, [ref]$parseErrors)
+          if ($parseErrors.Count -gt 0) { throw "Detector regression test parse failed: $($parseErrors[0].Message)" }
+
+          $forbiddenRunners = @(
+            'sc-cleanup.ps1',
+            'sc-cleanup',
+            'remove-screenconnect.ps1',
+            'remove-screenconnect',
+            'Invoke-ReviewAndRemove.ps1',
+            'Invoke-ReviewAndRemove',
+            'Invoke-AVUninstaller.ps1',
+            'Invoke-AVUninstaller'
+          )
+          $invokedRunners = @($testAst.FindAll({
+            param($node)
+            if ($node -isnot [System.Management.Automation.Language.CommandAst]) { return $false }
+            $commandName = $node.GetCommandName()
+            if ([string]::IsNullOrWhiteSpace($commandName)) { return $false }
+            $forbiddenRunners -contains [System.IO.Path]::GetFileName($commandName)
+          }, $true))
+          if ($invokedRunners.Count -gt 0) {
+            throw "Collection regression must not invoke removal/uninstaller paths: $($invokedRunners[0].Extent.Text)"
+          }
+          Write-Host 'PASS: regression harness invokes no removal or uninstaller runner.'
+
+          & $testPath
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build GUI in Release
+        shell: pwsh
+        run: dotnet build gui/ScreenConnectCleanup.Gui.csproj -c Release
+
+      - name: Run Phase 1 tests
+        shell: pwsh
+        run: dotnet test tests/gui/phase1/ScreenConnectCleanup.Gui.Phase1.Tests.csproj -c Release --logger 'console;verbosity=normal'
+
+      - name: Run exactly 20 Phase 2 findings-reader tests on Windows
+        shell: pwsh
+        run: |
+          $resultsDirectory = Join-Path $env:RUNNER_TEMP 'gui-phase2-test-results'
+          New-Item -ItemType Directory -Path $resultsDirectory -Force | Out-Null
+          dotnet test tests/gui/phase2/ScreenConnectCleanup.Gui.Phase2.Tests.csproj -c Release `
+            --logger 'trx;LogFileName=phase2-reader.trx' `
+            --results-directory $resultsDirectory
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $trxPath = Join-Path $resultsDirectory 'phase2-reader.trx'
+          if (-not (Test-Path -LiteralPath $trxPath)) { throw "Missing Phase 2 test proof: $trxPath" }
+          [xml]$trx = Get-Content -LiteralPath $trxPath -Raw
+          $counters = $trx.TestRun.ResultSummary.Counters
+          if ([int]$counters.total -ne 20 -or [int]$counters.executed -ne 20 -or
+              [int]$counters.passed -ne 20 -or [int]$counters.failed -ne 0) {
+            throw "Expected 20/20 Phase 2 reader cases; TRX counters were total=$($counters.total), executed=$($counters.executed), passed=$($counters.passed), failed=$($counters.failed)."
+          }
+          Write-Host 'PASS: all 20 Phase 2 findings-reader test cases executed and passed on Windows.'

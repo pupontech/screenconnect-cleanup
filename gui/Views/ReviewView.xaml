@@ -3,7 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              UseLayoutRounding="True" SnapsToDevicePixels="True"
              Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}">
-    <ScrollViewer VerticalScrollBarVisibility="Auto" KeyboardNavigation.TabNavigation="Cycle">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="24">
             <TextBlock Text="{Binding Title}" Style="{DynamicResource ViewTitleStyle}" />
             <Border Style="{DynamicResource PreviewBannerStyle}" AutomationProperties.Name="Synthetic review notice">
