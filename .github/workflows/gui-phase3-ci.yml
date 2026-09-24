@@ -1,0 +1,594 @@
+name: gui-phase3-ci
+
+on:
+  pull_request:
+    paths:
+      - 'gui/**'
+      - 'gui-bridge/**'
+      - 'sc-cleanup.ps1'
+      - 'collect-snapshot.ps1'
+      - 'detect-remote-access.ps1'
+      - 'tests/gui/phase3/**'
+      - '.github/workflows/gui-phase3-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  phase3-windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Safety gate and Phase 3 PowerShell 5.1 regressions (synthetic stages only)
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) {
+            throw "These regressions must run under Windows PowerShell 5.1; got $($PSVersionTable.PSVersion)."
+          }
+          Write-Host "Windows PowerShell $($PSVersionTable.PSVersion)"
+
+          $testPaths = @(
+            './tests/gui/phase3/GuiStateTests.ps1',
+            './tests/gui/phase3/InvokeGuiStageTests.ps1'
+          )
+          function Normalize-AstText {
+            param([string]$Text)
+            return (($Text -replace '\s+', ' ').Trim())
+          }
+          function Get-VariableAssignments {
+            param($Ast, [string]$Name)
+            return @($Ast.FindAll({
+              param($node)
+              return ($node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                ($node.Left.VariablePath.UserPath -replace '^.*:', '') -ieq $Name)
+            }, $true))
+          }
+          function Get-ContainingFunctionName {
+            param($Node)
+            for ($parent = $Node.Parent; $null -ne $parent; $parent = $parent.Parent) {
+              if ($parent -is [System.Management.Automation.Language.FunctionDefinitionAst]) { return $parent.Name }
+            }
+            return ''
+          }
+          function Get-ContainingScriptBlock {
+            param($Node)
+            for ($parent = $Node.Parent; $null -ne $parent; $parent = $parent.Parent) {
+              if ($parent -is [System.Management.Automation.Language.ScriptBlockAst]) { return $parent }
+            }
+            return $null
+          }
+          function Get-ContainingPipeline {
+            param($Node)
+            for ($parent = $Node.Parent; $null -ne $parent; $parent = $parent.Parent) {
+              if ($parent -is [System.Management.Automation.Language.PipelineAst]) { return $parent }
+            }
+            return $null
+          }
+          function Get-StageExecutorGuard {
+            param($Node)
+            for ($parent = $Node.Parent; $null -ne $parent; $parent = $parent.Parent) {
+              if ($parent -is [System.Management.Automation.Language.IfStatementAst] -and
+                  $parent.Clauses.Count -eq 1 -and
+                  (Normalize-AstText $parent.Clauses[0].Item1.Extent.Text) -ceq '$null -ne $StageExecutor') {
+                return $parent
+              }
+            }
+            return $null
+          }
+          function Assert-GuiStateLibrarySafety {
+            param($Ast, [string]$Label)
+
+            $expectedFunctions = @(
+              'New-GuiState', 'Get-GuiStateFieldNames', 'Get-GuiStateField', 'Assert-GuiStateFields',
+              'Test-GuiStateInteger', 'ConvertTo-GuiUtcDateTime', 'Get-GuiStatePathAttributes',
+              'Assert-GuiStateNoReparsePath', 'Get-GuiStateRootLeaf', 'Assert-GuiArtifactPath',
+              'Assert-GuiStringArray', 'Assert-GuiStateDocument', 'Assert-GuiStateTransitions',
+              'Assert-GuiStateTransition', 'ConvertFrom-GuiJsonStringToken', 'Assert-GuiJsonNoDuplicateMembers',
+              'Read-GuiStateDocument', 'ConvertTo-GuiStateJsonDocument', 'Write-GuiState'
+            )
+            $functionAsts = @($Ast.FindAll({ param($node) return $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))
+            if ($functionAsts.Count -ne $expectedFunctions.Count) {
+              throw "Unexpected function count in $Label; expected the fixed GUI state helper set."
+            }
+            foreach ($name in $expectedFunctions) {
+              if (@($functionAsts | Where-Object { $_.Name -ceq $name }).Count -ne 1) {
+                throw "Missing, duplicate, or changed GUI state helper '$name' in $Label."
+              }
+            }
+
+            foreach ($statement in @($Ast.EndBlock.Statements)) {
+              if ($statement -isnot [System.Management.Automation.Language.AssignmentStatementAst] -and
+                  $statement -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) {
+                throw "Executable top-level code is forbidden in the GUI state library: $($statement.Extent.Text)"
+              }
+            }
+
+            $safeCmdlets = @('New-Object', 'ConvertFrom-Json', 'ConvertTo-Json', 'Where-Object', 'ForEach-Object')
+            $commandAsts = @($Ast.FindAll({ param($node) return $node -is [System.Management.Automation.Language.CommandAst] }, $true))
+            foreach ($commandAst in $commandAsts) {
+              $commandName = $commandAst.GetCommandName()
+              if ($commandAst.InvocationOperator.ToString() -ne 'Unknown' -or
+                  [string]::IsNullOrWhiteSpace($commandName) -or
+                  (($expectedFunctions -notcontains $commandName) -and ($safeCmdlets -notcontains $commandName))) {
+                throw "Dynamic or external command invocation is forbidden in ${Label}: $($commandAst.Extent.Text)"
+              }
+            }
+            if (@($commandAsts | Where-Object { $_.GetCommandName() -ieq 'Write-GuiState' }).Count -ne 0) {
+              throw "The mutable GUI state library must not invoke its state writer internally: $Label"
+            }
+
+            $typeAsts = @($Ast.FindAll({ param($node) return $node -is [System.Management.Automation.Language.TypeExpressionAst] }, $true))
+            foreach ($typeAst in $typeAsts) {
+              if ($typeAst.TypeName.FullName -match '(?i)^(System\.Diagnostics|System\.Management|Microsoft\.Win32|System\.Runtime\.InteropServices|System\.Reflection)(\.|$)') {
+                throw "Process, management, registry, reflection, and interop APIs are forbidden in ${Label}: $($typeAst.Extent.Text)"
+              }
+            }
+
+            $allowedMethodNames = @(
+              'ToString', 'ToUniversalTime', 'SpecifyKind', 'ParseExact', 'GetAttributes', 'GetFullPath',
+              'GetPathRoot', 'IsNullOrEmpty', 'Substring', 'Split', 'Combine', 'Exists', 'GetFileName',
+              'TrimEnd', 'IsNullOrWhiteSpace', 'StartsWith', 'Append', 'ToInt32', 'Add', 'RemoveAt',
+              'new', 'Read', 'Dispose', 'GetString', 'Copy', 'GetBytes', 'ReadAllText', 'NewGuid',
+              'Replace', 'Delete', 'Move', 'Write', 'Flush'
+            )
+            $methodAsts = @($Ast.FindAll({ param($node) return $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] }, $true))
+            foreach ($methodAst in $methodAsts) {
+              if ($methodAst.Member -isnot [System.Management.Automation.Language.StringConstantExpressionAst] -or
+                  $allowedMethodNames -notcontains $methodAst.Member.Extent.Text) {
+                throw "Dynamic or unapproved .NET method invocation is forbidden in ${Label}: $($methodAst.Extent.Text)"
+              }
+              if (@('Replace', 'Delete', 'Move', 'Write', 'Flush', 'Dispose') -contains $methodAst.Member.Extent.Text) {
+                $functionName = Get-ContainingFunctionName -Node $methodAst
+                if (@('Replace', 'Delete', 'Move', 'Write', 'Flush') -contains $methodAst.Member.Extent.Text -and $functionName -cne 'Write-GuiState') {
+                  throw "File mutation is allowed only in the fixed Write-GuiState implementation: $($methodAst.Extent.Text)"
+                }
+                if ($methodAst.Member.Extent.Text -eq 'Dispose' -and $functionName -notin @('Read-GuiStateDocument', 'Write-GuiState')) {
+                  throw "Stream cleanup is allowed only in the fixed state reader/writer: $($methodAst.Extent.Text)"
+                }
+              }
+            }
+
+            $expectedSideEffects = @{
+              '[System.IO.File]::Replace($tempPath, $targetPath, $backupPath)' = 1
+              '[System.IO.File]::Delete($backupPath)' = 1
+              '[System.IO.File]::Move($tempPath, $targetPath)' = 1
+              '[System.IO.File]::Delete($tempPath)' = 1
+              '$readStream.Dispose()' = 1
+              '$stream.Write($bytes, 0, $bytes.Length)' = 1
+              '$stream.Flush($true)' = 1
+              '$stream.Dispose()' = 2
+            }
+            $sensitiveMethods = @($methodAsts | Where-Object { @('Replace', 'Delete', 'Move', 'Write', 'Flush', 'Dispose') -contains $_.Member.Extent.Text })
+            $expectedSensitiveCount = 0
+            foreach ($expectedCall in $expectedSideEffects.Keys) {
+              $expectedSensitiveCount += $expectedSideEffects[$expectedCall]
+              $actualCount = @($sensitiveMethods | Where-Object { (Normalize-AstText $_.Extent.Text) -ceq (Normalize-AstText $expectedCall) }).Count
+              if ($actualCount -ne $expectedSideEffects[$expectedCall]) {
+                throw "Unexpected file/stream side effect in $Label; expected $($expectedSideEffects[$expectedCall]) call(s) to '$expectedCall', found $actualCount."
+              }
+            }
+            if ($sensitiveMethods.Count -ne $expectedSensitiveCount) {
+              throw "Unexpected file/stream side-effect call count in $Label."
+            }
+
+            $expectedConstructors = @(
+              'New-Object System.Text.StringBuilder',
+              'New-Object System.Collections.ArrayList',
+              'New-Object System.IO.FileStream($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)',
+              'New-Object byte[] ($script:GuiStateMaxJsonChars + 1)',
+              'New-Object byte[] $byteCount',
+              'New-Object System.Text.UTF8Encoding($false, $true)',
+              'New-Object System.Text.UTF8Encoding($false)',
+              'New-Object System.IO.FileStream($tempPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)'
+            )
+            $constructorAsts = @($commandAsts | Where-Object { $_.GetCommandName() -ieq 'New-Object' })
+            if ($constructorAsts.Count -ne $expectedConstructors.Count) {
+              throw "Unexpected object-construction call count in $Label."
+            }
+            foreach ($expectedConstructor in $expectedConstructors) {
+              if (@($constructorAsts | Where-Object { (Normalize-AstText $_.Extent.Text) -ceq (Normalize-AstText $expectedConstructor) }).Count -ne 1) {
+                throw "Unapproved object construction in ${Label}: $expectedConstructor"
+              }
+            }
+
+            $expectedAssignments = @{
+              targetPath = "[System.IO.Path]::Combine(`$fullRunRoot, 'gui-state.json')"
+              tempPath = "[System.IO.Path]::Combine(`$fullRunRoot, ('.gui-state.json.' + [Guid]::NewGuid().ToString('N') + '.tmp'))"
+              backupPath = "[System.IO.Path]::Combine(`$fullRunRoot, ('.gui-state.json.' + [Guid]::NewGuid().ToString('N') + '.bak'))"
+            }
+            foreach ($name in $expectedAssignments.Keys) {
+              $assignments = Get-VariableAssignments -Ast $Ast -Name $name
+              if ($assignments.Count -ne 1 -or
+                  (Normalize-AstText $assignments[0].Right.Extent.Text) -cne (Normalize-AstText $expectedAssignments[$name]) -or
+                  (Get-ContainingFunctionName -Node $assignments[0]) -cne 'Write-GuiState') {
+                throw "State file target '$name' must retain its fixed run-root-relative assignment in $Label."
+              }
+            }
+          }
+
+          function Assert-GuiStateInjectionRejected {
+            param([string]$SourceText, [string]$Label, [string]$Injection)
+            $injectedSource = $SourceText.Replace('    process {', "    process {`n        $Injection")
+            if ($injectedSource -ceq $SourceText) { throw "Could not inject the $Label safety probe." }
+            $probeTokens = $null
+            $probeErrors = $null
+            $probeAst = [System.Management.Automation.Language.Parser]::ParseInput($injectedSource, [ref]$probeTokens, [ref]$probeErrors)
+            if ($probeErrors.Count -gt 0) { throw "Safety probe did not parse for ${Label}: $($probeErrors[0].Message)" }
+            $rejected = $false
+            try { Assert-GuiStateLibrarySafety -Ast $probeAst -Label "injected $Label" } catch { $rejected = $true }
+            if (-not $rejected) { throw "Unsafe injected invocation passed the GUI state AST gate: $Label" }
+            Write-Host "PASS: AST safety gate rejected injected $Label."
+          }
+
+          $repoRootAssignment = 'Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))'
+          $policies = @(
+            @{
+              Path = './tests/gui/phase3/GuiStateTests.ps1'
+              SourceVariable = 'scriptPath'
+              SourceRelative = 'gui-bridge/GuiState.ps1'
+              SourceAssignment = "Join-Path `$repoRoot 'gui-bridge/GuiState.ps1'"
+              TestRootAssignment = "[System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), ('gui-state-tests-' + [Guid]::NewGuid().ToString('N')))"
+              AdditionalAssignments = @{
+                runId = "'HOST-20260923_120000'"
+                runRoot = "Join-Path `$testRoot `$runId"
+                outsideRoot = "Join-Path `$testRoot 'outside'"
+                linkPath = "Join-Path `$runRoot 'escape'"
+                firstWriteRoot = "Join-Path `$testRoot 'FIRST-WRITE'"
+                blockerRoot = "Join-Path `$testRoot 'BLOCKED-WRITE'"
+              }
+              Commands = @('Set-StrictMode', 'Split-Path', 'Join-Path', 'Test-Path', 'Assert-True', 'Assert-Throws', 'Assert-BytesEqual', 'Add-Member', 'New-GuiState', 'Write-GuiState', 'Get-CurrentRaw', 'ConvertFrom-Json', 'Get-ChildItem', 'Where-Object', 'New-Item', 'Out-Null', 'Set-TestArtifact', 'Remove-Item', 'New-Object', 'Write-Output')
+              ExpectedNewObjects = 1
+              ExpectedNewItems = 1
+              ExpectedDotSources = 1
+            },
+            @{
+              Path = './tests/gui/phase3/InvokeGuiStageTests.ps1'
+              SourceVariable = 'adapterPath'
+              SourceRelative = 'gui-bridge/Invoke-GuiStage.ps1'
+              SourceAssignment = "Join-Path `$repoRoot 'gui-bridge/Invoke-GuiStage.ps1'"
+              TestRootAssignment = "Join-Path ([System.IO.Path]::GetTempPath()) ('gui-stage-tests-' + [Guid]::NewGuid().ToString('N'))"
+              Commands = @('Set-StrictMode', 'Split-Path', 'Join-Path', 'Test-Path', 'Assert-True', 'Assert-Throws', 'ConvertFrom-Json', 'New-Object', 'Add-Member', 'Get-GuiLocalComputerName', 'Get-GuiRequestExpectedFields', 'Assert-GuiRequestFieldTypes', 'Read-GuiOperationRequest', 'Invoke-GuiOperationRequest', 'New-SyntheticExecutor', 'New-TestRequest', 'Read-TestState', 'Remove-Item', 'ConvertTo-Json', 'Write-Output', 'Get-ChildItem', 'Where-Object', 'Start-Job', 'Start-Sleep', 'Wait-Job', 'Receive-Job', 'Stop-Job', 'Remove-Job')
+              ExpectedNewObjects = 11
+              ExpectedNewItems = 0
+              ExpectedDotSources = 2
+            }
+          )
+          $allowedMethodNames = @('ParseFile', 'Combine', 'GetTempPath', 'NewGuid', 'ToString', 'CreateDirectory', 'Exists', 'ReadAllBytes', 'ReadAllText', 'WriteAllText', 'WriteAllBytes', 'GetBytes', 'GetNewClosure', 'Contains', 'Escape', 'AddSeconds', 'Replace')
+          foreach ($policy in $policies) {
+            $resolvedTestPath = (Resolve-Path -LiteralPath $policy.Path).Path
+            $tokens = $null
+            $parseErrors = $null
+            $testAst = [System.Management.Automation.Language.Parser]::ParseFile($resolvedTestPath, [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count -gt 0) { throw "Test parse failed for $($policy.Path): $($parseErrors[0].Message)" }
+
+            foreach ($name in @('repoRoot', $policy.SourceVariable, 'testRoot')) {
+              $assignments = Get-VariableAssignments -Ast $testAst -Name $name
+              if ($assignments.Count -ne 1) { throw "Expected exactly one static assignment to `$$name in $($policy.Path); found $($assignments.Count)." }
+              $expectedExpression = if ($name -eq 'repoRoot') { $repoRootAssignment } elseif ($name -eq 'testRoot') { $policy.TestRootAssignment } else { $policy.SourceAssignment }
+              if ((Normalize-AstText $assignments[0].Right.Extent.Text) -cne (Normalize-AstText $expectedExpression)) {
+                throw "Unsafe or changed variable assignment to $name in $($policy.Path): $($assignments[0].Extent.Text)"
+              }
+            }
+            if ($policy.ContainsKey('AdditionalAssignments')) {
+              foreach ($name in $policy.AdditionalAssignments.Keys) {
+                $assignments = Get-VariableAssignments -Ast $testAst -Name $name
+                if ($assignments.Count -ne 1 -or
+                    (Normalize-AstText $assignments[0].Right.Extent.Text) -cne (Normalize-AstText $policy.AdditionalAssignments[$name])) {
+                  throw "Harness path or identity '$name' must retain its fixed synthetic value in $($policy.Path)."
+                }
+              }
+            }
+
+            $expectedLibrary = [System.IO.Path]::GetFullPath((Join-Path $env:GITHUB_WORKSPACE $policy.SourceRelative))
+            $resolvedLibrary = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $expectedLibrary).Path)
+            if (-not [string]::Equals($expectedLibrary, $resolvedLibrary, [System.StringComparison]::OrdinalIgnoreCase)) {
+              throw "Expected read-only test library did not resolve inside the checkout: $($policy.SourceRelative)"
+            }
+
+            $dotSources = @($testAst.FindAll({
+              param($node)
+              return ($node -is [System.Management.Automation.Language.CommandAst] -and $node.InvocationOperator.ToString() -eq 'Dot')
+            }, $true))
+            if ($dotSources.Count -ne $policy.ExpectedDotSources -or
+                (Normalize-AstText $dotSources[0].Extent.Text) -ine ('. $' + $policy.SourceVariable)) {
+              throw "Only the expected read-only library may be dot-sourced by $($policy.Path)."
+            }
+            if ($policy.ExpectedDotSources -eq 2) {
+              $parallelScriptAssignments = Get-VariableAssignments -Ast $testAst -Name 'parallelScript'
+              $parallelScriptExpression = if ($parallelScriptAssignments.Count -eq 1) { $parallelScriptAssignments[0].Right } else { $null }
+              if ($parallelScriptExpression -is [System.Management.Automation.Language.CommandExpressionAst]) {
+                $parallelScriptExpression = $parallelScriptExpression.Expression
+              }
+              if ($parallelScriptAssignments.Count -ne 1 -or
+                  $parallelScriptExpression -isnot [System.Management.Automation.Language.ScriptBlockExpressionAst] -or
+                  (Normalize-AstText $dotSources[1].Extent.Text) -ine '. $AdapterPath') {
+                throw 'The parallel harness may only dot-source its explicitly passed adapter scriptblock.'
+              }
+              $parallelScriptBlock = $parallelScriptExpression.ScriptBlock
+              $nestedDotBlock = Get-ContainingScriptBlock -Node $dotSources[1]
+              $adapterPathParameters = @($parallelScriptBlock.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -ieq 'AdapterPath' })
+              if ($null -eq $nestedDotBlock -or
+                  $nestedDotBlock.Extent.Text -cne $parallelScriptBlock.Extent.Text -or
+                  $adapterPathParameters.Count -ne 1) {
+                throw 'The nested adapter source must be the AdapterPath parameter of the approved parallel scriptblock.'
+              }
+            }
+
+            $dynamicInvocations = @($testAst.FindAll({
+              param($node)
+              return ($node -is [System.Management.Automation.Language.CommandAst] -and $node.InvocationOperator.ToString() -eq 'Ampersand')
+            }, $true))
+            $assertThrowsFunctions = @($testAst.FindAll({
+              param($node)
+              return ($node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ieq 'Assert-Throws')
+            }, $true))
+            if ($dynamicInvocations.Count -ne 1 -or
+                (Normalize-AstText $dynamicInvocations[0].Extent.Text) -cne '& $Action' -or
+                (Get-ContainingFunctionName $dynamicInvocations[0]) -cne 'Assert-Throws' -or
+                $assertThrowsFunctions.Count -ne 1 -or
+                $assertThrowsFunctions[0].Extent.Text -notmatch '(?i)param\s*\(\s*\[scriptblock\]\s*\$Action\b') {
+              throw "Only the typed Assert-Throws scriptblock may use dynamic invocation in $($policy.Path)."
+            }
+
+            $commandAsts = @($testAst.FindAll({ param($node) return $node -is [System.Management.Automation.Language.CommandAst] }, $true))
+            foreach ($commandAst in $commandAsts) {
+              if ($commandAst.InvocationOperator.ToString() -eq 'Dot' -or $commandAst.InvocationOperator.ToString() -eq 'Ampersand') { continue }
+              $commandName = $commandAst.GetCommandName()
+              if ([string]::IsNullOrWhiteSpace($commandName) -or $policy.Commands -notcontains $commandName) {
+                throw "Unrecognized command invocation is forbidden in $($policy.Path): $($commandAst.Extent.Text)"
+              }
+              if ($commandName -ieq 'Remove-Item' -and
+                  (Normalize-AstText $commandAst.Extent.Text) -cne 'Remove-Item -LiteralPath $testRoot -Recurse -Force') {
+                throw "Remove-Item is allowed only for the uniquely-created harness temp root: $($commandAst.Extent.Text)"
+              }
+              if ($commandName -ieq 'New-Object' -and
+                  (Normalize-AstText $commandAst.Extent.Text) -cne 'New-Object System.Text.UTF8Encoding($false)') {
+                throw "Only the non-executable UTF8Encoding constructor is allowed in $($policy.Path): $($commandAst.Extent.Text)"
+              }
+              if ($commandName -ieq 'New-Item' -and
+                  (Normalize-AstText $commandAst.Extent.Text) -cne 'New-Item -ItemType SymbolicLink -Path $linkPath -Target $outsideRoot -ErrorAction Stop') {
+                throw "Only the temp-root symlink regression may create an item in $($policy.Path): $($commandAst.Extent.Text)"
+              }
+              if ($commandName -ieq 'Start-Job' -and
+                  (Normalize-AstText $commandAst.Extent.Text) -notmatch '^Start-Job -ScriptBlock \$parallelScript -ArgumentList @\(\$adapterPath, \$parallelRoot, ''GUI-TEST-PARALLEL'', \(Get-GuiLocalComputerName\), \$token, \$parallelReadyRoot, \$parallelGate, \$parallelStartedRoot\)$') {
+                throw "Only the fixed synthetic parallel adapter job may be started: $($commandAst.Extent.Text)"
+              }
+              if ($commandName -ieq 'Start-Sleep' -and
+                  (Normalize-AstText $commandAst.Extent.Text) -notin @('Start-Sleep -Milliseconds 20', 'Start-Sleep -Milliseconds 1000')) {
+                throw "Only the bounded parallel-test waits are allowed: $($commandAst.Extent.Text)"
+              }
+              if ($commandName -ieq 'Stop-Job' -or $commandName -ieq 'Remove-Job') {
+                $jobPipeline = Get-ContainingPipeline -Node $commandAst
+                $expectedPipeline = if ($commandName -ieq 'Stop-Job') { '$parallelJobs | Stop-Job -ErrorAction SilentlyContinue' } else { '$parallelJobs | Remove-Job -Force -ErrorAction SilentlyContinue' }
+                if ($null -eq $jobPipeline -or (Normalize-AstText $jobPipeline.Extent.Text) -cne $expectedPipeline) {
+                  throw "Job cleanup may target only the harness-created job collection: $($commandAst.Extent.Text)"
+                }
+              }
+            }
+
+            $removeCalls = @($commandAsts | Where-Object { $_.GetCommandName() -ieq 'Remove-Item' })
+            $newObjectCalls = @($commandAsts | Where-Object { $_.GetCommandName() -ieq 'New-Object' })
+            $newItemCalls = @($commandAsts | Where-Object { $_.GetCommandName() -ieq 'New-Item' })
+            if ($removeCalls.Count -ne 1 -or $newObjectCalls.Count -ne $policy.ExpectedNewObjects -or $newItemCalls.Count -ne $policy.ExpectedNewItems) {
+              throw "Unexpected cleanup or object/item creation call counts in $($policy.Path)."
+            }
+
+            if ($policy.ExpectedDotSources -eq 2) {
+              $startJobs = @($commandAsts | Where-Object { $_.GetCommandName() -ieq 'Start-Job' })
+              $startSleeps = @($commandAsts | Where-Object { $_.GetCommandName() -ieq 'Start-Sleep' })
+              $waitJobs = @($commandAsts | Where-Object { $_.GetCommandName() -ieq 'Wait-Job' })
+              $receiveJobs = @($commandAsts | Where-Object { $_.GetCommandName() -ieq 'Receive-Job' })
+              $stopJobs = @($commandAsts | Where-Object { $_.GetCommandName() -ieq 'Stop-Job' })
+              $removeJobs = @($commandAsts | Where-Object { $_.GetCommandName() -ieq 'Remove-Job' })
+              if ($startJobs.Count -ne 1 -or $startSleeps.Count -ne 3 -or $waitJobs.Count -ne 1 -or
+                  $receiveJobs.Count -ne 1 -or $stopJobs.Count -ne 1 -or $removeJobs.Count -ne 1 -or
+                  (Normalize-AstText $waitJobs[0].Extent.Text) -cne 'Wait-Job -Job $parallelJobs -Timeout 30' -or
+                  (Normalize-AstText $receiveJobs[0].Extent.Text) -cne 'Receive-Job -Job $parallelJob -ErrorAction SilentlyContinue') {
+                throw 'Unexpected parallel job launch, wait, or cleanup calls in the synthetic harness.'
+              }
+              $expectedTempAssignments = @{
+                malformedPath = "Join-Path `$testRoot 'malformed.json'"
+                detectRoot = "Join-Path `$testRoot 'detect-output'"
+                incompleteRoot = "Join-Path `$testRoot 'incomplete-output'"
+                fullRoot = "Join-Path `$testRoot 'full-output'"
+                failRoot = "Join-Path `$testRoot 'failure-output'"
+                parallelRoot = "Join-Path `$testRoot 'parallel-output'"
+                parallelReadyRoot = "Join-Path `$testRoot 'parallel-ready'"
+                parallelStartedRoot = "Join-Path `$testRoot 'parallel-started'"
+                parallelGate = "Join-Path `$testRoot 'parallel-start.gate'"
+              }
+              foreach ($name in $expectedTempAssignments.Keys) {
+                $assignments = Get-VariableAssignments -Ast $testAst -Name $name
+                if ($assignments.Count -ne 1 -or
+                    (Normalize-AstText $assignments[0].Right.Extent.Text) -cne (Normalize-AstText $expectedTempAssignments[$name])) {
+                  throw "Parallel harness path '$name' must be a fixed child of testRoot."
+                }
+              }
+              $executorAssignments = Get-VariableAssignments -Ast $testAst -Name 'executor'
+              if ($executorAssignments.Count -ne 1 -or
+                  @($executorAssignments[0].Right.FindAll({ param($node) return $node -is [System.Management.Automation.Language.ScriptBlockExpressionAst] }, $true)).Count -ne 1) {
+                throw 'The parallel adapter call must use one statically declared synthetic executor scriptblock.'
+              }
+            }
+
+            $methodCalls = @($testAst.FindAll({ param($node) return $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] }, $true))
+            foreach ($methodCall in $methodCalls) {
+              if ($methodCall.Member -isnot [System.Management.Automation.Language.StringConstantExpressionAst] -or
+                  $allowedMethodNames -notcontains $methodCall.Member.Extent.Text) {
+                throw "Unrecognized or dynamic .NET method invocation is forbidden in $($policy.Path): $($methodCall.Extent.Text)"
+              }
+            }
+          }
+
+          $adapterPath = (Resolve-Path -LiteralPath './gui-bridge/Invoke-GuiStage.ps1').Path
+          $adapterTokens = $null
+          $adapterErrors = $null
+          $adapterAst = [System.Management.Automation.Language.Parser]::ParseFile($adapterPath, [ref]$adapterTokens, [ref]$adapterErrors)
+          if ($adapterErrors.Count -gt 0) { throw "Adapter parse failed: $($adapterErrors[0].Message)" }
+          $adapterLibraryAssignments = Get-VariableAssignments -Ast $adapterAst -Name 'guiStateLibrary'
+          if ($adapterLibraryAssignments.Count -ne 1 -or
+              (Normalize-AstText $adapterLibraryAssignments[0].Right.Extent.Text) -cne "Join-Path `$PSScriptRoot 'GuiState.ps1'") {
+            throw 'The adapter may dot-source only GuiState.ps1 from its own library directory.'
+          }
+          $adapterDotSources = @($adapterAst.FindAll({
+            param($node)
+            return ($node -is [System.Management.Automation.Language.CommandAst] -and $node.InvocationOperator.ToString() -eq 'Dot')
+          }, $true))
+          if ($adapterDotSources.Count -ne 1 -or (Normalize-AstText $adapterDotSources[0].Extent.Text) -cne '. $guiStateLibrary') {
+            throw 'The adapter contains an unapproved dot-source target.'
+          }
+          $entryGuards = @($adapterAst.FindAll({
+            param($node)
+            if ($node -isnot [System.Management.Automation.Language.IfStatementAst] -or $node.Clauses.Count -ne 1) { return $false }
+            return (Normalize-AstText $node.Clauses[0].Item1.Extent.Text) -ceq '$MyInvocation.InvocationName -ne ''.'''
+          }, $true))
+          if ($entryGuards.Count -ne 1) { throw 'The adapter dot-source guard must remain intact so tests cannot enter its CLI path.' }
+          $adapterOperationCalls = @($adapterAst.FindAll({
+            param($node)
+            if ($node -isnot [System.Management.Automation.Language.CommandAst]) { return $false }
+            return $node.GetCommandName() -ieq 'Invoke-GuiOperationRequest'
+          }, $true))
+          if ($adapterOperationCalls.Count -ne 1 -or
+              $entryGuards[0].Extent.Text.IndexOf($adapterOperationCalls[0].Extent.Text, [System.StringComparison]::Ordinal) -lt 0) {
+            throw 'The adapter operation entry point must occur only inside its dot-source-protected CLI guard.'
+          }
+
+          $adapterCommands = @($adapterAst.FindAll({ param($node) return $node -is [System.Management.Automation.Language.CommandAst] }, $true))
+          $adapterAllowedCommands = @('Set-StrictMode', 'Join-Path', 'Test-Path', 'Get-GuiStateField', 'Test-GuiStateInteger', 'Get-GuiStateFieldNames', 'Get-GuiRequestExpectedFields', 'Assert-GuiStateFields', 'Assert-GuiJsonNoDuplicateMembers', 'ConvertFrom-Json', 'Get-GuiLocalComputerName', 'Test-GuiProcessElevated', 'Assert-GuiStateNoReparsePath', 'Get-GuiStatePathAttributes', 'New-Object', 'Get-GuiPowerShellHost', 'Get-Command', 'ConvertTo-GuiWindowsArgument', 'Invoke-GuiStageProcess', 'Get-GuiRelativeArtifactPath', 'Find-GuiFindingsArtifact', 'Get-ChildItem', 'Get-GuiFindingsAssessment', 'Assert-GuiRequestFieldTypes', 'Set-GuiStageState', 'Set-GuiOverallStatus', 'Set-GuiUnvisitedStagesSkipped', 'Publish-GuiStateUpdate', 'Write-GuiState', 'Split-Path', 'Get-GuiStateRootLeaf', 'New-GuiState', 'Invoke-GuiOperationRequest', 'Read-GuiOperationRequest')
+          foreach ($commandAst in $adapterCommands) {
+            if ($commandAst.InvocationOperator.ToString() -eq 'Dot') { continue }
+            if ($commandAst.InvocationOperator.ToString() -eq 'Ampersand') { continue }
+            $commandName = $commandAst.GetCommandName()
+            if ([string]::IsNullOrWhiteSpace($commandName) -or $adapterAllowedCommands -notcontains $commandName) {
+              throw "Unrecognized command invocation in the sourced adapter: $($commandAst.Extent.Text)"
+            }
+          }
+
+          $adapterAmpersands = @($adapterCommands | Where-Object { $_.InvocationOperator.ToString() -eq 'Ampersand' })
+          if ($adapterAmpersands.Count -ne 2) { throw 'The adapter must contain exactly two guarded synthetic-executor invocation sites.' }
+          foreach ($executorCall in $adapterAmpersands) {
+            $guard = Get-StageExecutorGuard -Node $executorCall
+            if ((Normalize-AstText $executorCall.Extent.Text) -notmatch '^& \$StageExecutor\b' -or
+                (Get-ContainingFunctionName $executorCall) -cne 'Invoke-GuiOperationRequest' -or
+                $null -eq $guard -or $guard.Clauses[0].Item2.Extent.Text.IndexOf($executorCall.Extent.Text, [System.StringComparison]::Ordinal) -lt 0) {
+              throw "Dynamic invocation in the adapter is allowed only for the non-null injected StageExecutor: $($executorCall.Extent.Text)"
+            }
+          }
+          $liveStageCalls = @($adapterCommands | Where-Object { $_.GetCommandName() -ieq 'Invoke-GuiStageProcess' })
+          if ($liveStageCalls.Count -ne 2) { throw 'Expected exactly two guarded fixed-stage process call sites in the adapter.' }
+          foreach ($liveStageCall in $liveStageCalls) {
+            $guard = Get-StageExecutorGuard -Node $liveStageCall
+            if ((Get-ContainingFunctionName $liveStageCall) -cne 'Invoke-GuiOperationRequest' -or
+                $null -eq $guard -or $null -eq $guard.ElseClause -or
+                $guard.ElseClause.Extent.Text.IndexOf($liveStageCall.Extent.Text, [System.StringComparison]::Ordinal) -lt 0) {
+              throw "Fixed stage process calls must be reachable only from the null-executor fallback: $($liveStageCall.Extent.Text)"
+            }
+          }
+          $sensitiveAdapterMethods = @($adapterAst.FindAll({
+            param($node)
+            if ($node -isnot [System.Management.Automation.Language.InvokeMemberExpressionAst] -or
+                $node.Member -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) { return $false }
+            return @('Start', 'Kill', 'WaitForExit', 'Dispose', 'Delete', 'Remove', 'Invoke', 'Run', 'Execute', 'OpenWrite') -contains $node.Member.Extent.Text
+          }, $true))
+          foreach ($methodCall in $sensitiveAdapterMethods) {
+            $methodName = $methodCall.Member.Extent.Text
+            $functionName = Get-ContainingFunctionName $methodCall
+            if (@('Delete', 'Remove', 'Invoke', 'Run', 'Execute', 'OpenWrite') -contains $methodName -or
+                ($methodName -in @('Start', 'Kill', 'WaitForExit') -and $functionName -cne 'Invoke-GuiStageProcess') -or
+                ($methodName -eq 'Dispose' -and $functionName -notin @('Invoke-GuiStageProcess', 'Invoke-GuiOperationRequest'))) {
+              throw "Process or cleanup API is outside its fixed, guarded adapter function: $($methodCall.Extent.Text)"
+            }
+          }
+
+          $expectedStateLibrary = [System.IO.Path]::GetFullPath((Join-Path $env:GITHUB_WORKSPACE 'gui-bridge/GuiState.ps1'))
+          $stateLibraryPath = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $expectedStateLibrary).Path)
+          if (-not [string]::Equals($expectedStateLibrary, $stateLibraryPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw 'The GUI state library must resolve to the expected file inside the checkout.'
+          }
+          $stateTokens = $null
+          $stateErrors = $null
+          $stateAst = [System.Management.Automation.Language.Parser]::ParseFile($stateLibraryPath, [ref]$stateTokens, [ref]$stateErrors)
+          if ($stateErrors.Count -gt 0) { throw "GUI state library parse failed: $($stateErrors[0].Message)" }
+          Assert-GuiStateLibrarySafety -Ast $stateAst -Label 'gui-bridge/GuiState.ps1'
+          $stateLibrarySource = Get-Content -LiteralPath $stateLibraryPath -Raw
+          Assert-GuiStateInjectionRejected -SourceText $stateLibrarySource -Label 'Start-Process' -Injection "Start-Process -FilePath 'cmd.exe'"
+          Assert-GuiStateInjectionRejected -SourceText $stateLibrarySource -Label 'Process.Start' -Injection "[System.Diagnostics.Process]::Start('cmd.exe')"
+          Assert-GuiStateInjectionRejected -SourceText $stateLibrarySource -Label 'File.Delete outside the run root' -Injection "[System.IO.File]::Delete('C:\phase3-safety-probe.txt')"
+          Write-Host 'PASS: GuiState.ps1 AST allowlist restricts top-level execution, commands, .NET APIs, and all state-file writes to exact run-root targets.'
+
+          $stageTestPath = (Resolve-Path -LiteralPath './tests/gui/phase3/InvokeGuiStageTests.ps1').Path
+          $stageTestTokens = $null
+          $stageTestErrors = $null
+          $stageTestAst = [System.Management.Automation.Language.Parser]::ParseFile($stageTestPath, [ref]$stageTestTokens, [ref]$stageTestErrors)
+          $operationCalls = @($stageTestAst.FindAll({
+            param($node)
+            if ($node -isnot [System.Management.Automation.Language.CommandAst]) { return $false }
+            return $node.GetCommandName() -ieq 'Invoke-GuiOperationRequest'
+          }, $true))
+          $syntheticOperationCalls = @($operationCalls | Where-Object { (Normalize-AstText $_.Extent.Text) -match '(?i)-StageExecutor \(New-SyntheticExecutor\b' })
+          $parallelOperationCalls = @($operationCalls | Where-Object { (Normalize-AstText $_.Extent.Text) -match '(?i)-StageExecutor \$executor\b' })
+          if ($operationCalls.Count -ne 5 -or $syntheticOperationCalls.Count -ne 4 -or $parallelOperationCalls.Count -ne 1) {
+            throw "Expected four New-SyntheticExecutor calls and one parallel synthetic-executor call; found total=$($operationCalls.Count), direct=$($syntheticOperationCalls.Count), parallel=$($parallelOperationCalls.Count)."
+          }
+          $parallelScriptAssignment = Get-VariableAssignments -Ast $stageTestAst -Name 'parallelScript'
+          $parallelScriptExpression = if ($parallelScriptAssignment.Count -eq 1) { $parallelScriptAssignment[0].Right } else { $null }
+          if ($parallelScriptExpression -is [System.Management.Automation.Language.CommandExpressionAst]) {
+            $parallelScriptExpression = $parallelScriptExpression.Expression
+          }
+          $parallelScriptBlock = if ($parallelScriptExpression -is [System.Management.Automation.Language.ScriptBlockExpressionAst]) { $parallelScriptExpression.ScriptBlock } else { $null }
+          $executorAssignments = Get-VariableAssignments -Ast $stageTestAst -Name 'executor'
+          $executorScriptBlocks = if ($executorAssignments.Count -eq 1) {
+            @($executorAssignments[0].Right.FindAll({ param($node) return $node -is [System.Management.Automation.Language.ScriptBlockExpressionAst] }, $true))
+          } else { @() }
+          if ($parallelScriptAssignment.Count -ne 1 -or
+              $null -eq $parallelScriptBlock -or
+              $executorAssignments.Count -ne 1 -or $executorScriptBlocks.Count -ne 1 -or
+              (Get-ContainingScriptBlock -Node $executorAssignments[0]).Extent.Text -cne $parallelScriptBlock.Extent.Text -or
+              $executorAssignments[0].Extent.StartOffset -ge $parallelOperationCalls[0].Extent.StartOffset -or
+              $parallelScriptAssignment[0].Right.Extent.Text.IndexOf($parallelOperationCalls[0].Extent.Text, [System.StringComparison]::Ordinal) -lt 0) {
+            throw 'The parallel adapter invocation must follow its statically declared synthetic executor inside the approved scriptblock.'
+          }
+          Write-Host 'PASS: AST allowlists restrict commands, methods, sources, cleanup targets, and all stage execution to injected synthetic executors.'
+
+          foreach ($testPath in $testPaths) {
+            Write-Host "Running $testPath"
+            & $testPath
+          }
+
+      - name: Build GUI in Release
+        shell: pwsh
+        run: dotnet build gui/ScreenConnectCleanup.Gui.csproj -c Release
+
+      - name: Run exactly 36 Phase 3 state-reader tests on Windows
+        shell: pwsh
+        run: |
+          $resultsDirectory = Join-Path $env:RUNNER_TEMP 'gui-phase3-test-results'
+          New-Item -ItemType Directory -Path $resultsDirectory -Force | Out-Null
+          dotnet test tests/gui/phase3/ScreenConnectCleanup.Gui.Phase3.Tests.csproj -c Release `
+            --logger 'trx;LogFileName=phase3-state-reader.trx' `
+            --results-directory $resultsDirectory
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $trxPath = Join-Path $resultsDirectory 'phase3-state-reader.trx'
+          if (-not (Test-Path -LiteralPath $trxPath)) { throw "Missing Phase 3 test proof: $trxPath" }
+          [xml]$trx = Get-Content -LiteralPath $trxPath -Raw
+          $counters = $trx.TestRun.ResultSummary.Counters
+          if ([int]$counters.total -ne 36 -or [int]$counters.executed -ne 36 -or
+              [int]$counters.passed -ne 36 -or [int]$counters.failed -ne 0) {
+            throw "Expected 36/36 Phase 3 state-reader cases; TRX counters were total=$($counters.total), executed=$($counters.executed), passed=$($counters.passed), failed=$($counters.failed)."
+          }
+          Write-Host 'PASS: all 36 Phase 3 state-reader test cases executed and passed on Windows.'

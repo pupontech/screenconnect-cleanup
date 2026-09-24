@@ -1,0 +1,76 @@
+<Window x:Class="ScreenConnectCleanup.Gui.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:ScreenConnectCleanup.Gui.ViewModels"
+        xmlns:views="clr-namespace:ScreenConnectCleanup.Gui.Views"
+        Title="ScreenConnect Cleanup — Synthetic UI Preview"
+        Height="760" Width="1120" MinHeight="560" MinWidth="760"
+        WindowStartupLocation="CenterScreen"
+        UseLayoutRounding="True" SnapsToDevicePixels="True"
+        Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}"
+        Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}"
+        TextOptions.TextFormattingMode="Display">
+    <Window.InputBindings>
+        <KeyBinding Key="D1" Modifiers="Alt" Command="{Binding NavigateHomeCommand}" />
+        <KeyBinding Key="D2" Modifiers="Alt" Command="{Binding NavigateInvestigationCommand}" />
+        <KeyBinding Key="D3" Modifiers="Alt" Command="{Binding NavigateReviewCommand}" />
+        <KeyBinding Key="D4" Modifiers="Alt" Command="{Binding NavigateResultsCommand}" />
+        <KeyBinding Key="Left" Modifiers="Alt" Command="{Binding NavigateBackCommand}" />
+    </Window.InputBindings>
+
+    <Window.Resources>
+        <DataTemplate DataType="{x:Type vm:HomeViewModel}">
+            <views:HomeView />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:InvestigationViewModel}">
+            <views:InvestigationView />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:ReviewViewModel}">
+            <views:ReviewView />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:ResultsViewModel}">
+            <views:ResultsView />
+        </DataTemplate>
+    </Window.Resources>
+
+    <DockPanel LastChildFill="True">
+        <Border DockPanel.Dock="Top" Padding="12,8"
+                Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"
+                BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                BorderThickness="0,0,0,1">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left"
+                        KeyboardNavigation.TabNavigation="Once">
+                <Button Content="_Home" Command="{Binding NavigateHomeCommand}"
+                        AutomationProperties.Name="Navigate to Home view" ToolTip="Alt+1"
+                        Margin="0,0,8,0" Padding="16,8" />
+                <Button Content="_Investigation" Command="{Binding NavigateInvestigationCommand}"
+                        AutomationProperties.Name="Navigate to Investigation view" ToolTip="Alt+2"
+                        Margin="0,0,8,0" Padding="16,8" />
+                <Button Content="_Review" Command="{Binding NavigateReviewCommand}"
+                        AutomationProperties.Name="Navigate to Review view" ToolTip="Alt+3"
+                        Margin="0,0,8,0" Padding="16,8" />
+                <Button Content="_Results" Command="{Binding NavigateResultsCommand}"
+                        AutomationProperties.Name="Navigate to Results view" ToolTip="Alt+4"
+                        Margin="0,0,8,0" Padding="16,8" />
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Padding="12,7"
+                Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"
+                BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                BorderThickness="0,1,0,0">
+            <DockPanel LastChildFill="True">
+                <Button DockPanel.Dock="Right" Content="_Back" Command="{Binding NavigateBackCommand}"
+                        AutomationProperties.Name="Navigate back to the previous view" ToolTip="Alt+Left"
+                        Padding="14,5" />
+                <TextBlock Text="PHASE 1 SYNTHETIC PREVIEW — no scans, removals, or system changes are performed."
+                           VerticalAlignment="Center" TextWrapping="Wrap"
+                           AutomationProperties.Name="Phase 1 synthetic preview notice" />
+            </DockPanel>
+        </Border>
+
+        <ContentControl Content="{Binding CurrentViewModel}"
+                        AutomationProperties.Name="Current application view"
+                        KeyboardNavigation.TabNavigation="Local" />
+    </DockPanel>
+</Window>
