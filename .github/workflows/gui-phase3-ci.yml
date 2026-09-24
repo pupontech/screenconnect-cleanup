@@ -163,7 +163,6 @@ jobs:
             }
 
             $expectedSideEffects = @{
-              '[System.IO.File]::Replace($tempPath, $targetPath, $null)' = 1
               '[System.IO.File]::Replace($tempPath, $targetPath, $backupPath)' = 1
               '[System.IO.File]::Delete($backupPath)' = 1
               '[System.IO.File]::Move($tempPath, $targetPath)' = 1

@@ -622,14 +622,11 @@ function Write-GuiState {
             if ($null -ne $previousRaw) {
                 $currentRaw = [System.IO.File]::ReadAllText($targetPath, [System.Text.Encoding]::UTF8)
                 if ($currentRaw -cne $previousRaw) { throw 'gui-state.json changed during publication; refusing to overwrite it.' }
-                if ($env:OS -eq 'Windows_NT') {
-                    [System.IO.File]::Replace($tempPath, $targetPath, $null)
-                } else {
-                    # Unix .NET requires a non-empty backup path for File.Replace.
-                    $backupPath = [System.IO.Path]::Combine($fullRunRoot, ('.gui-state.json.' + [Guid]::NewGuid().ToString('N') + '.bak'))
-                    [System.IO.File]::Replace($tempPath, $targetPath, $backupPath)
-                    try { [System.IO.File]::Delete($backupPath) } catch { }
-                }
+                # Both Windows PowerShell 5.1 and Unix .NET require a legal
+                # backup path here; keep it in the same run directory.
+                $backupPath = [System.IO.Path]::Combine($fullRunRoot, ('.gui-state.json.' + [Guid]::NewGuid().ToString('N') + '.bak'))
+                [System.IO.File]::Replace($tempPath, $targetPath, $backupPath)
+                try { [System.IO.File]::Delete($backupPath) } catch { }
             } else {
                 [System.IO.File]::Move($tempPath, $targetPath)
             }
