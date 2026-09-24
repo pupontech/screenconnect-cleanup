@@ -140,12 +140,15 @@ try {
     Assert-True ((Get-CurrentRaw $target) -ceq $malformed) 'truncated prior file is not replaced by a candidate update'
 
     $duplicateCases = @(
-        @{ Label = 'root member'; Search = '"runId": "' + $runId + '"'; Insert = ', "run\u0049d": "' + $runId + '"' },
-        @{ Label = 'nested stage member'; Search = '"operation": "Producer interrupted"'; Insert = ', "oper\u0061tion": "ambiguous"' },
-        @{ Label = 'nested artifacts member'; Search = '"findings": "detect/HOST_2026-09-23_120000/findings.json"'; Insert = ', "find\u0069ngs": "ambiguous.json"' }
+        @{ Label = 'root member'; Search = '"runId"\s*:\s*"' + [regex]::Escape($runId) + '"'; Insert = ', "run\u0049d": "' + $runId + '"' },
+        @{ Label = 'nested stage member'; Search = '"operation"\s*:\s*"Producer interrupted"'; Insert = ', "oper\u0061tion": "ambiguous"' },
+        @{ Label = 'nested artifacts member'; Search = '"findings"\s*:\s*"detect/HOST_2026-09-23_120000/findings\.json"'; Insert = ', "find\u0069ngs": "ambiguous.json"' }
     )
     foreach ($duplicateCase in $duplicateCases) {
-        $duplicateRaw = $withArtifactRaw.Replace($duplicateCase.Search, $duplicateCase.Search + $duplicateCase.Insert)
+        $matched = $withArtifactRaw -match $duplicateCase.Search
+        Assert-True $matched "duplicate fixture finds key at $($duplicateCase.Label)"
+        $matchedField = $Matches[0]
+        $duplicateRaw = $withArtifactRaw.Replace($matchedField, $matchedField + $duplicateCase.Insert)
         Assert-True ($duplicateRaw -cne $withArtifactRaw) "duplicate fixture inserts escaped key at $($duplicateCase.Label)"
         $duplicateBytes = [System.Text.Encoding]::UTF8.GetBytes($duplicateRaw)
         [System.IO.File]::WriteAllBytes($target, $duplicateBytes)
