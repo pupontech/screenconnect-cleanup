@@ -49,12 +49,31 @@ param(
     [string]$MicroBinUrl,
     [string]$MicroBinUploaderPasswordFile,
     [switch]$NoShare,         # create the local package but do not share it
-    [switch]$Debug           # full debug logger: console transcript + debug
+    [switch]$Debug,          # full debug logger: console transcript + debug
                              # detail to <WorkDir>\logs\debug.log (v1.7.26)
+    [string]$GuiRequestPath  # bounded GUI adapter request; absent for legacy CLI mode
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+
+# The GUI entry point is opt-in. Bare CLI invocation keeps the existing
+# prompts, switches, and pipeline untouched.
+if ($PSBoundParameters.ContainsKey('GuiRequestPath')) {
+    $guiAdapterPath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'gui-bridge/Invoke-GuiStage.ps1'
+    if (-not (Test-Path -LiteralPath $guiAdapterPath -PathType Leaf)) {
+        [Console]::Error.WriteLine('GUI stage adapter is missing.')
+        exit 2
+    }
+    try {
+        $guiExitCode = & $guiAdapterPath -RequestPath $GuiRequestPath -OutRoot $OutRoot -ReturnExitCode
+    } catch {
+        [Console]::Error.WriteLine('GUI stage adapter could not complete safely.')
+        exit 2
+    }
+    if ($guiExitCode -isnot [int] -and $guiExitCode -isnot [long]) { exit 1 }
+    exit [int]$guiExitCode
+}
 
 # -----------------------------------------------------------------------------
 # Constants & script metadata
