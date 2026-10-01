@@ -20,6 +20,7 @@
     <Compile Remove="InvestigationViewModelTests.cs" />
     <Compile Include="../../../gui/Services/IReadOnlyRunLauncher.cs" Link="Production/IReadOnlyRunLauncher.cs" />
     <Compile Include="../../../gui/Services/ReadOnlyRunLauncher.cs" Link="Production/ReadOnlyRunLauncher.cs" />
+    <Compile Include="../../../gui/Services/WindowsProcessContainment.cs" Link="Production/WindowsProcessContainment.cs" />
     <Compile Include="../../../gui/Services/RunStateReader.cs" Link="Production/RunStateReader.cs" />
   </ItemGroup>
 </Project>

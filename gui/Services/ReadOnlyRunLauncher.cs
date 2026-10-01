@@ -530,7 +530,157 @@ internal sealed class SystemLauncherFileSystem : ILauncherFileSystem
 
 internal sealed class WindowsPowerShellProcessRunner : ILauncherProcessRunner
 {
-    public async Task<LauncherProcessResult> RunAsync(LauncherProcessRequest request, TimeSpan timeout, CancellationToken cancellationToken)
+    private static readonly TimeSpan CleanupTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan DescendantExitGrace = TimeSpan.FromSeconds(1);
+    private readonly IWindowsJobApi _jobApi;
+
+    public WindowsPowerShellProcessRunner() : this(new NativeWindowsJobApi())
+    {
+    }
+
+    internal WindowsPowerShellProcessRunner(IWindowsJobApi jobApi) =>
+        _jobApi = jobApi ?? throw new ArgumentNullException(nameof(jobApi));
+
+    public Task<LauncherProcessResult> RunAsync(LauncherProcessRequest request, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromResult(new LauncherProcessResult(-1, Cancelled: true));
+        }
+
+        return OperatingSystem.IsWindows()
+            ? RunWithWindowsContainmentAsync(request, timeout, cancellationToken)
+            : RunWithPortableProcessAsync(request, timeout, cancellationToken);
+    }
+
+    private async Task<LauncherProcessResult> RunWithWindowsContainmentAsync(
+        LauncherProcessRequest request,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        WindowsProcessContainment process;
+        try
+        {
+            process = WindowsProcessContainment.Start(request, _jobApi);
+        }
+        catch (WindowsProcessStartException error)
+        {
+            return new LauncherProcessResult(
+                -1,
+                Error: "The read-only GUI process could not be safely contained or started.",
+                PreserveRequest: !error.TerminationConfirmed);
+        }
+        catch
+        {
+            return new LauncherProcessResult(-1, Error: "The read-only GUI process could not be safely contained or started.");
+        }
+
+        return await RunContainedProcessAsync(process, timeout, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<LauncherProcessResult> RunContainedProcessAsync(
+        WindowsProcessContainment process,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        var returnCodeCapture = new AdapterReturnCodeCapture();
+        var outputTask = ReadAdapterOutputAsync(process.StandardOutput, returnCodeCapture);
+        var errorTask = DrainErrorAsync(process.StandardError);
+        try
+        {
+            var elapsed = Stopwatch.StartNew();
+            while (true)
+            {
+                if (process.HasExited) break;
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    var confirmed = await process.TerminateAndConfirmEmptyAsync().ConfigureAwait(false);
+                    return new LauncherProcessResult(
+                        -1,
+                        Cancelled: true,
+                        Error: confirmed
+                            ? "The cancelled read-only GUI process tree was terminated and confirmed empty."
+                            : "The cancelled read-only GUI process tree could not be confirmed stopped.",
+                        PreserveRequest: !confirmed);
+                }
+                if (elapsed.Elapsed >= timeout)
+                {
+                    var confirmed = await process.TerminateAndConfirmEmptyAsync().ConfigureAwait(false);
+                    return new LauncherProcessResult(
+                        -1,
+                        TimedOut: true,
+                        Error: confirmed
+                            ? "The timed-out read-only GUI process tree was terminated and confirmed empty."
+                            : "The timed-out read-only GUI process tree could not be confirmed stopped.",
+                        PreserveRequest: !confirmed);
+                }
+                await Task.Delay(TimeSpan.FromMilliseconds(25)).ConfigureAwait(false);
+            }
+
+            var exitCode = process.ExitCode;
+            var jobState = await process.WaitForNoActiveProcessesAsync(DescendantExitGrace).ConfigureAwait(false);
+            if (jobState == WindowsJobEmptyState.QueryFailed)
+            {
+                _ = await process.TerminateAndConfirmEmptyAsync().ConfigureAwait(false);
+                return new LauncherProcessResult(
+                    exitCode,
+                    Error: "The read-only GUI process tree could not be queried and its termination is unconfirmed.",
+                    PreserveRequest: true);
+            }
+
+            var unexpectedDescendants = jobState == WindowsJobEmptyState.StillActive;
+            if (unexpectedDescendants && !await process.TerminateAndConfirmEmptyAsync().ConfigureAwait(false))
+            {
+                return new LauncherProcessResult(
+                    exitCode,
+                    Error: "Contained descendant processes remained and their termination could not be confirmed.",
+                    PreserveRequest: true);
+            }
+
+            if (!await DrainOutputWithinBoundAsync(outputTask, errorTask).ConfigureAwait(false))
+            {
+                return new LauncherProcessResult(
+                    exitCode,
+                    Error: "The read-only GUI adapter output could not be drained safely.",
+                    PreserveRequest: unexpectedDescendants);
+            }
+            if (!returnCodeCapture.TryGetCode(out var adapterReturnCode))
+            {
+                return new LauncherProcessResult(
+                    exitCode,
+                    Error: "Adapter return output was missing or ambiguous.",
+                    PreserveRequest: unexpectedDescendants);
+            }
+            if (unexpectedDescendants)
+            {
+                return new LauncherProcessResult(
+                    exitCode,
+                    Error: "Contained descendant processes remained after adapter completion and were terminated.",
+                    AdapterReturnCode: adapterReturnCode);
+            }
+            return new LauncherProcessResult(exitCode, AdapterReturnCode: adapterReturnCode);
+        }
+        catch
+        {
+            var confirmed = await process.TerminateAndConfirmEmptyAsync().ConfigureAwait(false);
+            return new LauncherProcessResult(
+                -1,
+                Error: confirmed
+                    ? "The read-only GUI process failed; its process tree was terminated and confirmed empty."
+                    : "The read-only GUI process failed and its process tree could not be confirmed stopped.",
+                PreserveRequest: !confirmed);
+        }
+        finally
+        {
+            process.Dispose();
+            await ObserveOutputTasksAsync(outputTask, errorTask).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task<LauncherProcessResult> RunWithPortableProcessAsync(
+        LauncherProcessRequest request,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
     {
         if (cancellationToken.IsCancellationRequested)
         {
@@ -579,6 +729,46 @@ internal sealed class WindowsPowerShellProcessRunner : ILauncherProcessRunner
             var stop = await StopAndReapAsync(process).ConfigureAwait(false);
             return new LauncherProcessResult(-1, Error: stop.ErrorMessage, PreserveRequest: true);
         }
+    }
+
+    private static async Task ReadAdapterOutputAsync(StreamReader output, AdapterReturnCodeCapture capture)
+    {
+        try
+        {
+            while (await output.ReadLineAsync().ConfigureAwait(false) is { } line) capture.Add(line);
+        }
+        catch
+        {
+            // The caller observes missing or ambiguous adapter status as an error.
+        }
+    }
+
+    private static async Task DrainErrorAsync(Stream error)
+    {
+        try { await error.CopyToAsync(Stream.Null).ConfigureAwait(false); }
+        catch { /* Native process failures are reported through the bounded result. */ }
+    }
+
+    private static async Task<bool> DrainOutputWithinBoundAsync(Task outputTask, Task errorTask)
+    {
+        try
+        {
+            await Task.WhenAll(outputTask, errorTask).WaitAsync(CleanupTimeout).ConfigureAwait(false);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static async Task ObserveOutputTasksAsync(Task outputTask, Task errorTask)
+    {
+        try
+        {
+            await Task.WhenAll(outputTask, errorTask).WaitAsync(CleanupTimeout).ConfigureAwait(false);
+        }
+        catch { /* The bounded result already records output-drain failure. */ }
     }
 
     internal static ProcessStartInfo CreateStartInfo(LauncherProcessRequest request)

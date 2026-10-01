@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ScreenConnectCleanup.Gui.Models;
 using ScreenConnectCleanup.Gui.Services;
+using System.IO;
 using System.Text.Json;
 
 namespace ScreenConnectCleanup.Gui.ViewModels;
@@ -190,6 +191,7 @@ public partial class InvestigationViewModel : ViewModelBase
         IsProcessActive = true;
         HasRealRun = true;
         OperationStatus = "Starting Detect Only inspection…";
+        ElapsedTime = "Waiting for validated run state…";
         FindingsStatus = "Incomplete — the run has not produced a validated findings artifact.";
         RunRoot = "Not available";
         Warnings = new List<string>();
@@ -220,7 +222,8 @@ public partial class InvestigationViewModel : ViewModelBase
             IsProcessActive = false;
             OperationStatus = "Cancelled — no validated run result was returned.";
             FindingsStatus = "Incomplete — cancellation did not produce a validated findings artifact.";
-            Errors = new List<string> { "The Detect Only inspection was cancelled before its result could be validated." };
+            SetIncompleteAfterUnvalidatedExit(
+                "The Detect Only inspection was cancelled before its result could be validated.");
             RunLoaded?.Invoke(new InvestigationRunSnapshot(null, null, null, FindingsStatus));
         }
         catch (Exception exception)
@@ -231,7 +234,7 @@ public partial class InvestigationViewModel : ViewModelBase
                 : $"The Detect Only inspection failed before a result could be validated: {exception.Message}";
             OperationStatus = "Incomplete — no run state was validated.";
             FindingsStatus = "Incomplete — no findings artifact was validated.";
-            Errors = new List<string> { message.Length <= 2048 ? message : message[..2048] };
+            SetIncompleteAfterUnvalidatedExit(message.Length <= 2048 ? message : message[..2048]);
             RunLoaded?.Invoke(new InvestigationRunSnapshot(null, null, null, FindingsStatus));
         }
         finally
@@ -445,6 +448,82 @@ public partial class InvestigationViewModel : ViewModelBase
         OverallStatus = StatusValues.Incomplete,
         Stages = new List<StageState>()
     };
+
+    private void SetIncompleteAfterUnvalidatedExit(string terminalError)
+    {
+        RunStateReadResult? stateRead = null;
+        var runId = _activeRunId;
+        var computerName = RunState.ComputerName;
+        if (!string.IsNullOrWhiteSpace(runId) && !string.IsNullOrWhiteSpace(computerName) &&
+            Path.IsPathFullyQualified(RunRoot))
+        {
+            stateRead = RunStateReader.Read(_trustedRunsRoot, RunRoot, runId, computerName);
+        }
+
+        var validationIssues = stateRead?.Issues ?? Array.Empty<string>();
+        var errors = (stateRead is { IsValid: true }
+                ? stateRead.State.Errors
+                : RunState.Errors)
+            .Concat(validationIssues)
+            .Append(terminalError)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (stateRead is { IsValid: true } &&
+            string.Equals(stateRead.State.RunId, runId, StringComparison.Ordinal) &&
+            string.Equals(stateRead.State.ComputerName, computerName, StringComparison.Ordinal))
+        {
+            var report = stateRead.State;
+            RunState = new RunState
+            {
+                RunId = report.RunId,
+                ComputerName = report.ComputerName,
+                OverallStatus = StatusValues.Incomplete,
+                CurrentStage = null,
+                Stages = report.Stages.Select(stage => new StageState
+                {
+                    Id = stage.Id,
+                    Name = stage.Name,
+                    Status = stage.Status == StatusValues.Running ? StatusValues.Incomplete : stage.Status,
+                    Operation = stage.Operation,
+                    StartedUtc = stage.StartedUtc?.UtcDateTime,
+                    EndedUtc = stage.EndedUtc?.UtcDateTime
+                }).ToList(),
+                Warnings = report.Warnings.ToList(),
+                Errors = errors,
+                Artifacts = new Dictionary<string, string>(report.Artifacts, StringComparer.Ordinal),
+                UpdatedUtc = report.UpdatedUtc.UtcDateTime
+            };
+            ElapsedTime = $"Last updated {report.UpdatedUtc:yyyy-MM-dd HH:mm:ss 'UTC'}";
+        }
+        else
+        {
+            RunState = new RunState
+            {
+                RunId = RunState.RunId,
+                ComputerName = RunState.ComputerName,
+                OverallStatus = StatusValues.Incomplete,
+                CurrentStage = null,
+                Stages = RunState.Stages.Select(stage => new StageState
+                {
+                    Id = stage.Id,
+                    Name = stage.Name,
+                    Status = stage.Status == StatusValues.Running ? StatusValues.Incomplete : stage.Status,
+                    Operation = stage.Operation,
+                    StartedUtc = stage.StartedUtc,
+                    EndedUtc = stage.EndedUtc
+                }).ToList(),
+                Warnings = RunState.Warnings.ToList(),
+                Errors = errors,
+                Artifacts = new Dictionary<string, string>(RunState.Artifacts, StringComparer.Ordinal),
+                UpdatedUtc = RunState.UpdatedUtc
+            };
+        }
+
+        Stages = RunState.Stages;
+        CurrentStage = null;
+        Errors = RunState.Errors.ToList();
+    }
 
     public void UpdateProgress(int completedCount)
     {

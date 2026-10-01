@@ -257,6 +257,26 @@ public sealed class ReadOnlyRunLauncherTests
     }
 
     [Fact]
+    public void WindowsProcessCommandLinePreservesPathsWithSpacesAndApostrophesWithoutShellParsing()
+    {
+        var request = new LauncherProcessRequest(
+            @"C:\Program Files\Windows PowerShell\v1.0\powershell.exe",
+            @"C:\Program Files\GUI",
+            new[]
+            {
+                "-File", @"C:\Users\O'Brien\App Data\Invoke-GuiStage.ps1",
+                "-RequestPath", @"C:\Users\O'Brien\App Data\request.json", "-ReturnExitCode"
+            });
+
+        var commandLine = WindowsProcessContainment.BuildCommandLine(request);
+
+        Assert.Equal(
+            "\"C:\\Program Files\\Windows PowerShell\\v1.0\\powershell.exe\" -File \"C:\\Users\\O'Brien\\App Data\\Invoke-GuiStage.ps1\" -RequestPath \"C:\\Users\\O'Brien\\App Data\\request.json\" -ReturnExitCode",
+            commandLine);
+        Assert.DoesNotContain("-Command", commandLine);
+    }
+
+    [Fact]
     public void AdapterStatusCaptureAcceptsOnlyOneBoundedIntegerLine()
     {
         var capture = new WindowsPowerShellProcessRunner.AdapterReturnCodeCapture();
@@ -302,6 +322,300 @@ public sealed class ReadOnlyRunLauncherTests
         var preserveRequest = typeof(LauncherProcessResult).GetProperty("PreserveRequest");
         Assert.NotNull(preserveRequest);
         Assert.True((bool)preserveRequest.GetValue(result)!);
+    }
+
+    [Fact]
+    public async Task WindowsJobContainmentConfirmsParentAndChildAreStoppedOnCancellation()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var run = await RunSyntheticWindowsParentChildAsync(
+            cancellation: true,
+            timeout: TimeSpan.FromSeconds(15));
+
+        Assert.True(run.Result.Cancelled);
+        Assert.False(run.Result.PreserveRequest);
+        Assert.NotNull(run.Result.Error);
+        Assert.True(await WaitForWindowsProcessStopAsync(run.ChildProcessId, TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public async Task WindowsJobContainmentConfirmsParentAndChildAreStoppedOnTimeout()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var run = await RunSyntheticWindowsParentChildAsync(
+            cancellation: false,
+            timeout: TimeSpan.FromSeconds(2));
+
+        Assert.True(run.Result.TimedOut);
+        Assert.False(run.Result.PreserveRequest);
+        Assert.NotNull(run.Result.Error);
+        Assert.True(await WaitForWindowsProcessStopAsync(run.ChildProcessId, TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public async Task WindowsNormalCompletionDoesNotReportSuccessWhileAContainedChildRemains()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var run = await RunSyntheticWindowsParentChildAsync(
+            cancellation: false,
+            timeout: TimeSpan.FromSeconds(15),
+            parentExitsAfterStartingChild: true);
+
+        Assert.Equal(0, run.Result.AdapterReturnCode);
+        Assert.NotNull(run.Result.Error);
+        Assert.False(run.Result.PreserveRequest);
+        Assert.True(await WaitForWindowsProcessStopAsync(run.ChildProcessId, TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public async Task WindowsNormalCompletionCapturesTheAdapterCodeAfterTheJobBecomesEmpty()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var root = Path.Combine(Path.GetTempPath(), $"ScreenConnect GUI's normal completion {Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var scriptPath = Path.Combine(root, "adapter's status.ps1");
+            File.WriteAllText(scriptPath, "[Console]::Out.WriteLine('0')");
+            var powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+            var request = new LauncherProcessRequest(powershell, root, new[]
+            {
+                "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath
+            });
+
+            var result = await new WindowsPowerShellProcessRunner().RunAsync(
+                request, TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            Assert.Null(result.Error);
+            Assert.Equal(0, result.AdapterReturnCode);
+            Assert.False(result.PreserveRequest);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("assign")]
+    [InlineData("resume")]
+    public async Task WindowsContainmentSetupFailureNeverRunsTheSuspendedScript(string failurePoint)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        using var fixture = new WindowsProcessFixture();
+        var jobApi = new FaultingWindowsJobApi(failurePoint);
+        var runner = new WindowsPowerShellProcessRunner(jobApi);
+        var result = await runner.RunAsync(fixture.Request, TimeSpan.FromSeconds(10), CancellationToken.None);
+
+        Assert.NotNull(result.Error);
+        Assert.False(result.PreserveRequest);
+        Assert.False(File.Exists(fixture.MarkerPath));
+        var assignIndex = jobApi.Calls.IndexOf("assign");
+        var resumeIndex = jobApi.Calls.IndexOf("resume");
+        Assert.True(assignIndex >= 0);
+        if (failurePoint == "assign") Assert.Equal(-1, resumeIndex);
+        else Assert.True(resumeIndex > assignIndex, "The process must be assigned before its primary thread resumes.");
+    }
+
+    [Theory]
+    [InlineData("query")]
+    [InlineData("kill")]
+    public async Task WindowsContainmentQueryOrKillFailurePreservesRequestAndKillsOnHandleClose(string failurePoint)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var fixture = new WindowsProcessFixture();
+        using var cancellation = new CancellationTokenSource();
+        var runner = new WindowsPowerShellProcessRunner(new FaultingWindowsJobApi(failurePoint));
+        var runTask = runner.RunAsync(fixture.Request, TimeSpan.FromSeconds(15), cancellation.Token);
+        try
+        {
+            var childProcessId = await fixture.WaitForChildAsync(runTask);
+            cancellation.Cancel();
+            var result = await runTask.WaitAsync(TimeSpan.FromSeconds(12));
+
+            Assert.True(result.Cancelled);
+            Assert.True(result.PreserveRequest);
+            Assert.NotNull(result.Error);
+            Assert.True(await WaitForWindowsProcessStopAsync(childProcessId, TimeSpan.FromSeconds(5)));
+        }
+        finally
+        {
+            cancellation.Cancel();
+            try { await runTask.WaitAsync(TimeSpan.FromSeconds(12)); }
+            catch (TimeoutException) { }
+            fixture.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task ClosingTheOwnedWindowsJobHandleKillsTheRunningParentAndChild()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        using var fixture = new WindowsProcessFixture();
+        var process = WindowsProcessContainment.Start(fixture.Request, new NativeWindowsJobApi());
+        int childProcessId;
+        try
+        {
+            childProcessId = await fixture.WaitForChildAsync();
+        }
+        finally
+        {
+            process.Dispose();
+        }
+
+        Assert.True(await WaitForWindowsProcessStopAsync(childProcessId, TimeSpan.FromSeconds(5)));
+    }
+
+    private static async Task<WindowsProcessRun> RunSyntheticWindowsParentChildAsync(
+        bool cancellation,
+        TimeSpan timeout,
+        bool parentExitsAfterStartingChild = false)
+    {
+        var fixture = new WindowsProcessFixture(parentExitsAfterStartingChild);
+        using var cancellationSource = new CancellationTokenSource();
+        var runner = new WindowsPowerShellProcessRunner();
+        var runTask = runner.RunAsync(fixture.Request, timeout, cancellationSource.Token);
+        try
+        {
+            var childProcessId = await fixture.WaitForChildAsync(runTask);
+            if (cancellation) cancellationSource.Cancel();
+            var result = await runTask.WaitAsync(TimeSpan.FromSeconds(12));
+            return new WindowsProcessRun(result, childProcessId);
+        }
+        finally
+        {
+            cancellationSource.Cancel();
+            try { await runTask.WaitAsync(TimeSpan.FromSeconds(12)); }
+            catch (TimeoutException) { }
+            fixture.Dispose();
+        }
+    }
+
+    private static async Task<bool> WaitForWindowsProcessStopAsync(int processId, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                using var process = Process.GetProcessById(processId);
+                if (process.HasExited) return true;
+            }
+            catch (ArgumentException)
+            {
+                return true;
+            }
+            await Task.Delay(25);
+        }
+
+        return false;
+    }
+
+    private sealed record WindowsProcessRun(LauncherProcessResult Result, int ChildProcessId);
+
+    private sealed class WindowsProcessFixture : IDisposable
+    {
+        public WindowsProcessFixture(bool parentExitsAfterStartingChild = false)
+        {
+            Root = Path.Combine(Path.GetTempPath(), $"ScreenConnect GUI's containment {Guid.NewGuid():N}");
+            Directory.CreateDirectory(Root);
+            var childScript = Path.Combine(Root, "child's sleeper.ps1");
+            var parentScript = Path.Combine(Root, "parent's launcher.ps1");
+            MarkerPath = Path.Combine(Root, "child process id.txt");
+            var childCode = "param([string]$MarkerPath) [IO.File]::WriteAllText($MarkerPath, [string]$PID); Start-Sleep -Seconds 60";
+            File.WriteAllText(childScript, childCode);
+            var parentCode = @"
+param([string]$ChildScript, [string]$MarkerPath, [string]$ExitAfterStart)
+$child = Join-Path $PSHOME 'powershell.exe'
+$arguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""' + $ChildScript + '"" -MarkerPath ""' + $MarkerPath + '""'
+$process = [Diagnostics.Process]::Start($child, $arguments)
+if ($ExitAfterStart -eq 'true') { [Console]::Out.WriteLine('0'); exit 0 }
+Start-Sleep -Seconds 60
+";
+            File.WriteAllText(parentScript, parentCode);
+            var powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+            Request = new LauncherProcessRequest(powershell, Root, new[]
+            {
+                "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                "-File", parentScript, "-ChildScript", childScript, "-MarkerPath", MarkerPath,
+                "-ExitAfterStart", parentExitsAfterStartingChild ? "true" : "false"
+            });
+        }
+
+        public string Root { get; }
+        public string MarkerPath { get; }
+        public LauncherProcessRequest Request { get; }
+
+        public async Task<int> WaitForChildAsync(Task<LauncherProcessResult>? runTask = null)
+        {
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(8);
+            while (!File.Exists(MarkerPath) && runTask?.IsCompleted != true && DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(20);
+            }
+            Assert.True(File.Exists(MarkerPath), "The synthetic Windows child did not start.");
+            return int.Parse(await File.ReadAllTextAsync(MarkerPath));
+        }
+
+        public void Dispose()
+        {
+            if (Directory.Exists(Root)) Directory.Delete(Root, recursive: true);
+        }
+    }
+
+    private sealed class FaultingWindowsJobApi : IWindowsJobApi
+    {
+        private readonly string _failurePoint;
+        private readonly NativeWindowsJobApi _inner = new();
+        private bool _terminationRequested;
+        public List<string> Calls { get; } = new();
+
+        public FaultingWindowsJobApi(string failurePoint) => _failurePoint = failurePoint;
+
+        public SafeWindowsJobHandle CreateConfiguredJob()
+        {
+            Calls.Add("create");
+            return _inner.CreateConfiguredJob();
+        }
+
+        public void AssignToJob(SafeWindowsJobHandle job, IntPtr processHandle)
+        {
+            Calls.Add("assign");
+            if (_failurePoint == "assign") throw new InvalidOperationException("synthetic assignment failure");
+            _inner.AssignToJob(job, processHandle);
+        }
+
+        public uint ResumePrimaryThread(IntPtr threadHandle)
+        {
+            Calls.Add("resume");
+            if (_failurePoint == "resume") throw new InvalidOperationException("synthetic resume failure");
+            return _inner.ResumePrimaryThread(threadHandle);
+        }
+
+        public uint QueryActiveProcessCount(SafeWindowsJobHandle job)
+        {
+            Calls.Add("query");
+            if (_failurePoint == "query" && _terminationRequested)
+                throw new InvalidOperationException("synthetic query failure");
+            return _inner.QueryActiveProcessCount(job);
+        }
+
+        public void TerminateJob(SafeWindowsJobHandle job, uint exitCode)
+        {
+            Calls.Add("terminate");
+            _terminationRequested = true;
+            if (_failurePoint == "kill") throw new InvalidOperationException("synthetic job termination failure");
+            _inner.TerminateJob(job, exitCode);
+        }
     }
 
     private static async Task<LauncherProcessResult> RunSyntheticParentChildAsync(bool cancel)
