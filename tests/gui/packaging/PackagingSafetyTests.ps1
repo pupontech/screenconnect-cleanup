@@ -6,6 +6,7 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.IO.Compression
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
 $builderPath = Join-Path $repoRoot 'scripts/build-readonly-gui-prototype.ps1'
@@ -24,6 +25,7 @@ $parseErrors = $null
 $builderAst = [System.Management.Automation.Language.Parser]::ParseFile($builderPath, [ref]$tokens, [ref]$parseErrors)
 if ($parseErrors.Count -gt 0) { throw "Package builder parse failed: $($parseErrors[0].Message)" }
 $builderSource = [System.IO.File]::ReadAllText($builderPath)
+$testSource = [System.IO.File]::ReadAllText($PSCommandPath)
 
 $script:Assertions = 0
 function Assert-True {
@@ -157,6 +159,16 @@ $testRoot = Join-Path $scratchFullPath ('gui-packaging-tests-' + [Guid]::NewGuid
 [void][System.IO.Directory]::CreateDirectory($testRoot)
 
 try {
+    $compressionLoad = 'Add-Type -AssemblyName System.IO.Compression'
+    $comparison = [System.StringComparison]::Ordinal
+    $builderCompressionLoadIndex = $builderSource.IndexOf($compressionLoad, $comparison)
+    $builderZipApiIndex = $builderSource.IndexOf('System.IO.Compression.ZipArchive', $comparison)
+    $testCompressionLoadIndex = $testSource.IndexOf($compressionLoad, $comparison)
+    $testZipApiIndex = $testSource.IndexOf('System.IO.Compression.ZipArchive', $comparison)
+    $compressionAssemblyLoaded = @([System.AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.GetName().Name -ceq 'System.IO.Compression' }).Count -gt 0
+    Assert-True ($builderCompressionLoadIndex -ge 0 -and $builderCompressionLoadIndex -lt $builderZipApiIndex -and
+        $testCompressionLoadIndex -ge 0 -and $testCompressionLoadIndex -lt $testZipApiIndex -and $compressionAssemblyLoaded) 'the builder and AST-isolated tests explicitly load System.IO.Compression before ZIP APIs'
+
     Assert-True ($builderSource.Contains('[System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT')) 'the builder retains its Windows-only packaging guard'
 
     $relativePath = Get-RelativePath -Root $testRoot -Path (Join-Path $testRoot 'nested/file.txt')
