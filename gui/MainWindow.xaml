@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:ScreenConnectCleanup.Gui.ViewModels"
         xmlns:views="clr-namespace:ScreenConnectCleanup.Gui.Views"
-        Title="ScreenConnect Cleanup — Synthetic UI Preview"
+        Title="ScreenConnect Cleanup — Detect-only Inspection"
         Height="760" Width="1120" MinHeight="560" MinWidth="760"
         WindowStartupLocation="CenterScreen"
         UseLayoutRounding="True" SnapsToDevicePixels="True"
@@ -63,9 +63,9 @@
                 <Button DockPanel.Dock="Right" Content="_Back" Command="{Binding NavigateBackCommand}"
                         AutomationProperties.Name="Navigate back to the previous view" ToolTip="Alt+Left"
                         Padding="14,5" />
-                <TextBlock Text="PHASE 1 SYNTHETIC PREVIEW — no scans, removals, or system changes are performed."
+                <TextBlock Text="DETECT-ONLY INSPECTION — writes output artifacts and may write a detector transcript to the current user's Desktop. Full Investigation is unavailable because its snapshot may load and unload the Amcache registry hive; this GUI does not perform cleanup, removal, scanning, AV uninstall, or upload."
                            VerticalAlignment="Center" TextWrapping="Wrap"
-                           AutomationProperties.Name="Phase 1 synthetic preview notice" />
+                           AutomationProperties.Name="Detect-only inspection safety notice" />
             </DockPanel>
         </Border>
 

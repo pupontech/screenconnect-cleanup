@@ -146,7 +146,22 @@ public static class RunStateReader
         string trustedRunsRoot,
         string runRoot,
         string expectedRunId,
-        string expectedComputerName)
+        string expectedComputerName) =>
+        ReadCore(trustedRunsRoot, runRoot, expectedRunId, expectedComputerName, producerKnownActive: false);
+
+    internal static RunStateReadResult ReadForActiveProducer(
+        string trustedRunsRoot,
+        string runRoot,
+        string expectedRunId,
+        string expectedComputerName) =>
+        ReadCore(trustedRunsRoot, runRoot, expectedRunId, expectedComputerName, producerKnownActive: true);
+
+    private static RunStateReadResult ReadCore(
+        string trustedRunsRoot,
+        string runRoot,
+        string expectedRunId,
+        string expectedComputerName,
+        bool producerKnownActive)
     {
         var issues = new List<string>();
         try
@@ -187,7 +202,7 @@ public static class RunStateReader
 
                 using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 32 });
                 if (!TryParseDocument(document.RootElement, expectedRunId, expectedComputerName,
-                        resolvedPaths.RunRootPhysicalPath, issues, out var report))
+                        resolvedPaths.RunRootPhysicalPath, issues, producerKnownActive, out var report))
                 {
                     return InvalidResult(issues);
                 }
@@ -214,6 +229,7 @@ public static class RunStateReader
         string expectedComputerName,
         string runRootPhysicalPath,
         List<string> issues,
+        bool producerKnownActive,
         out RunStateReport? report)
     {
         report = null;
@@ -281,7 +297,7 @@ public static class RunStateReader
 
         var interrupted = string.Equals(overallStatus, "Running", StringComparison.Ordinal) ||
                           stages.Any(stage => string.Equals(stage.Status, "Running", StringComparison.Ordinal));
-        if (interrupted)
+        if (interrupted && !producerKnownActive)
         {
             overallStatus = "Incomplete";
             stages = stages.Select(stage => stage.Status is "Running"

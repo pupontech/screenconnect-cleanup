@@ -573,7 +573,7 @@ jobs:
         shell: pwsh
         run: dotnet build gui/ScreenConnectCleanup.Gui.csproj -c Release
 
-      - name: Run exactly 36 Phase 3 state-reader tests on Windows
+      - name: Run exactly 37 Phase 3 state-reader tests on Windows
         shell: pwsh
         run: |
           $resultsDirectory = Join-Path $env:RUNNER_TEMP 'gui-phase3-test-results'
@@ -587,8 +587,8 @@ jobs:
           if (-not (Test-Path -LiteralPath $trxPath)) { throw "Missing Phase 3 test proof: $trxPath" }
           [xml]$trx = Get-Content -LiteralPath $trxPath -Raw
           $counters = $trx.TestRun.ResultSummary.Counters
-          if ([int]$counters.total -ne 36 -or [int]$counters.executed -ne 36 -or
-              [int]$counters.passed -ne 36 -or [int]$counters.failed -ne 0) {
-            throw "Expected 36/36 Phase 3 state-reader cases; TRX counters were total=$($counters.total), executed=$($counters.executed), passed=$($counters.passed), failed=$($counters.failed)."
+          if ([int]$counters.total -ne 37 -or [int]$counters.executed -ne 37 -or
+              [int]$counters.passed -ne 37 -or [int]$counters.failed -ne 0) {
+            throw "Expected 37/37 Phase 3 state-reader cases; TRX counters were total=$($counters.total), executed=$($counters.executed), passed=$($counters.passed), failed=$($counters.failed)."
           }
-          Write-Host 'PASS: all 36 Phase 3 state-reader test cases executed and passed on Windows.'
+          Write-Host 'PASS: all 37 Phase 3 state-reader test cases executed and passed on Windows.'

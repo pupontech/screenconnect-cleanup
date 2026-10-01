@@ -207,6 +207,33 @@ public sealed class RunStateReaderTests
     }
 
     [Fact]
+    public void KnownActiveProducerCanExposeValidatedRunningStagesWithoutChangingCrashRecoveryDefault()
+    {
+        using var fixture = new ReaderFixture();
+        var document = fixture.CreateDocument();
+        document["overallStatus"] = "Running";
+        document["stages"]![2]!["status"] = "Running";
+        fixture.Write(document);
+
+        var activeRead = typeof(RunStateReader).GetMethod(
+            "ReadForActiveProducer",
+            BindingFlags.NonPublic | BindingFlags.Static,
+            binder: null,
+            types: new[] { typeof(string), typeof(string), typeof(string), typeof(string) },
+            modifiers: null);
+
+        Assert.NotNull(activeRead);
+        var result = (RunStateReadResult)activeRead.Invoke(null,
+            new object[] { fixture.TrustedRoot, fixture.RunRoot, RunId, ComputerName })!;
+
+        Assert.True(result.IsValid);
+        Assert.Equal("Running", result.State.OverallStatus);
+        Assert.Equal("Running", result.State.Stages[2].Status);
+        Assert.DoesNotContain(result.Issues, issue => issue.Contains("producer stopped", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("Incomplete", fixture.Read().State.OverallStatus);
+    }
+
+    [Fact]
     public void NeedsActionRemainsNonterminalAndIsNotReportedComplete()
     {
         using var fixture = new ReaderFixture();
