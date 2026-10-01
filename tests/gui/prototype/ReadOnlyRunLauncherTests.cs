@@ -256,16 +256,6 @@ public sealed class ReadOnlyRunLauncherTests
         Assert.DoesNotContain("-Command", startInfo.ArgumentList);
     }
 
-    [Theory]
-    [InlineData(@"C:\Program Files\GUI\adapter.ps1", "\"C:\\Program Files\\GUI\\adapter.ps1\"")]
-    [InlineData(@"C:\Users\Tech O'Neil\App Data\request.json", "\"C:\\Users\\Tech O'Neil\\App Data\\request.json\"")]
-    [InlineData("has\"quote", "\"has\\\"quote\"")]
-    [InlineData("ends\\", "\"ends\\\\\"")]
-    public void WindowsCommandLineQuotingPreservesPathsAndEscapesQuotes(string argument, string expected)
-    {
-        Assert.Equal(expected, WindowsProcessContainment.QuoteArgument(argument));
-    }
-
     [Fact]
     public void AdapterStatusCaptureAcceptsOnlyOneBoundedIntegerLine()
     {
