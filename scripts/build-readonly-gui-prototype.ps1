@@ -264,7 +264,7 @@ $docsDirectory = Join-Path $stageRoot 'docs'
 
 $buildInfo = @(
     'Product=ScreenConnect Cleanup Detect-Only GUI Prototype',
-    'SourceCommit=' + $reviewedSha,
+    ('SourceCommit=' + $reviewedSha),
     'Runtime=win-x64; self-contained .NET 10 WPF',
     'Execution=DetectOnly only; non-elevated Windows PowerShell 5.1',
     'No detector, scanner, remover, upload, or live system action was run by this build.'

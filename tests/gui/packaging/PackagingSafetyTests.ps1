@@ -171,6 +171,13 @@ try {
 
     Assert-True ($builderSource.Contains('[System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT')) 'the builder retains its Windows-only packaging guard'
 
+    $buildInfoStatement = @($topLevelStatements | Where-Object { $_.Extent.Text.TrimStart().StartsWith('$buildInfo =') })
+    Assert-True ($buildInfoStatement.Count -eq 1) 'the builder has one extractable build provenance assignment'
+    $reviewedSha = '0123456789abcdef0123456789abcdef01234567'
+    . ([scriptblock]::Create($buildInfoStatement[0].Extent.Text))
+    $sourceLines = @($buildInfo -split "`r?`n" | Where-Object { $_.StartsWith('SourceCommit=') })
+    Assert-True ($sourceLines.Count -eq 1 -and $sourceLines[0] -ceq ('SourceCommit=' + $reviewedSha)) 'build provenance keeps the exact source SHA on the SourceCommit line'
+
     $relativePath = Get-RelativePath -Root $testRoot -Path (Join-Path $testRoot 'nested/file.txt')
     Assert-True ($relativePath -ceq 'nested/file.txt') 'relative package paths use ZIP separators'
     Assert-Throws { Get-RelativePath -Root $testRoot -Path (Join-Path $testRoot '../outside.txt') } 'relative path traversal is rejected' 'Path escaped its fixed package root'
