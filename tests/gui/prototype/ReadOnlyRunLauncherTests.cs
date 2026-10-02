@@ -399,7 +399,9 @@ public sealed class ReadOnlyRunLauncherTests
         Assert.Equal(0, run.Result.AdapterReturnCode);
         Assert.NotNull(run.Result.Error);
         Assert.False(run.Result.PreserveRequest);
-        Assert.Contains(1u, run.JobActiveProcessCounts);
+        // Console-host helpers may also belong to the job; the safety contract is
+        // nonempty after parent exit, then zero after confirmed cleanup.
+        Assert.Contains(run.JobActiveProcessCounts, count => count > 0u);
         Assert.Equal(0u, run.JobActiveProcessCounts[^1]);
         await AssertWindowsProcessesStoppedAsync(run.ParentProcessId, run.ChildProcessId);
     }
@@ -530,7 +532,11 @@ public sealed class ReadOnlyRunLauncherTests
             Assert.False(process.HasExited, "The Windows PowerShell host must still be running before job close.");
             Assert.Equal(WindowsJobEmptyState.StillActive,
                 await process.WaitForNoActiveProcessesAsync(TimeSpan.Zero));
-            Assert.Equal(2u, jobApi.ActiveProcessCounts.Single());
+            Assert.False(IsWindowsProcessStopped(processes.ChildProcessId),
+                "The synthetic child must still be running before job close.");
+            // Windows may attach console-host helpers; require the live parent
+            // and child, not an environment-specific exact total.
+            Assert.True(jobApi.ActiveProcessCounts.Single() >= 2u);
         }
         finally
         {
