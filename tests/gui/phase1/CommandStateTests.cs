@@ -132,8 +132,18 @@ public sealed class ShellNavigationCommandTests
     {
         var shell = new MainWindowViewModel();
 
-        Assert.Equal("ScreenConnect Cleanup", shell.CurrentViewModel.Title);
+        Assert.Equal("Investigation", shell.CurrentViewModel.Title);
+        Assert.False(shell.Investigation.IsAdvancedMode);
         Assert.False(shell.NavigateBackCommand.CanExecute(null));
+        shell.NavigateHomeCommand.Execute(null);
+        shell.NavigateReviewCommand.Execute(null);
+        Assert.Same(shell.Investigation, shell.CurrentViewModel);
+        shell.Investigation.SimpleDetectedCount = 1;
+        shell.Investigation.SimpleDetectedItems = new[] { "ScreenConnect: retained-instance" };
+
+        shell.Investigation.UseAdvancedModeCommand.Execute(null);
+        Assert.True(shell.Investigation.IsAdvancedMode);
+        Assert.True(shell.NavigateBackCommand.CanExecute(null));
 
         shell.NavigateInvestigationCommand.Execute(null);
         Assert.Equal("Investigation", shell.CurrentViewModel.Title);
@@ -151,6 +161,11 @@ public sealed class ShellNavigationCommandTests
         Assert.Equal("Investigation", shell.CurrentViewModel.Title);
         shell.NavigateBackCommand.Execute(null);
         Assert.Equal("ScreenConnect Cleanup", shell.CurrentViewModel.Title);
-        Assert.False(shell.NavigateBackCommand.CanExecute(null));
+
+        shell.Investigation.UseSimpleModeCommand.Execute(null);
+        Assert.False(shell.Investigation.IsAdvancedMode);
+        Assert.Same(shell.Investigation, shell.CurrentViewModel);
+        Assert.Equal(1, shell.Investigation.SimpleDetectedCount);
+        Assert.Equal("ScreenConnect: retained-instance", Assert.Single(shell.Investigation.SimpleDetectedItems));
     }
 }

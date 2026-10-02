@@ -149,7 +149,24 @@ public static class FindingsReader
                 AddIssue(issues, "The findings artifact or run root changed physical paths while being read.");
             }
 
-            using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 64 });
+            var jsonBytes = bytes.AsMemory();
+            if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+            {
+                jsonBytes = jsonBytes[3..];
+            }
+
+            try
+            {
+                _ = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true)
+                    .GetCharCount(jsonBytes.Span);
+            }
+            catch (DecoderFallbackException)
+            {
+                AddIssue(issues, "The findings artifact contains malformed JSON.");
+                return EmptyResult(issues);
+            }
+
+            using var document = JsonDocument.Parse(jsonBytes, new JsonDocumentOptions { MaxDepth = 64 });
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object)
             {

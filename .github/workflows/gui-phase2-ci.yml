@@ -78,7 +78,7 @@ jobs:
         shell: pwsh
         run: dotnet test tests/gui/phase1/ScreenConnectCleanup.Gui.Phase1.Tests.csproj -c Release --logger 'console;verbosity=normal'
 
-      - name: Run exactly 20 Phase 2 findings-reader tests on Windows
+      - name: Run exactly 23 Phase 2 findings-reader tests on Windows
         shell: pwsh
         run: |
           $resultsDirectory = Join-Path $env:RUNNER_TEMP 'gui-phase2-test-results'
@@ -92,8 +92,8 @@ jobs:
           if (-not (Test-Path -LiteralPath $trxPath)) { throw "Missing Phase 2 test proof: $trxPath" }
           [xml]$trx = Get-Content -LiteralPath $trxPath -Raw
           $counters = $trx.TestRun.ResultSummary.Counters
-          if ([int]$counters.total -ne 20 -or [int]$counters.executed -ne 20 -or
-              [int]$counters.passed -ne 20 -or [int]$counters.failed -ne 0) {
-            throw "Expected 20/20 Phase 2 reader cases; TRX counters were total=$($counters.total), executed=$($counters.executed), passed=$($counters.passed), failed=$($counters.failed)."
+          if ([int]$counters.total -ne 23 -or [int]$counters.executed -ne 23 -or
+              [int]$counters.passed -ne 23 -or [int]$counters.failed -ne 0) {
+            throw "Expected 23/23 Phase 2 reader cases; TRX counters were total=$($counters.total), executed=$($counters.executed), passed=$($counters.passed), failed=$($counters.failed)."
           }
-          Write-Host 'PASS: all 20 Phase 2 findings-reader test cases executed and passed on Windows.'
+          Write-Host 'PASS: all 23 Phase 2 findings-reader test cases executed and passed on Windows.'

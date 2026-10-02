@@ -4,7 +4,46 @@
              UseLayoutRounding="True" SnapsToDevicePixels="True"
              Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="24">
+        <Grid Margin="24">
+            <StackPanel>
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding DataContext.Investigation.IsAdvancedMode, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
+                                         Value="False">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
+                <TextBlock Text="Detect Only" Style="{DynamicResource ViewTitleStyle}" />
+                <Button Content="_Scan" Command="{Binding StartDetectOnlyCommand}"
+                        AutomationProperties.Name="Start simple Detect Only scan"
+                        HorizontalAlignment="Left" Padding="18,9" Margin="0,0,0,16" />
+                <TextBlock Text="{Binding SimpleScanStatus}" FontSize="18" FontWeight="SemiBold"
+                           AutomationProperties.Name="Simple scan status" />
+                <TextBlock Text="{Binding SimpleDetectionSummary}" TextWrapping="Wrap" Margin="0,8,0,0" />
+                <TextBlock Text="{Binding SimpleIncompleteCaution}" TextWrapping="Wrap" Margin="0,8,0,0" />
+                <TextBlock Text="Detected items" Style="{DynamicResource SectionHeaderStyle}" Margin="0,16,0,4" />
+                <TextBlock Text="{Binding SimpleDetectedCount}" AutomationProperties.Name="Simple detected item count" />
+                <ListBox ItemsSource="{Binding SimpleDetectedItems}" Margin="0,6,0,0"
+                         AutomationProperties.Name="Simple detected items" />
+                <TextBlock Text="{Binding SimpleDetectedItemsNote}" TextWrapping="Wrap" Margin="0,6,0,0" />
+            </StackPanel>
+
+            <StackPanel>
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding DataContext.Investigation.IsAdvancedMode, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
+                                         Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
             <TextBlock Text="{Binding Title}" Style="{DynamicResource ViewTitleStyle}" />
             <Border Padding="14,10" Margin="0,0,0,12"
                     BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
@@ -176,6 +215,7 @@
                      TextWrapping="Wrap" MinHeight="72" Padding="10"
                      AutomationProperties.Name="Synthetic log preview" />
             </StackPanel>
-        </StackPanel>
+            </StackPanel>
+        </Grid>
     </ScrollViewer>
 </UserControl>

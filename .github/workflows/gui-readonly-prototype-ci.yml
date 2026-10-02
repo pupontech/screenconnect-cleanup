@@ -110,11 +110,11 @@ jobs:
           if (-not (Test-Path -LiteralPath $trxPath)) { throw "Missing Phase 2 test proof: $trxPath" }
           [xml]$trx = Get-Content -LiteralPath $trxPath -Raw
           $counters = $trx.TestRun.ResultSummary.Counters
-          if ([int]$counters.total -ne 20 -or [int]$counters.executed -ne 20 -or
-              [int]$counters.passed -ne 20 -or [int]$counters.failed -ne 0) {
-            throw "Expected 20/20 Phase 2 tests; got total=$($counters.total), executed=$($counters.executed), passed=$($counters.passed), failed=$($counters.failed)."
+          if ([int]$counters.total -ne 23 -or [int]$counters.executed -ne 23 -or
+              [int]$counters.passed -ne 23 -or [int]$counters.failed -ne 0) {
+            throw "Expected 23/23 Phase 2 tests; got total=$($counters.total), executed=$($counters.executed), passed=$($counters.passed), failed=$($counters.failed)."
           }
-          Write-Host 'PASS: all 20 Phase 2 findings-reader tests passed.'
+          Write-Host 'PASS: all 23 Phase 2 findings-reader tests passed.'
 
       - name: Run Phase 3 state-reader tests
         shell: pwsh

@@ -81,6 +81,7 @@ public sealed record InvestigationRunSnapshot(
 
 public partial class InvestigationViewModel : ViewModelBase
 {
+    private const int MaximumSimpleVisibleItems = 200;
     private readonly IReadOnlyRunLauncher? _launcher;
     private readonly string _trustedRunsRoot;
     private readonly SynchronizationContext? _uiContext;
@@ -88,6 +89,27 @@ public partial class InvestigationViewModel : ViewModelBase
     private int _runGate;
     private long _runGeneration;
     private string? _activeRunId;
+
+    [ObservableProperty]
+    private bool _isAdvancedMode;
+
+    [ObservableProperty]
+    private string _simpleScanStatus = "Scan ready";
+
+    [ObservableProperty]
+    private int _simpleDetectedCount;
+
+    [ObservableProperty]
+    private IReadOnlyList<string> _simpleDetectedItems = Array.Empty<string>();
+
+    [ObservableProperty]
+    private string _simpleDetectionSummary = string.Empty;
+
+    [ObservableProperty]
+    private string _simpleIncompleteCaution = string.Empty;
+
+    [ObservableProperty]
+    private string _simpleDetectedItemsNote = string.Empty;
 
     [ObservableProperty]
     private RunState _runState = SyntheticFixtures.CreateTypicalRunState();
@@ -156,6 +178,12 @@ public partial class InvestigationViewModel : ViewModelBase
         CanStartDetectOnly = launcher is not null && !string.IsNullOrWhiteSpace(_trustedRunsRoot);
     }
 
+    [RelayCommand]
+    private void UseSimpleMode() => IsAdvancedMode = false;
+
+    [RelayCommand]
+    private void UseAdvancedMode() => IsAdvancedMode = true;
+
     [RelayCommand(CanExecute = nameof(CanExecuteDetectOnly))]
     private Task StartDetectOnly(CancellationToken cancellationToken) =>
         RunDetectOnlyInspectionAsync(cancellationToken);
@@ -190,6 +218,12 @@ public partial class InvestigationViewModel : ViewModelBase
         IsRunInProgress = true;
         IsProcessActive = true;
         HasRealRun = true;
+        SimpleScanStatus = "Scanning";
+        SimpleDetectedCount = 0;
+        SimpleDetectedItems = Array.Empty<string>();
+        SimpleDetectionSummary = string.Empty;
+        SimpleIncompleteCaution = string.Empty;
+        SimpleDetectedItemsNote = string.Empty;
         OperationStatus = "Starting Detect Only inspection…";
         ElapsedTime = "Waiting for validated run state…";
         FindingsStatus = "Incomplete — the run has not produced a validated findings artifact.";
@@ -224,6 +258,7 @@ public partial class InvestigationViewModel : ViewModelBase
             FindingsStatus = "Incomplete — cancellation did not produce a validated findings artifact.";
             SetIncompleteAfterUnvalidatedExit(
                 "The Detect Only inspection was cancelled before its result could be validated.");
+            SetSimpleIncompleteResult();
             RunLoaded?.Invoke(new InvestigationRunSnapshot(null, null, null, FindingsStatus));
         }
         catch (Exception exception)
@@ -235,6 +270,7 @@ public partial class InvestigationViewModel : ViewModelBase
             OperationStatus = "Incomplete — no run state was validated.";
             FindingsStatus = "Incomplete — no findings artifact was validated.";
             SetIncompleteAfterUnvalidatedExit(message.Length <= 2048 ? message : message[..2048]);
+            SetSimpleIncompleteResult();
             RunLoaded?.Invoke(new InvestigationRunSnapshot(null, null, null, FindingsStatus));
         }
         finally
@@ -465,6 +501,7 @@ public partial class InvestigationViewModel : ViewModelBase
             : $"Ended at {terminalUtc:yyyy-MM-dd HH:mm:ss 'UTC'}";
         RunRoot = currentRun.LaunchResult.RunRoot;
         FindingsStatus = currentRun.FindingsStatus;
+        UpdateSimpleResult(currentRun);
 
         Warnings = warningMessages.Distinct(StringComparer.Ordinal).ToList();
 
@@ -500,6 +537,92 @@ public partial class InvestigationViewModel : ViewModelBase
 
         RunLoaded?.Invoke(new InvestigationRunSnapshot(
             stateRead, currentRun.Findings, currentRun.LaunchResult, currentRun.FindingsStatus));
+    }
+
+    private void UpdateSimpleResult(CurrentRunRead currentRun)
+    {
+        SimpleScanStatus = "Finished";
+        var findings = currentRun.Findings;
+        var displayedItems = new List<string>();
+        var instanceCount = findings?.Instances.Count ?? 0;
+        var otherTargetHitCount = findings?.OtherTargets.Sum(target => target.Hits.Count) ?? 0;
+        SimpleDetectedCount = instanceCount + otherTargetHitCount;
+
+        if (findings is not null)
+        {
+            foreach (var finding in findings.Instances.Take(MaximumSimpleVisibleItems))
+            {
+                var identifier = finding.DisplayValue("Identifier");
+                var relayHost = finding.DisplayValue("RelayHost");
+                var value = !string.Equals(identifier, FindingsReader.NotAvailable, StringComparison.Ordinal)
+                    ? identifier
+                    : !string.Equals(relayHost, FindingsReader.NotAvailable, StringComparison.Ordinal)
+                        ? relayHost
+                        : "instance";
+                displayedItems.Add($"ScreenConnect: {value}");
+            }
+
+            foreach (var target in findings.OtherTargets.Where(target => target.Hits.Count > 0))
+            {
+                foreach (var hit in target.Hits)
+                {
+                    if (displayedItems.Count >= MaximumSimpleVisibleItems)
+                    {
+                        break;
+                    }
+
+                    var hitLabel = SimpleHitLabel(hit);
+                    displayedItems.Add(string.Equals(hitLabel, "detection", StringComparison.Ordinal)
+                        ? $"{target.ProductName}: detection"
+                        : $"{target.ProductName}: {hitLabel}");
+                }
+
+                if (displayedItems.Count >= MaximumSimpleVisibleItems)
+                {
+                    break;
+                }
+            }
+        }
+
+        SimpleDetectedItems = displayedItems;
+        SimpleDetectedItemsNote = SimpleDetectedCount > displayedItems.Count
+            ? $"Showing {displayedItems.Count} of {SimpleDetectedCount} detected items."
+            : string.Empty;
+        SimpleDetectionSummary = currentRun.IsSuccessfulCompletion && findings is { IsClean: true }
+            ? "No detections found."
+            : string.Empty;
+        SimpleIncompleteCaution = currentRun.IsSuccessfulCompletion && findings is { IsComplete: true }
+            ? string.Empty
+            : "Results are incomplete; detections may be missing.";
+    }
+
+    private static string SimpleHitLabel(JsonElement hit)
+    {
+        if (hit.ValueKind != JsonValueKind.Object)
+        {
+            return "detection";
+        }
+
+        foreach (var propertyName in new[] { "Name", "Path", "File", "ProcessName", "ServiceName", "Kind" })
+        {
+            if (hit.TryGetProperty(propertyName, out var value))
+            {
+                var display = ScreenConnectFinding.DisplayScalar(value);
+                if (!string.Equals(display, FindingsReader.NotAvailable, StringComparison.Ordinal))
+                {
+                    return display;
+                }
+            }
+        }
+
+        return "detection";
+    }
+
+    private void SetSimpleIncompleteResult()
+    {
+        SimpleScanStatus = "Finished";
+        SimpleDetectionSummary = string.Empty;
+        SimpleIncompleteCaution = "Results are incomplete; detections may be missing.";
     }
 
     private static bool IsTerminationUnconfirmed(string? error) =>
@@ -611,6 +734,27 @@ public partial class InvestigationViewModel : ViewModelBase
 public partial class InvestigationViewModel : ViewModelBase
 {
     [ObservableProperty]
+    private bool _isAdvancedMode;
+
+    [ObservableProperty]
+    private string _simpleScanStatus = "Scan ready";
+
+    [ObservableProperty]
+    private int _simpleDetectedCount;
+
+    [ObservableProperty]
+    private IReadOnlyList<string> _simpleDetectedItems = Array.Empty<string>();
+
+    [ObservableProperty]
+    private string _simpleDetectionSummary = string.Empty;
+
+    [ObservableProperty]
+    private string _simpleIncompleteCaution = string.Empty;
+
+    [ObservableProperty]
+    private string _simpleDetectedItemsNote = string.Empty;
+
+    [ObservableProperty]
     private RunState _runState = SyntheticFixtures.CreateTypicalRunState();
 
     [ObservableProperty]
@@ -645,6 +789,12 @@ public partial class InvestigationViewModel : ViewModelBase
         Stages = RunState.Stages;
         CurrentStage = Stages.FirstOrDefault(stage => stage.Status == StatusValues.Running);
     }
+
+    [RelayCommand]
+    private void UseSimpleMode() => IsAdvancedMode = false;
+
+    [RelayCommand]
+    private void UseAdvancedMode() => IsAdvancedMode = true;
 
     [RelayCommand(CanExecute = nameof(CanExecuteDetectOnly))]
     private void StartDetectOnly()

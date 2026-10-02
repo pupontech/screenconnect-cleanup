@@ -44,9 +44,19 @@ public sealed class StaticShellContractTests
 
         var source = File.ReadAllText(path);
         Assert.Contains("AutomationProperties.Name", source, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.Name=\"Use Simple mode\"", source, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.Name=\"Use Advanced mode\"", source, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.Name=\"Current application view\"", source, StringComparison.Ordinal);
         Assert.Contains("SystemColors.WindowBrushKey", source, StringComparison.Ordinal);
         Assert.Contains("UseLayoutRounding=\"True\"", source, StringComparison.Ordinal);
         Assert.Contains("SnapsToDevicePixels=\"True\"", source, StringComparison.Ordinal);
+
+        var investigationPath = Path.Combine(AppContext.BaseDirectory, "Ui", "Views", "InvestigationView.xaml");
+        var investigationSource = File.ReadAllText(investigationPath);
+        Assert.Contains("AutomationProperties.Name=\"Start simple Detect Only scan\"", investigationSource, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.Name=\"Simple scan status\"", investigationSource, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.Name=\"Simple detected items\"", investigationSource, StringComparison.Ordinal);
+        Assert.Contains("AutomationProperties.Name=\"Start Detect Only inspection\"", investigationSource, StringComparison.Ordinal);
     }
 
     [Fact]

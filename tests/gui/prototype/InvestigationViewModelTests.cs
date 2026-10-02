@@ -10,6 +10,235 @@ namespace ScreenConnectCleanup.Gui.Prototype.Tests;
 public sealed class InvestigationViewModelTests
 {
     [Fact]
+    public void SimpleModeStartsReadyWithoutSyntheticResults()
+    {
+        var viewModel = new InvestigationViewModel();
+
+        Assert.False(viewModel.IsAdvancedMode);
+        Assert.Equal("Scan ready", viewModel.SimpleScanStatus);
+        Assert.Equal(0, viewModel.SimpleDetectedCount);
+        Assert.Empty(viewModel.SimpleDetectedItems);
+        Assert.Empty(viewModel.SimpleDetectionSummary);
+        Assert.Empty(viewModel.SimpleIncompleteCaution);
+    }
+
+    [Fact]
+    public async Task ModeSwitchingPreservesActiveRunAndValidatedFindings()
+    {
+        const string runId = "HOST-SIMPLE-MODE-001";
+        const string detectorRunId = "HOST-DETECTOR-SIMPLE-001";
+        const string computerName = "HOST";
+        var trustedRoot = Path.Combine(Path.GetTempPath(), $"gui vm simple mode {Guid.NewGuid():N}");
+        var runRoot = Path.Combine(trustedRoot, runId);
+        Directory.CreateDirectory(runRoot);
+        var activeState = WriteAndReadActiveState(trustedRoot, runRoot, runId, computerName);
+        WriteCompletedStateAndFindings(trustedRoot, runRoot, runId, detectorRunId, computerName,
+            "[{ \"Identifier\": \"instance-1\" }]",
+            "[{ \"Name\": \"RemoteTool\", \"Hits\": [{ \"Kind\": \"process\" }] }]");
+        var launcher = DispatchProxy.Create<IReadOnlyRunLauncher, ProgressLauncherProxy>();
+        var proxy = (ProgressLauncherProxy)(object)launcher;
+        proxy.RunId = runId;
+        proxy.ComputerName = computerName;
+        proxy.RunRoot = runRoot;
+        proxy.StateRead = activeState;
+        var viewModel = new InvestigationViewModel(launcher, trustedRoot);
+
+        try
+        {
+            var execution = viewModel.StartDetectOnlyCommand.ExecuteAsync(null);
+            Assert.Equal("Scanning", viewModel.SimpleScanStatus);
+            Assert.Empty(viewModel.SimpleIncompleteCaution);
+            Assert.True(viewModel.IsRunInProgress);
+
+            viewModel.UseAdvancedModeCommand.Execute(null);
+            Assert.True(viewModel.IsAdvancedMode);
+            Assert.Equal(runId, viewModel.RunState.RunId);
+            Assert.Equal("Scanning", viewModel.SimpleScanStatus);
+            Assert.True(viewModel.IsRunInProgress);
+
+            viewModel.UseSimpleModeCommand.Execute(null);
+            Assert.False(viewModel.IsAdvancedMode);
+            Assert.Equal(runId, viewModel.RunState.RunId);
+
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, 0, null));
+            await execution;
+
+            Assert.Equal("Finished", viewModel.SimpleScanStatus);
+            Assert.Equal(2, viewModel.SimpleDetectedCount);
+            Assert.Equal(new[] { "ScreenConnect: instance-1", "RemoteTool: process" }, viewModel.SimpleDetectedItems);
+            Assert.Empty(viewModel.SimpleIncompleteCaution);
+
+            viewModel.UseAdvancedModeCommand.Execute(null);
+            viewModel.UseSimpleModeCommand.Execute(null);
+            Assert.False(viewModel.IsAdvancedMode);
+            Assert.Equal("Finished", viewModel.SimpleScanStatus);
+            Assert.Equal(2, viewModel.SimpleDetectedCount);
+            Assert.Equal(new[] { "ScreenConnect: instance-1", "RemoteTool: process" }, viewModel.SimpleDetectedItems);
+        }
+        finally
+        {
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, -1, "synthetic test cleanup"));
+            if (Directory.Exists(trustedRoot)) Directory.Delete(trustedRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task CompleteEmptyFindingsMayReportNoDetections()
+    {
+        const string runId = "HOST-SIMPLE-CLEAN-001";
+        const string detectorRunId = "HOST-DETECTOR-CLEAN-001";
+        const string computerName = "HOST";
+        var trustedRoot = Path.Combine(Path.GetTempPath(), $"gui vm simple clean {Guid.NewGuid():N}");
+        var runRoot = Path.Combine(trustedRoot, runId);
+        Directory.CreateDirectory(runRoot);
+        var launcher = DispatchProxy.Create<IReadOnlyRunLauncher, ProgressLauncherProxy>();
+        var proxy = (ProgressLauncherProxy)(object)launcher;
+        proxy.RunId = runId;
+        proxy.ComputerName = computerName;
+        proxy.RunRoot = runRoot;
+        proxy.StateRead = WriteAndReadActiveState(trustedRoot, runRoot, runId, computerName);
+        WriteCompletedStateAndFindings(trustedRoot, runRoot, runId, detectorRunId, computerName);
+        var viewModel = new InvestigationViewModel(launcher, trustedRoot);
+
+        try
+        {
+            var execution = viewModel.StartDetectOnlyCommand.ExecuteAsync(null);
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, 0, null));
+            await execution;
+
+            Assert.Equal("Finished", viewModel.SimpleScanStatus);
+            Assert.Equal(0, viewModel.SimpleDetectedCount);
+            Assert.Empty(viewModel.SimpleDetectedItems);
+            Assert.Equal("No detections found.", viewModel.SimpleDetectionSummary);
+            Assert.Empty(viewModel.SimpleIncompleteCaution);
+        }
+        finally
+        {
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, -1, "synthetic test cleanup"));
+            if (Directory.Exists(trustedRoot)) Directory.Delete(trustedRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task IncompleteEmptyFindingsNeverReportNoDetections()
+    {
+        const string runId = "HOST-SIMPLE-INCOMPLETE-001";
+        const string detectorRunId = "HOST-DETECTOR-INCOMPLETE-001";
+        const string computerName = "HOST";
+        var trustedRoot = Path.Combine(Path.GetTempPath(), $"gui vm simple incomplete {Guid.NewGuid():N}");
+        var runRoot = Path.Combine(trustedRoot, runId);
+        Directory.CreateDirectory(runRoot);
+        var launcher = DispatchProxy.Create<IReadOnlyRunLauncher, ProgressLauncherProxy>();
+        var proxy = (ProgressLauncherProxy)(object)launcher;
+        proxy.RunId = runId;
+        proxy.ComputerName = computerName;
+        proxy.RunRoot = runRoot;
+        proxy.StateRead = WriteAndReadActiveState(trustedRoot, runRoot, runId, computerName);
+        WriteCompletedStateAndFindings(trustedRoot, runRoot, runId, detectorRunId, computerName,
+            collectionComplete: false,
+            collectionErrors: "[{ \"Source\": \"Services\", \"Error\": \"unavailable\" }]");
+        var viewModel = new InvestigationViewModel(launcher, trustedRoot);
+
+        try
+        {
+            var execution = viewModel.StartDetectOnlyCommand.ExecuteAsync(null);
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, 0, null));
+            await execution;
+
+            Assert.Equal("Finished", viewModel.SimpleScanStatus);
+            Assert.Equal(0, viewModel.SimpleDetectedCount);
+            Assert.Empty(viewModel.SimpleDetectedItems);
+            Assert.Empty(viewModel.SimpleDetectionSummary);
+            Assert.Equal("Results are incomplete; detections may be missing.", viewModel.SimpleIncompleteCaution);
+        }
+        finally
+        {
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, -1, "synthetic test cleanup"));
+            if (Directory.Exists(trustedRoot)) Directory.Delete(trustedRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task PartialValidatedFindingsRemainVisibleWithIncompleteCaution()
+    {
+        const string runId = "HOST-SIMPLE-PARTIAL-001";
+        const string detectorRunId = "HOST-DETECTOR-PARTIAL-001";
+        const string computerName = "HOST";
+        var trustedRoot = Path.Combine(Path.GetTempPath(), $"gui vm simple partial {Guid.NewGuid():N}");
+        var runRoot = Path.Combine(trustedRoot, runId);
+        Directory.CreateDirectory(runRoot);
+        var launcher = DispatchProxy.Create<IReadOnlyRunLauncher, ProgressLauncherProxy>();
+        var proxy = (ProgressLauncherProxy)(object)launcher;
+        proxy.RunId = runId;
+        proxy.ComputerName = computerName;
+        proxy.RunRoot = runRoot;
+        proxy.StateRead = WriteAndReadActiveState(trustedRoot, runRoot, runId, computerName);
+        WriteCompletedStateAndFindings(trustedRoot, runRoot, runId, detectorRunId, computerName,
+            instances: "[{ \"Identifier\": \"partial-positive\" }]",
+            collectionComplete: false,
+            collectionErrors: "[{ \"Source\": \"Services\", \"Error\": \"unavailable\" }]");
+        var viewModel = new InvestigationViewModel(launcher, trustedRoot);
+
+        try
+        {
+            var execution = viewModel.StartDetectOnlyCommand.ExecuteAsync(null);
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, 0, null));
+            await execution;
+
+            Assert.Equal("Finished", viewModel.SimpleScanStatus);
+            Assert.Equal(1, viewModel.SimpleDetectedCount);
+            Assert.Equal("ScreenConnect: partial-positive", Assert.Single(viewModel.SimpleDetectedItems));
+            Assert.Empty(viewModel.SimpleDetectionSummary);
+            Assert.Equal("Results are incomplete; detections may be missing.", viewModel.SimpleIncompleteCaution);
+        }
+        finally
+        {
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, -1, "synthetic test cleanup"));
+            if (Directory.Exists(trustedRoot)) Directory.Delete(trustedRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task StaleProgressAfterCompletionCannotReplaceSimpleResult()
+    {
+        const string runId = "HOST-SIMPLE-STALE-001";
+        const string detectorRunId = "HOST-DETECTOR-STALE-001";
+        const string computerName = "HOST";
+        var trustedRoot = Path.Combine(Path.GetTempPath(), $"gui vm simple stale {Guid.NewGuid():N}");
+        var runRoot = Path.Combine(trustedRoot, runId);
+        Directory.CreateDirectory(runRoot);
+        var activeState = WriteAndReadActiveState(trustedRoot, runRoot, runId, computerName);
+        var launcher = DispatchProxy.Create<IReadOnlyRunLauncher, ProgressLauncherProxy>();
+        var proxy = (ProgressLauncherProxy)(object)launcher;
+        proxy.RunId = runId;
+        proxy.ComputerName = computerName;
+        proxy.RunRoot = runRoot;
+        proxy.StateRead = activeState;
+        WriteCompletedStateAndFindings(trustedRoot, runRoot, runId, detectorRunId, computerName);
+        var viewModel = new InvestigationViewModel(launcher, trustedRoot);
+
+        try
+        {
+            var execution = viewModel.StartDetectOnlyCommand.ExecuteAsync(null);
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, 0, null));
+            await execution;
+            Assert.Equal(StatusValues.Completed, viewModel.RunState.OverallStatus);
+            Assert.Equal("No detections found.", viewModel.SimpleDetectionSummary);
+
+            proxy.PublishProgress(new ReadOnlyRunProgress(runId, computerName, runRoot, activeState, true));
+
+            Assert.Equal(StatusValues.Completed, viewModel.RunState.OverallStatus);
+            Assert.Equal("Finished", viewModel.SimpleScanStatus);
+            Assert.Equal("No detections found.", viewModel.SimpleDetectionSummary);
+        }
+        finally
+        {
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, -1, "synthetic test cleanup"));
+            if (Directory.Exists(trustedRoot)) Directory.Delete(trustedRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task FullInvestigationCommandIsDisabledAndExecutionNeverCallsLauncher()
     {
         var launcher = DispatchProxy.Create<IReadOnlyRunLauncher, ProgressLauncherProxy>();
@@ -553,6 +782,64 @@ public sealed class InvestigationViewModelTests
         return result;
     }
 
+    private static void WriteCompletedStateAndFindings(
+        string trustedRoot,
+        string runRoot,
+        string runId,
+        string detectorRunId,
+        string computerName,
+        string instances = "[]",
+        string otherTargets = "[]",
+        bool collectionComplete = true,
+        string collectionErrors = "[]")
+    {
+        var stageNames = new[]
+        {
+            "Preflight", "Snapshot (Before)", "Detect", "Review Gate", "Contain + Remove",
+            "Scanners", "Uninstall installed AV", "Procmon", "Snapshot (After)+Diff", "Report"
+        };
+        var updated = DateTimeOffset.UtcNow;
+        var stages = stageNames.Select((name, id) => new
+        {
+            id,
+            name,
+            status = StatusValues.Completed,
+            operation = string.Empty,
+            startedUtc = updated,
+            endedUtc = updated
+        }).ToArray();
+        var findingsRelativePath = $"detect/{detectorRunId}/findings.json";
+        var state = new
+        {
+            schemaVersion = 1,
+            runId,
+            computerName,
+            overallStatus = StatusValues.Completed,
+            currentStage = 9,
+            stages,
+            warnings = Array.Empty<string>(),
+            errors = Array.Empty<string>(),
+            artifacts = new Dictionary<string, string> { ["findings"] = findingsRelativePath },
+            updatedUtc = updated
+        };
+        File.WriteAllText(Path.Combine(runRoot, "gui-state.json"), JsonSerializer.Serialize(state));
+
+        var findingsDirectory = Path.Combine(runRoot, "detect", detectorRunId);
+        Directory.CreateDirectory(findingsDirectory);
+        var findings = $$"""
+            {
+              "RunId": "{{detectorRunId}}",
+              "ComputerName": "{{computerName}}",
+              "ScreenConnect": { "Instances": {{instances}}, "ParseIssues": [] },
+              "OtherTargets": {{otherTargets}},
+              "CollectionComplete": {{collectionComplete.ToString().ToLowerInvariant()}},
+              "CollectionErrors": {{collectionErrors}},
+              "EventLogError": null
+            }
+            """;
+        File.WriteAllText(Path.Combine(findingsDirectory, "findings.json"), findings);
+    }
+
     public class ProgressLauncherProxy : DispatchProxy
     {
         private readonly TaskCompletionSource<ReadOnlyRunResult> _completion =
@@ -563,6 +850,7 @@ public sealed class InvestigationViewModelTests
         public string RunRoot { get; set; } = string.Empty;
         public RunStateReadResult? StateRead { get; set; }
         public int InvocationCount { get; private set; }
+        private Action<ReadOnlyRunProgress>? _progress;
 
         public void Complete(ReadOnlyRunResult result) => _completion.TrySetResult(result);
 
@@ -570,17 +858,17 @@ public sealed class InvestigationViewModelTests
 
         public void Cancel() => _completion.TrySetCanceled();
 
+        public void PublishProgress(ReadOnlyRunProgress progress) => _progress?.Invoke(progress);
+
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
             InvocationCount++;
             Assert.NotNull(targetMethod);
             Assert.Equal(nameof(IReadOnlyRunLauncher.RunAsync), targetMethod.Name);
-            var progress = args?.OfType<Delegate>().FirstOrDefault();
-            if (progress is not null)
+            _progress = args?.OfType<Action<ReadOnlyRunProgress>>().FirstOrDefault();
+            if (_progress is not null)
             {
-                var progressType = progress.GetType().GetGenericArguments().Single();
-                var value = Activator.CreateInstance(progressType, RunId, ComputerName, RunRoot, StateRead, true);
-                progress.DynamicInvoke(value);
+                _progress(new ReadOnlyRunProgress(RunId, ComputerName, RunRoot, StateRead, true));
             }
 
             return _completion.Task;

@@ -71,31 +71,64 @@ public partial class MainWindowViewModel : ObservableObject
         Results = new ResultsViewModel();
 
         _navigation.NavigationRequested += OnNavigationRequested;
+        Investigation.PropertyChanged += OnInvestigationPropertyChanged;
+        if (!Investigation.IsAdvancedMode &&
+            !string.Equals(_navigation.CurrentView, "Investigation", StringComparison.Ordinal))
+        {
+            _navigation.NavigateTo("Investigation");
+        }
         CurrentViewModel = ViewModelFor(_navigation.CurrentView ?? "Home");
         CanNavigateBack = _navigation.CanNavigateBack;
     }
 
     [RelayCommand]
-    private void NavigateHome() => _navigation.NavigateTo("Home");
+    private void NavigateHome()
+    {
+        if (Investigation.IsAdvancedMode) _navigation.NavigateTo("Home");
+    }
 
     [RelayCommand]
-    private void NavigateInvestigation() => _navigation.NavigateTo("Investigation");
+    private void NavigateInvestigation()
+    {
+        if (Investigation.IsAdvancedMode) _navigation.NavigateTo("Investigation");
+    }
 
     [RelayCommand]
-    private void NavigateReview() => _navigation.NavigateTo("Review");
+    private void NavigateReview()
+    {
+        if (Investigation.IsAdvancedMode) _navigation.NavigateTo("Review");
+    }
 
     [RelayCommand]
-    private void NavigateResults() => _navigation.NavigateTo("Results");
+    private void NavigateResults()
+    {
+        if (Investigation.IsAdvancedMode) _navigation.NavigateTo("Results");
+    }
 
     [RelayCommand(CanExecute = nameof(CanExecuteNavigateBack))]
     private void NavigateBack() => _navigation.NavigateBack();
 
-    private bool CanExecuteNavigateBack() => CanNavigateBack;
+    private bool CanExecuteNavigateBack() => CanNavigateBack && Investigation.IsAdvancedMode;
 
     private void OnNavigationRequested(object? sender, NavigationDestination destination)
     {
         CurrentViewModel = ViewModelFor(destination.ViewName);
         CanNavigateBack = _navigation.CanNavigateBack;
+    }
+
+    private void OnInvestigationPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName == nameof(InvestigationViewModel.IsAdvancedMode))
+        {
+            NavigateBackCommand.NotifyCanExecuteChanged();
+        }
+
+        if (args.PropertyName == nameof(InvestigationViewModel.IsAdvancedMode) &&
+            !Investigation.IsAdvancedMode &&
+            !string.Equals(_navigation.CurrentView, "Investigation", StringComparison.Ordinal))
+        {
+            _navigation.NavigateTo("Investigation");
+        }
     }
 
     private ViewModelBase ViewModelFor(string viewName) => viewName switch

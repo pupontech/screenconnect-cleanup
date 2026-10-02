@@ -1,3 +1,4 @@
+using System.Text;
 using ScreenConnectCleanup.Gui.Services;
 using Xunit;
 
@@ -22,6 +23,75 @@ public sealed class FindingsReaderTests
         Assert.False(result.HasFindings);
         Assert.Empty(result.Instances);
         Assert.Empty(result.OtherTargets);
+    }
+
+    [Fact]
+    public void SingleLeadingUtf8BomIsAcceptedAndUnicodeIsPreserved()
+    {
+        using var fixture = new ReaderFixture();
+        fixture.WriteRawUtf8WithBom(fixture.CreateDocument(instances: "[{ \"Identifier\": \"caf\u00e9-\u6771\u4eac\" }]"));
+
+        var result = fixture.Read();
+
+        Assert.True(result.IsComplete);
+        Assert.True(result.HasFindings);
+        Assert.Equal("caf\u00e9-\u6771\u4eac", Assert.Single(result.Instances).DisplayValue("Identifier"));
+    }
+
+    [Fact]
+    public void MalformedUtf8JsonAndBomShapesFailClosed()
+    {
+        using var fixture = new ReaderFixture();
+        var validDocument = fixture.CreateDocument();
+        var invalidUtf8 = new byte[] { (byte)'{', (byte)'"', (byte)'x', (byte)'"', (byte)':', (byte)'"', 0xC3, 0x28, (byte)'"', (byte)'}' };
+        var embeddedBomDocument = Encoding.UTF8.GetBytes(validDocument.Replace(
+            "\"RunId\":", "\uFEFF\"RunId\":", StringComparison.Ordinal));
+        var documentBytes = Encoding.UTF8.GetBytes(validDocument);
+        var doubleBomDocument = new byte[documentBytes.Length + 6];
+        doubleBomDocument[0] = 0xEF;
+        doubleBomDocument[1] = 0xBB;
+        doubleBomDocument[2] = 0xBF;
+        doubleBomDocument[3] = 0xEF;
+        doubleBomDocument[4] = 0xBB;
+        doubleBomDocument[5] = 0xBF;
+        Buffer.BlockCopy(documentBytes, 0, doubleBomDocument, 6, documentBytes.Length);
+        var malformedDocuments = new[]
+        {
+            new byte[] { 0xEF, 0xBB, 0xBF },
+            Encoding.UTF8.GetBytes("{\"RunId\":"),
+            invalidUtf8,
+            embeddedBomDocument,
+            doubleBomDocument
+        };
+
+        for (var index = 0; index < malformedDocuments.Length; index++)
+        {
+            fixture.WriteRawBytes(malformedDocuments[index]);
+            var result = fixture.Read();
+
+            Assert.False(result.IsComplete);
+            Assert.False(result.IsClean);
+            Assert.Empty(result.Instances);
+            Assert.True(result.Issues.Any(issue => issue.Contains("malformed JSON", StringComparison.Ordinal)),
+                $"Malformed JSON case {index} was accepted or misclassified: {string.Join("; ", result.Issues)}");
+        }
+    }
+
+    [Fact]
+    public void DuplicateJsonPropertiesRemainIncomplete()
+    {
+        using var fixture = new ReaderFixture();
+        var duplicatedRunId = fixture.CreateDocument().Replace(
+            "\"RunId\": \"HOST_2026-09-23_120000\"",
+            "\"RunId\": \"HOST_2026-09-23_120000\", \"RunId\": \"HOST_2026-09-23_120000\"",
+            StringComparison.Ordinal);
+        fixture.WriteRaw(duplicatedRunId);
+
+        var result = fixture.Read();
+
+        Assert.False(result.IsComplete);
+        Assert.False(result.IsClean);
+        Assert.Contains(result.Issues, issue => issue.Contains("duplicate JSON properties", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -461,6 +531,19 @@ public sealed class FindingsReaderTests
         }
 
         public void WriteRaw(string json) => File.WriteAllText(ArtifactPath, json);
+
+        public void WriteRawUtf8WithBom(string json)
+        {
+            var payload = Encoding.UTF8.GetBytes(json);
+            var bytes = new byte[payload.Length + 3];
+            bytes[0] = 0xEF;
+            bytes[1] = 0xBB;
+            bytes[2] = 0xBF;
+            Buffer.BlockCopy(payload, 0, bytes, 3, payload.Length);
+            WriteRawBytes(bytes);
+        }
+
+        public void WriteRawBytes(byte[] bytes) => File.WriteAllBytes(ArtifactPath, bytes);
 
         public void WriteAdditionalArtifact(string nestedRunId)
         {
