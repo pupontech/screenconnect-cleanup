@@ -859,20 +859,91 @@ Start-Sleep -Seconds 60
         }
     }
 
+    [Fact]
+    public async Task LinuxProcEntryVanishingDuringReadCountsAsStopped()
+    {
+        var waiter = typeof(ReadOnlyRunLauncherTests).GetMethod(
+            "WaitForLinuxProcessStopAsync",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static,
+            binder: null,
+            types: new[]
+            {
+                typeof(int), typeof(TimeSpan), typeof(Func<string, bool>), typeof(Func<string, Task<string>>)
+            },
+            modifiers: null);
+        Assert.NotNull(waiter);
+        Func<string, bool> fileExists = _ => true;
+        Func<string, Task<string>> readAllTextAsync = _ =>
+            Task.FromException<string>(new FileNotFoundException("synthetic vanished proc entry"));
+
+        var waitTask = Assert.IsType<Task<bool>>(waiter.Invoke(null,
+            new object[] { 42, TimeSpan.FromSeconds(1), fileExists, readAllTextAsync }));
+
+        Assert.True(await waitTask);
+    }
+
+    [Fact]
+    public async Task LinuxProcEntryReadPropagatesUnrelatedIoErrors()
+    {
+        var waiter = typeof(ReadOnlyRunLauncherTests).GetMethod(
+            "WaitForLinuxProcessStopAsync",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static,
+            binder: null,
+            types: new[]
+            {
+                typeof(int), typeof(TimeSpan), typeof(Func<string, bool>), typeof(Func<string, Task<string>>)
+            },
+            modifiers: null);
+        Assert.NotNull(waiter);
+        Func<string, bool> fileExists = _ => true;
+        Func<string, Task<string>> readAllTextAsync = _ =>
+            Task.FromException<string>(new IOException("synthetic unrelated proc read failure"));
+
+        var waitTask = Assert.IsType<Task<bool>>(waiter.Invoke(null,
+            new object[] { 42, TimeSpan.FromSeconds(1), fileExists, readAllTextAsync }));
+
+        await Assert.ThrowsAsync<IOException>(() => waitTask);
+    }
+
     private static async Task<bool> WaitForLinuxProcessStopAsync(int processId, TimeSpan timeout)
     {
+        return await WaitForLinuxProcessStopAsync(
+            processId,
+            timeout,
+            File.Exists,
+            path => File.ReadAllTextAsync(path));
+    }
+
+    private static async Task<bool> WaitForLinuxProcessStopAsync(
+        int processId,
+        TimeSpan timeout,
+        Func<string, bool> fileExists,
+        Func<string, Task<string>> readAllTextAsync)
+    {
         var deadline = DateTime.UtcNow + timeout;
+        var statPath = $"/proc/{processId}/stat";
         while (DateTime.UtcNow < deadline)
         {
-            var statPath = $"/proc/{processId}/stat";
-            if (!File.Exists(statPath)) return true;
-            var stat = await File.ReadAllTextAsync(statPath);
+            if (!fileExists(statPath)) return true;
+            string stat;
+            try
+            {
+                stat = await readAllTextAsync(statPath);
+            }
+            catch (FileNotFoundException)
+            {
+                return true;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return true;
+            }
             var stateStart = stat.LastIndexOf(')') + 2;
             if (stateStart < stat.Length && stat[stateStart] is 'Z' or 'X') return true;
             await Task.Delay(25);
         }
 
-        return !File.Exists($"/proc/{processId}/stat");
+        return !fileExists(statPath);
     }
 
     private static string ArgumentValue(IReadOnlyList<string> arguments, string name)

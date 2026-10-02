@@ -113,6 +113,245 @@ public sealed class InvestigationViewModelTests
     }
 
     [Fact]
+    public async Task ReturnedCancellationAfterRunningProgressShowsTerminalIncompleteState()
+    {
+        const string runId = "HOST-RETURNED-CANCEL-001";
+        const string computerName = "HOST";
+        const string error = "The read-only GUI run was cancelled; its state is incomplete.";
+        var trustedRoot = Path.Combine(Path.GetTempPath(), $"gui vm returned cancel {Guid.NewGuid():N}");
+        var runRoot = Path.Combine(trustedRoot, runId);
+        Directory.CreateDirectory(runRoot);
+        var launcher = DispatchProxy.Create<IReadOnlyRunLauncher, ProgressLauncherProxy>();
+        var proxy = (ProgressLauncherProxy)(object)launcher;
+        proxy.RunId = runId;
+        proxy.ComputerName = computerName;
+        proxy.RunRoot = runRoot;
+        proxy.StateRead = WriteAndReadActiveState(trustedRoot, runRoot, runId, computerName);
+        var viewModel = new InvestigationViewModel(launcher, trustedRoot);
+
+        try
+        {
+            var execution = viewModel.StartDetectOnlyCommand.ExecuteAsync(null);
+            Assert.Equal(StatusValues.Running, viewModel.RunState.OverallStatus);
+            Assert.Equal(StatusValues.Running, viewModel.Stages[2].Status);
+
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, -1, error));
+            await execution;
+
+            Assert.Equal(StatusValues.Incomplete, viewModel.RunState.OverallStatus);
+            Assert.Equal(StatusValues.Completed, viewModel.Stages[0].Status);
+            Assert.Equal(StatusValues.Completed, viewModel.Stages[1].Status);
+            Assert.Equal(StatusValues.Incomplete, viewModel.Stages[2].Status);
+            Assert.NotNull(viewModel.Stages[2].EndedUtc);
+            Assert.Null(viewModel.CurrentStage);
+            Assert.Null(viewModel.RunState.CurrentStage);
+            Assert.Equal(error, viewModel.OperationStatus);
+            Assert.StartsWith("Ended at ", viewModel.ElapsedTime, StringComparison.Ordinal);
+            Assert.Contains(viewModel.Errors, message => message == error);
+            Assert.Empty(viewModel.Warnings);
+            Assert.False(viewModel.IsProcessActive);
+            Assert.False(viewModel.IsRunInProgress);
+        }
+        finally
+        {
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, -1, "synthetic test cleanup"));
+            if (Directory.Exists(trustedRoot)) Directory.Delete(trustedRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ZeroExitWithStoppedRunningStateShowsTerminalIncompleteNotSuccess()
+    {
+        const string runId = "HOST-ZERO-EXIT-RUNNING-001";
+        const string computerName = "HOST";
+        var trustedRoot = Path.Combine(Path.GetTempPath(), $"gui vm zero exit running {Guid.NewGuid():N}");
+        var runRoot = Path.Combine(trustedRoot, runId);
+        Directory.CreateDirectory(runRoot);
+        var launcher = DispatchProxy.Create<IReadOnlyRunLauncher, ProgressLauncherProxy>();
+        var proxy = (ProgressLauncherProxy)(object)launcher;
+        proxy.RunId = runId;
+        proxy.ComputerName = computerName;
+        proxy.RunRoot = runRoot;
+        proxy.StateRead = WriteAndReadActiveState(trustedRoot, runRoot, runId, computerName);
+        var viewModel = new InvestigationViewModel(launcher, trustedRoot);
+        InvestigationRunSnapshot? loaded = null;
+        viewModel.RunLoaded += snapshot => loaded = snapshot;
+
+        try
+        {
+            var execution = viewModel.StartDetectOnlyCommand.ExecuteAsync(null);
+            var completedStageStartedUtc = viewModel.Stages[0].StartedUtc;
+            var completedStageEndedUtc = viewModel.Stages[0].EndedUtc;
+            var runningStageStartedUtc = viewModel.Stages[2].StartedUtc;
+
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, 0, null));
+            await execution;
+
+            Assert.NotNull(loaded?.StateRead);
+            Assert.True(loaded.StateRead.IsValid);
+            Assert.True(loaded.StateRead.IsTerminal);
+            Assert.Equal(StatusValues.Incomplete, loaded.StateRead.State.OverallStatus);
+            Assert.Equal(StatusValues.Incomplete, viewModel.RunState.OverallStatus);
+            Assert.Equal(StatusValues.Completed, viewModel.Stages[0].Status);
+            Assert.Equal(completedStageStartedUtc, viewModel.Stages[0].StartedUtc);
+            Assert.Equal(completedStageEndedUtc, viewModel.Stages[0].EndedUtc);
+            Assert.Equal(StatusValues.Incomplete, viewModel.Stages[2].Status);
+            Assert.Equal(runningStageStartedUtc, viewModel.Stages[2].StartedUtc);
+            Assert.NotNull(viewModel.Stages[2].EndedUtc);
+            Assert.Null(viewModel.RunState.CurrentStage);
+            Assert.Null(viewModel.CurrentStage);
+            Assert.True(viewModel.RunState.UpdatedUtc >= viewModel.Stages[2].EndedUtc);
+            Assert.StartsWith("Ended at ", viewModel.ElapsedTime, StringComparison.Ordinal);
+            Assert.DoesNotContain("completed with exit code 0", viewModel.OperationStatus, StringComparison.OrdinalIgnoreCase);
+            Assert.False(viewModel.FindingsStatus.Contains("Complete — no findings", StringComparison.Ordinal));
+        }
+        finally
+        {
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, -1, "synthetic test cleanup"));
+            if (Directory.Exists(trustedRoot)) Directory.Delete(trustedRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ZeroExitWithInvalidFinalStateShowsIncompleteAndPreservesValidatedProgress()
+    {
+        const string runId = "HOST-ZERO-EXIT-INVALID-001";
+        const string computerName = "HOST";
+        var trustedRoot = Path.Combine(Path.GetTempPath(), $"gui vm zero exit invalid {Guid.NewGuid():N}");
+        var runRoot = Path.Combine(trustedRoot, runId);
+        Directory.CreateDirectory(runRoot);
+        var launcher = DispatchProxy.Create<IReadOnlyRunLauncher, ProgressLauncherProxy>();
+        var proxy = (ProgressLauncherProxy)(object)launcher;
+        proxy.RunId = runId;
+        proxy.ComputerName = computerName;
+        proxy.RunRoot = runRoot;
+        proxy.StateRead = WriteAndReadActiveState(trustedRoot, runRoot, runId, computerName);
+        var viewModel = new InvestigationViewModel(launcher, trustedRoot);
+        InvestigationRunSnapshot? loaded = null;
+        viewModel.RunLoaded += snapshot => loaded = snapshot;
+
+        try
+        {
+            var execution = viewModel.StartDetectOnlyCommand.ExecuteAsync(null);
+            var completedStageStartedUtc = viewModel.Stages[0].StartedUtc;
+            var completedStageEndedUtc = viewModel.Stages[0].EndedUtc;
+            var runningStageStartedUtc = viewModel.Stages[2].StartedUtc;
+            File.WriteAllText(Path.Combine(runRoot, "gui-state.json"), "{ invalid final state");
+
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, 0, null));
+            await execution;
+
+            Assert.NotNull(loaded?.StateRead);
+            Assert.False(loaded.StateRead.IsValid);
+            Assert.Equal(StatusValues.Incomplete, viewModel.RunState.OverallStatus);
+            Assert.Null(viewModel.RunState.CurrentStage);
+            Assert.Null(viewModel.CurrentStage);
+            Assert.DoesNotContain("completed with exit code 0", viewModel.OperationStatus, StringComparison.OrdinalIgnoreCase);
+            Assert.StartsWith("Ended at ", viewModel.ElapsedTime, StringComparison.Ordinal);
+            Assert.NotEmpty(viewModel.Stages);
+            Assert.Equal(runId, viewModel.RunState.RunId);
+            Assert.Equal(computerName, viewModel.RunState.ComputerName);
+            Assert.Equal(StatusValues.Completed, viewModel.Stages[0].Status);
+            Assert.Equal(completedStageStartedUtc, viewModel.Stages[0].StartedUtc);
+            Assert.Equal(completedStageEndedUtc, viewModel.Stages[0].EndedUtc);
+            Assert.Equal(StatusValues.Completed, viewModel.Stages[1].Status);
+            Assert.Equal(StatusValues.Incomplete, viewModel.Stages[2].Status);
+            Assert.Equal(runningStageStartedUtc, viewModel.Stages[2].StartedUtc);
+            Assert.NotNull(viewModel.Stages[2].EndedUtc);
+            Assert.True(viewModel.RunState.UpdatedUtc >= viewModel.Stages[2].EndedUtc);
+            Assert.Contains(viewModel.Errors, error => error.Contains("malformed or truncated JSON", StringComparison.Ordinal));
+        }
+        finally
+        {
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, -1, "synthetic test cleanup"));
+            if (Directory.Exists(trustedRoot)) Directory.Delete(trustedRoot, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(-1, "The read-only GUI run timed out; its state is incomplete.", "The read-only GUI run timed out; its state is incomplete.")]
+    [InlineData(7, null, "Adapter exit code 7; inspect the validated run state.")]
+    public async Task ReturnedTimeoutOrNonzeroExitAfterRunningProgressShowsTerminalState(
+        int exitCode,
+        string? error,
+        string expectedOperationStatus)
+    {
+        const string runId = "HOST-RETURNED-FAILURE-001";
+        const string computerName = "HOST";
+        var trustedRoot = Path.Combine(Path.GetTempPath(), $"gui vm returned failure {Guid.NewGuid():N}");
+        var runRoot = Path.Combine(trustedRoot, runId);
+        Directory.CreateDirectory(runRoot);
+        var launcher = DispatchProxy.Create<IReadOnlyRunLauncher, ProgressLauncherProxy>();
+        var proxy = (ProgressLauncherProxy)(object)launcher;
+        proxy.RunId = runId;
+        proxy.ComputerName = computerName;
+        proxy.RunRoot = runRoot;
+        proxy.StateRead = WriteAndReadActiveState(trustedRoot, runRoot, runId, computerName);
+        var viewModel = new InvestigationViewModel(launcher, trustedRoot);
+
+        try
+        {
+            var execution = viewModel.StartDetectOnlyCommand.ExecuteAsync(null);
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, exitCode, error));
+            await execution;
+
+            Assert.Equal(StatusValues.Incomplete, viewModel.RunState.OverallStatus);
+            Assert.Equal(StatusValues.Completed, viewModel.Stages[0].Status);
+            Assert.Equal(StatusValues.Incomplete, viewModel.Stages[2].Status);
+            Assert.NotNull(viewModel.Stages[2].EndedUtc);
+            Assert.Null(viewModel.CurrentStage);
+            Assert.Equal(expectedOperationStatus, viewModel.OperationStatus);
+            Assert.StartsWith("Ended at ", viewModel.ElapsedTime, StringComparison.Ordinal);
+            Assert.False(viewModel.IsProcessActive);
+        }
+        finally
+        {
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, -1, "synthetic test cleanup"));
+            if (Directory.Exists(trustedRoot)) Directory.Delete(trustedRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ReturnedPreservedRequestWarnsThatProcessTreeTerminationIsUnconfirmed()
+    {
+        const string runId = "HOST-PRESERVED-REQUEST-001";
+        const string computerName = "HOST";
+        const string error = "The read-only GUI process tree did not terminate or descendant exit could not be confirmed; the run is incomplete and its request was retained.";
+        var trustedRoot = Path.Combine(Path.GetTempPath(), $"gui vm preserved request {Guid.NewGuid():N}");
+        var runRoot = Path.Combine(trustedRoot, runId);
+        Directory.CreateDirectory(runRoot);
+        var launcher = DispatchProxy.Create<IReadOnlyRunLauncher, ProgressLauncherProxy>();
+        var proxy = (ProgressLauncherProxy)(object)launcher;
+        proxy.RunId = runId;
+        proxy.ComputerName = computerName;
+        proxy.RunRoot = runRoot;
+        proxy.StateRead = WriteAndReadActiveState(trustedRoot, runRoot, runId, computerName);
+        var viewModel = new InvestigationViewModel(launcher, trustedRoot);
+
+        try
+        {
+            var execution = viewModel.StartDetectOnlyCommand.ExecuteAsync(null);
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, -1, error));
+            await execution;
+
+            Assert.Equal(StatusValues.Incomplete, viewModel.RunState.OverallStatus);
+            Assert.Null(viewModel.CurrentStage);
+            Assert.Equal(error, viewModel.OperationStatus);
+            Assert.Contains(viewModel.Warnings, warning =>
+                warning.Contains("Process-tree termination is unconfirmed", StringComparison.Ordinal));
+            Assert.Contains(viewModel.Warnings, warning =>
+                warning.Contains("may still be running", StringComparison.Ordinal));
+            Assert.DoesNotContain(viewModel.Warnings, warning =>
+                warning.Contains("tree exited", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, -1, "synthetic test cleanup"));
+            if (Directory.Exists(trustedRoot)) Directory.Delete(trustedRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task DetectOnlyExceptionAfterRunningProgressDowngradesToIncomplete()
     {
         const string runId = "HOST-FAILED-001";
@@ -172,7 +411,8 @@ public sealed class InvestigationViewModelTests
             firstCompletion.SetResult(new ReadOnlyRunResult(firstRunId, computerName, firstRunRoot, -1,
                 "synthetic first-run completion"));
             await firstExecution;
-            Assert.StartsWith("Last updated ", viewModel.ElapsedTime);
+            Assert.StartsWith("Ended at ", viewModel.ElapsedTime);
+            Assert.Equal(StatusValues.Incomplete, viewModel.RunState.OverallStatus);
 
             var secondExecution = viewModel.StartDetectOnlyCommand.ExecuteAsync(null);
             Assert.Equal("Waiting for validated run state…", viewModel.ElapsedTime);

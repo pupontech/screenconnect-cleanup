@@ -388,38 +388,87 @@ public partial class InvestigationViewModel : ViewModelBase
     {
         var stateRead = currentRun.StateRead;
         var report = stateRead.State;
+        var successfulCompletion = currentRun.IsSuccessfulCompletion;
+        var terminalFailure = !currentRun.ExpectedExit ||
+            !string.IsNullOrWhiteSpace(currentRun.LaunchResult.Error) ||
+            !stateRead.IsValid || !stateRead.IsTerminal || report.OverallStatus == StatusValues.Incomplete;
+        var terminalUtc = DateTime.UtcNow;
+        var hasMatchingProgressState =
+            string.Equals(RunState.RunId, currentRun.LaunchResult.RunId, StringComparison.Ordinal) &&
+            string.Equals(RunState.ComputerName, currentRun.LaunchResult.ComputerName, StringComparison.Ordinal);
+        var sourceState = stateRead.IsValid
+            ? new RunState
+            {
+                RunId = report.RunId,
+                ComputerName = report.ComputerName,
+                OverallStatus = report.OverallStatus,
+                CurrentStage = report.CurrentStage,
+                Stages = report.Stages.Select(stage => new StageState
+                {
+                    Id = stage.Id,
+                    Name = stage.Name,
+                    Status = stage.Status,
+                    Operation = stage.Operation,
+                    StartedUtc = stage.StartedUtc?.UtcDateTime,
+                    EndedUtc = stage.EndedUtc?.UtcDateTime
+                }).ToList(),
+                Warnings = report.Warnings.ToList(),
+                Errors = report.Errors.ToList(),
+                Artifacts = new Dictionary<string, string>(report.Artifacts, StringComparer.Ordinal),
+                UpdatedUtc = report.UpdatedUtc.UtcDateTime
+            }
+            : hasMatchingProgressState
+                ? RunState
+                : new RunState
+                {
+                    RunId = currentRun.LaunchResult.RunId,
+                    ComputerName = currentRun.LaunchResult.ComputerName,
+                    OverallStatus = StatusValues.Incomplete,
+                    Stages = new List<StageState>()
+                };
+        var warningMessages = sourceState.Warnings.ToList();
+        if (IsTerminationUnconfirmed(currentRun.LaunchResult.Error))
+        {
+            warningMessages.Add(
+                "Process-tree termination is unconfirmed; the process may still be running. No process-tree exit is claimed.");
+        }
         RunState = new RunState
         {
-            RunId = report.RunId,
-            ComputerName = report.ComputerName,
-            OverallStatus = stateRead.IsValid ? report.OverallStatus : StatusValues.Incomplete,
-            CurrentStage = report.CurrentStage,
-            Stages = report.Stages.Select(stage => new StageState
+            RunId = sourceState.RunId,
+            ComputerName = sourceState.ComputerName,
+            OverallStatus = terminalFailure ? StatusValues.Incomplete : sourceState.OverallStatus,
+            CurrentStage = successfulCompletion ? sourceState.CurrentStage : null,
+            Stages = sourceState.Stages.Select(stage => new StageState
             {
                 Id = stage.Id,
                 Name = stage.Name,
-                Status = stage.Status,
+                Status = !successfulCompletion && stage.Status == StatusValues.Running
+                    ? StatusValues.Incomplete
+                    : stage.Status,
                 Operation = stage.Operation,
-                StartedUtc = stage.StartedUtc?.UtcDateTime,
-                EndedUtc = stage.EndedUtc?.UtcDateTime
+                StartedUtc = stage.StartedUtc,
+                EndedUtc = !successfulCompletion && stage.StartedUtc is not null && stage.EndedUtc is null
+                    ? terminalUtc
+                    : stage.EndedUtc
             }).ToList(),
-            Warnings = report.Warnings.ToList(),
-            Errors = report.Errors.ToList(),
-            Artifacts = new Dictionary<string, string>(report.Artifacts, StringComparer.Ordinal),
-            UpdatedUtc = report.UpdatedUtc.UtcDateTime
+            Warnings = warningMessages,
+            Errors = sourceState.Errors.ToList(),
+            Artifacts = new Dictionary<string, string>(sourceState.Artifacts, StringComparer.Ordinal),
+            UpdatedUtc = successfulCompletion ? sourceState.UpdatedUtc : terminalUtc
         };
         Stages = RunState.Stages;
-        CurrentStage = RunState.CurrentStage is int currentStage && currentStage >= 0 && currentStage < Stages.Count
+        CurrentStage = successfulCompletion && RunState.CurrentStage is int currentStage && currentStage >= 0 && currentStage < Stages.Count
             ? Stages[currentStage]
             : null;
-        ElapsedTime = $"Last updated {report.UpdatedUtc:yyyy-MM-dd HH:mm:ss 'UTC'}";
+        ElapsedTime = successfulCompletion
+            ? $"Last updated {sourceState.UpdatedUtc:yyyy-MM-dd HH:mm:ss 'UTC'}"
+            : $"Ended at {terminalUtc:yyyy-MM-dd HH:mm:ss 'UTC'}";
         RunRoot = currentRun.LaunchResult.RunRoot;
         FindingsStatus = currentRun.FindingsStatus;
 
-        var warningMessages = report.Warnings.ToList();
         Warnings = warningMessages.Distinct(StringComparer.Ordinal).ToList();
 
-        var errorMessages = report.Errors.ToList();
+        var errorMessages = sourceState.Errors.ToList();
         errorMessages.AddRange(stateRead.Issues);
         if (currentRun.Findings is not null)
         {
@@ -435,13 +484,29 @@ public partial class InvestigationViewModel : ViewModelBase
         }
         Errors = errorMessages.Distinct(StringComparer.Ordinal).ToList();
 
-        OperationStatus = currentRun.LaunchResult.Error ?? (currentRun.ExpectedExit
-            ? "Detect Only completed with exit code 0."
-            : $"Adapter exit code {currentRun.LaunchResult.ExitCode}; inspect the validated run state.");
+        OperationStatus = !string.IsNullOrWhiteSpace(currentRun.LaunchResult.Error)
+            ? currentRun.LaunchResult.Error
+            : !currentRun.ExpectedExit
+                ? $"Adapter exit code {currentRun.LaunchResult.ExitCode}; inspect the validated run state."
+                : successfulCompletion
+                    ? "Detect Only completed with exit code 0."
+                    : !stateRead.IsValid
+                        ? "Incomplete — the current run state failed validation."
+                        : !stateRead.IsTerminal
+                            ? "Incomplete — the current run state is not terminal."
+                            : report.OverallStatus == StatusValues.Incomplete
+                                ? "Incomplete — the validated run state did not report successful completion."
+                                : $"Detect Only ended with run status {report.OverallStatus}; no success is inferred.";
 
         RunLoaded?.Invoke(new InvestigationRunSnapshot(
             stateRead, currentRun.Findings, currentRun.LaunchResult, currentRun.FindingsStatus));
     }
+
+    private static bool IsTerminationUnconfirmed(string? error) =>
+        !string.IsNullOrWhiteSpace(error) &&
+        (error.Contains("could not be confirmed", StringComparison.OrdinalIgnoreCase) ||
+         error.Contains("termination is unconfirmed", StringComparison.OrdinalIgnoreCase) ||
+         error.Contains("did not terminate", StringComparison.OrdinalIgnoreCase));
 
     private static RunState CreateIncompleteRunState() => new()
     {
@@ -535,7 +600,12 @@ public partial class InvestigationViewModel : ViewModelBase
         RunStateReadResult StateRead,
         FindingsReadResult? Findings,
         string FindingsStatus,
-        bool ExpectedExit);
+        bool ExpectedExit)
+    {
+        public bool IsSuccessfulCompletion => ExpectedExit &&
+            string.IsNullOrWhiteSpace(LaunchResult.Error) &&
+            StateRead.IsValid && StateRead.IsTerminal && StateRead.IsComplete;
+    }
 }
 #else
 public partial class InvestigationViewModel : ViewModelBase

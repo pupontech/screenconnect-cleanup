@@ -14,8 +14,8 @@ if ($parseErrors.Count -gt 0) { throw "Detector parse failed: $($parseErrors[0].
 
 $functionNames = @(
     'Expand-Env', 'Add-CollectionError', 'Get-DirsMatching', 'Get-AllServices', 'Get-AllProcesses',
-    'Get-AllUninstallEntries', 'Test-AnyLike', 'Get-ScIdentifier',
-    'Find-ScParamBlob', 'Get-ConnectionsForPids', 'Invoke-ScreenConnectModule'
+    'Get-AllUninstallEntries', 'Test-AnyLike', 'Get-ScIdentifier', 'Find-ScParamBlob',
+    'Get-ConnectionsForPids', 'Invoke-ScreenConnectModule', 'Start-DetectorTranscript'
 )
 foreach ($name in $functionNames) {
     $functionAst = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
@@ -275,6 +275,35 @@ Check 'partial findings serialize the collection error as an array of source/err
     $partialJson -match '"CollectionComplete":false' -and
         $partialJson -match '"CollectionErrors":\[\{"Source":"Services","Error":"'
 )
+
+$transcriptRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("synthetic-detector-transcript-" + [guid]::NewGuid().ToString('N'))
+[void][System.IO.Directory]::CreateDirectory($transcriptRoot)
+try {
+    $syntheticRunId = 'synthetic-run'
+    $expectedTranscriptPath = Join-Path $transcriptRoot 'detect-remote-access_synthetic-run.log'
+    $transcriptPath = Start-DetectorTranscript -DesktopPath $transcriptRoot -RunId $syntheticRunId
+    Stop-Transcript | Out-Null
+    $beforeCollision = [System.IO.File]::ReadAllText($transcriptPath)
+    $collisionRejected = $false
+    try {
+        $null = Start-DetectorTranscript -DesktopPath $transcriptRoot -RunId $syntheticRunId
+        Stop-Transcript | Out-Null
+    } catch {
+        $collisionRejected = $true
+    }
+    $afterCollision = [System.IO.File]::ReadAllText($transcriptPath)
+    $secondRunPath = Start-DetectorTranscript -DesktopPath $transcriptRoot -RunId 'synthetic-run-two'
+    Stop-Transcript | Out-Null
+    Check 'transcripts use the supplied run-specific directory and refuse same-run overwrite' (
+        $transcriptPath -eq $expectedTranscriptPath -and $collisionRejected -and
+            $beforeCollision -ceq $afterCollision -and
+            $secondRunPath -ne $transcriptPath -and [System.IO.File]::Exists($secondRunPath)
+    )
+} finally {
+    if ([System.IO.Directory]::Exists($transcriptRoot)) {
+        [System.IO.Directory]::Delete($transcriptRoot, $true)
+    }
+}
 
 if ($script:failures) {
     Write-Error "$script:failures detector collection regression(s) failed"

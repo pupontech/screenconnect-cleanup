@@ -831,11 +831,43 @@ function Invoke-GenericModule {
     return $hits.ToArray()
 }
 
+function Start-DetectorTranscript {
+    [CmdletBinding()]
+    param(
+        [string]$DesktopPath,
+        [string]$RunId
+    )
+
+    if ([string]::IsNullOrWhiteSpace($DesktopPath)) {
+        $DesktopPath = [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory)
+    }
+    if ([string]::IsNullOrWhiteSpace($DesktopPath)) {
+        throw "The Desktop special folder path is unavailable."
+    }
+    if (-not [System.IO.Directory]::Exists($DesktopPath)) {
+        throw "The Desktop transcript directory is unavailable: $DesktopPath"
+    }
+    if ([string]::IsNullOrWhiteSpace($RunId)) {
+        $RunId = [Guid]::NewGuid().ToString("N")
+    }
+    if ($RunId -notmatch '^[A-Za-z0-9-]{1,64}$') {
+        throw "The detector transcript run identifier is invalid."
+    }
+
+    $transcriptPath = Join-Path $DesktopPath ("detect-remote-access_{0}.log" -f $RunId)
+    Start-Transcript -Path $transcriptPath -NoClobber -ErrorAction Stop | Out-Null
+    return $transcriptPath
+}
+
 # ===========================================================================
 # MAIN
 # ===========================================================================
-$transcriptPath = "$env:USERPROFILE\Desktop\detect-remote-access_$(Get-Date -Format 'yyyy-MM-dd_HHmmss').log"
-try { Start-Transcript -Path $transcriptPath -Force | Out-Null } catch { }
+$transcriptPath = $null
+try {
+    $transcriptPath = Start-DetectorTranscript
+} catch {
+    Write-Warning ("Unable to start detector Desktop transcript: {0}" -f $_.Exception.Message)
+}
 
 $script:RunExitCode = 0
 try {
