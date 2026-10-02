@@ -215,12 +215,14 @@ internal sealed class WindowsProcessContainment : IDisposable
             DisposeQuietly(outputFileStream);
             DisposeQuietly(errorStream);
             DisposeQuietly(thread);
-            DisposeQuietly(process);
             DisposeQuietly(stdoutRead);
             DisposeQuietly(stdoutWrite);
             DisposeQuietly(stderrRead);
             DisposeQuietly(stderrWrite);
             DisposeQuietly(job);
+            if (process is not null)
+                _ = WindowsNative.WaitForSingleObject(process, (uint)CleanupTimeout.TotalMilliseconds);
+            DisposeQuietly(process);
             throw new WindowsProcessStartException(terminationConfirmed, cause);
         }
     }
@@ -283,7 +285,27 @@ internal sealed class WindowsProcessContainment : IDisposable
             terminationRequested = false;
         }
         var jobState = await WaitForNoActiveProcessesAsync(CleanupTimeout).ConfigureAwait(false);
-        return terminationRequested && jobState == WindowsJobEmptyState.Empty;
+        var parentExited = jobState == WindowsJobEmptyState.Empty &&
+            await WaitForParentExitAsync(CleanupTimeout).ConfigureAwait(false);
+        return terminationRequested && jobState == WindowsJobEmptyState.Empty && parentExited;
+    }
+
+    private async Task<bool> WaitForParentExitAsync(TimeSpan timeout)
+    {
+        var elapsed = Stopwatch.StartNew();
+        while (true)
+        {
+            try
+            {
+                if (HasExited) return true;
+            }
+            catch
+            {
+                return false;
+            }
+            if (elapsed.Elapsed >= timeout) return false;
+            await Task.Delay(TimeSpan.FromMilliseconds(25)).ConfigureAwait(false);
+        }
     }
 
     public void Dispose()
@@ -293,6 +315,8 @@ internal sealed class WindowsProcessContainment : IDisposable
         // Closing the sole KILL_ON_JOB_CLOSE handle also covers GUI shutdown and
         // unconfirmed cleanup paths; explicit confirmation remains required to report success.
         _jobHandle.Dispose();
+        // Job-close termination is asynchronous; wait boundedly before releasing the host handle.
+        _ = WindowsNative.WaitForSingleObject(_processHandle, (uint)CleanupTimeout.TotalMilliseconds);
         _standardOutput.Dispose();
         _standardError.Dispose();
         _processHandle.Dispose();
@@ -321,7 +345,9 @@ internal sealed class WindowsProcessContainment : IDisposable
             terminationRequested = false;
         }
         var emptyConfirmed = WaitForNoActiveProcesses(jobApi, job!, CleanupTimeout);
-        return terminationRequested && emptyConfirmed;
+        var parentExited = emptyConfirmed &&
+            WindowsNative.WaitForSingleObject(process, (uint)CleanupTimeout.TotalMilliseconds) == WindowsNative.WaitObject0;
+        return terminationRequested && emptyConfirmed && parentExited;
     }
 
     private static bool WaitForNoActiveProcesses(IWindowsJobApi jobApi, SafeWindowsJobHandle job, TimeSpan timeout)

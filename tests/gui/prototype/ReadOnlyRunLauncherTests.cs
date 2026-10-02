@@ -366,7 +366,8 @@ public sealed class ReadOnlyRunLauncherTests
         Assert.True(run.Result.Cancelled);
         Assert.False(run.Result.PreserveRequest);
         Assert.NotNull(run.Result.Error);
-        Assert.True(await WaitForWindowsProcessStopAsync(run.ChildProcessId, TimeSpan.FromSeconds(5)));
+        Assert.Equal(0u, run.JobActiveProcessCounts[^1]);
+        await AssertWindowsProcessesStoppedAsync(run.ParentProcessId, run.ChildProcessId);
     }
 
     [Fact]
@@ -381,7 +382,8 @@ public sealed class ReadOnlyRunLauncherTests
         Assert.True(run.Result.TimedOut);
         Assert.False(run.Result.PreserveRequest);
         Assert.NotNull(run.Result.Error);
-        Assert.True(await WaitForWindowsProcessStopAsync(run.ChildProcessId, TimeSpan.FromSeconds(5)));
+        Assert.Equal(0u, run.JobActiveProcessCounts[^1]);
+        await AssertWindowsProcessesStoppedAsync(run.ParentProcessId, run.ChildProcessId);
     }
 
     [Fact]
@@ -397,7 +399,34 @@ public sealed class ReadOnlyRunLauncherTests
         Assert.Equal(0, run.Result.AdapterReturnCode);
         Assert.NotNull(run.Result.Error);
         Assert.False(run.Result.PreserveRequest);
-        Assert.True(await WaitForWindowsProcessStopAsync(run.ChildProcessId, TimeSpan.FromSeconds(5)));
+        Assert.Contains(1u, run.JobActiveProcessCounts);
+        Assert.Equal(0u, run.JobActiveProcessCounts[^1]);
+        await AssertWindowsProcessesStoppedAsync(run.ParentProcessId, run.ChildProcessId);
+    }
+
+    [Fact]
+    public async Task WindowsJobEmptyAccountingDoesNotConfirmTerminationWhileTheHostHandleIsLive()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        using var fixture = new WindowsProcessFixture();
+        var process = WindowsProcessContainment.Start(fixture.Request, new EmptyReportingWindowsJobApi());
+        try
+        {
+            var processes = await fixture.WaitForChildAsync();
+
+            Assert.False(await process.TerminateAndConfirmEmptyAsync(),
+                "A zero job count must not confirm termination while the host process handle remains live.");
+            Assert.False(process.HasExited, "The synthetic job API intentionally leaves the host running.");
+            Assert.False(IsWindowsProcessStopped(processes.ChildProcessId),
+                "The synthetic job API intentionally leaves the child running.");
+        }
+        finally
+        {
+            process.Dispose();
+        }
+
+        await AssertTrackedWindowsProcessesStoppedAsync(fixture);
     }
 
     [Fact]
@@ -467,21 +496,22 @@ public sealed class ReadOnlyRunLauncherTests
         var runTask = runner.RunAsync(fixture.Request, TimeSpan.FromSeconds(15), cancellation.Token);
         try
         {
-            var childProcessId = await fixture.WaitForChildAsync(runTask);
+            var processes = await fixture.WaitForChildAsync(runTask);
             cancellation.Cancel();
             var result = await runTask.WaitAsync(TimeSpan.FromSeconds(12));
 
             Assert.True(result.Cancelled);
             Assert.True(result.PreserveRequest);
             Assert.NotNull(result.Error);
-            Assert.True(await WaitForWindowsProcessStopAsync(childProcessId, TimeSpan.FromSeconds(5)));
+            await AssertWindowsProcessesStoppedAsync(processes.ParentProcessId, processes.ChildProcessId);
         }
         finally
         {
             cancellation.Cancel();
             try { await runTask.WaitAsync(TimeSpan.FromSeconds(12)); }
             catch (TimeoutException) { }
-            fixture.Dispose();
+            try { await AssertTrackedWindowsProcessesStoppedAsync(fixture); }
+            finally { fixture.Dispose(); }
         }
     }
 
@@ -491,18 +521,23 @@ public sealed class ReadOnlyRunLauncherTests
         if (!OperatingSystem.IsWindows()) return;
 
         using var fixture = new WindowsProcessFixture();
-        var process = WindowsProcessContainment.Start(fixture.Request, new NativeWindowsJobApi());
-        int childProcessId;
+        var jobApi = new RecordingWindowsJobApi();
+        var process = WindowsProcessContainment.Start(fixture.Request, jobApi);
+        WindowsProcessIds processes;
         try
         {
-            childProcessId = await fixture.WaitForChildAsync();
+            processes = await fixture.WaitForChildAsync();
+            Assert.False(process.HasExited, "The Windows PowerShell host must still be running before job close.");
+            Assert.Equal(WindowsJobEmptyState.StillActive,
+                await process.WaitForNoActiveProcessesAsync(TimeSpan.Zero));
+            Assert.Equal(2u, jobApi.ActiveProcessCounts.Single());
         }
         finally
         {
             process.Dispose();
         }
 
-        Assert.True(await WaitForWindowsProcessStopAsync(childProcessId, TimeSpan.FromSeconds(5)));
+        await AssertWindowsProcessesStoppedAsync(processes.ParentProcessId, processes.ChildProcessId);
     }
 
     private static async Task<WindowsProcessRun> RunSyntheticWindowsParentChildAsync(
@@ -512,22 +547,50 @@ public sealed class ReadOnlyRunLauncherTests
     {
         var fixture = new WindowsProcessFixture(parentExitsAfterStartingChild);
         using var cancellationSource = new CancellationTokenSource();
-        var runner = new WindowsPowerShellProcessRunner();
+        var jobApi = new RecordingWindowsJobApi();
+        var runner = new WindowsPowerShellProcessRunner(jobApi);
         var runTask = runner.RunAsync(fixture.Request, timeout, cancellationSource.Token);
         try
         {
-            var childProcessId = await fixture.WaitForChildAsync(runTask);
+            var processes = await fixture.WaitForChildAsync(runTask);
             if (cancellation) cancellationSource.Cancel();
             var result = await runTask.WaitAsync(TimeSpan.FromSeconds(12));
-            return new WindowsProcessRun(result, childProcessId);
+            return new WindowsProcessRun(
+                result,
+                processes.ParentProcessId,
+                processes.ChildProcessId,
+                jobApi.ActiveProcessCounts.ToArray());
         }
         finally
         {
             cancellationSource.Cancel();
             try { await runTask.WaitAsync(TimeSpan.FromSeconds(12)); }
             catch (TimeoutException) { }
-            fixture.Dispose();
+            try { await AssertTrackedWindowsProcessesStoppedAsync(fixture); }
+            finally { fixture.Dispose(); }
         }
+    }
+
+    private static async Task AssertTrackedWindowsProcessesStoppedAsync(WindowsProcessFixture fixture)
+    {
+        var parentStopped = true;
+        if (fixture.ParentProcessId is int parentProcessId)
+            parentStopped = await WaitForWindowsProcessStopAsync(parentProcessId, TimeSpan.FromSeconds(5));
+        var childStopped = true;
+        if (fixture.ChildProcessId is int childProcessId)
+            childStopped = await WaitForWindowsProcessStopAsync(childProcessId, TimeSpan.FromSeconds(5));
+        Assert.True(parentStopped,
+            $"The Windows PowerShell host process {fixture.ParentProcessId} was not confirmed stopped before fixture cleanup.");
+        Assert.True(childStopped,
+            $"The synthetic child process {fixture.ChildProcessId} was not confirmed stopped before fixture cleanup.");
+    }
+
+    private static async Task AssertWindowsProcessesStoppedAsync(int parentProcessId, int childProcessId)
+    {
+        var parentStopped = await WaitForWindowsProcessStopAsync(parentProcessId, TimeSpan.FromSeconds(5));
+        var childStopped = await WaitForWindowsProcessStopAsync(childProcessId, TimeSpan.FromSeconds(5));
+        Assert.True(parentStopped, $"The Windows PowerShell host process {parentProcessId} was not confirmed stopped.");
+        Assert.True(childStopped, $"The synthetic child process {childProcessId} was not confirmed stopped.");
     }
 
     private static async Task<bool> WaitForWindowsProcessStopAsync(int processId, TimeSpan timeout)
@@ -550,7 +613,13 @@ public sealed class ReadOnlyRunLauncherTests
         return false;
     }
 
-    private sealed record WindowsProcessRun(LauncherProcessResult Result, int ChildProcessId);
+    private sealed record WindowsProcessRun(
+        LauncherProcessResult Result,
+        int ParentProcessId,
+        int ChildProcessId,
+        IReadOnlyList<uint> JobActiveProcessCounts);
+
+    private sealed record WindowsProcessIds(int ParentProcessId, int ChildProcessId);
 
     private sealed class WindowsProcessFixture : IDisposable
     {
@@ -561,13 +630,24 @@ public sealed class ReadOnlyRunLauncherTests
             var childScript = Path.Combine(Root, "child's sleeper.ps1");
             var parentScript = Path.Combine(Root, "parent's launcher.ps1");
             MarkerPath = Path.Combine(Root, "child process id.txt");
-            var childCode = "param([string]$MarkerPath) [IO.File]::WriteAllText($MarkerPath, [string]$PID); Start-Sleep -Seconds 60";
+            ParentProcessIdPath = Path.Combine(Root, "parent process id.txt");
+            ChildProcessIdPath = Path.Combine(Root, "launched child process id.txt");
+            var childCode = "param([string]$MarkerPath) $temporaryPath = $MarkerPath + '.tmp'; [IO.File]::WriteAllText($temporaryPath, [string]$PID); [IO.File]::Move($temporaryPath, $MarkerPath); Start-Sleep -Seconds 60";
             File.WriteAllText(childScript, childCode);
             var parentCode = @"
-param([string]$ChildScript, [string]$MarkerPath, [string]$ExitAfterStart)
+param([string]$ChildScript, [string]$MarkerPath, [string]$ParentPidPath, [string]$ChildPidPath, [string]$ExitAfterStart)
+$parentPidTemporaryPath = $ParentPidPath + '.tmp'
+[IO.File]::WriteAllText($parentPidTemporaryPath, [string]$PID)
+[IO.File]::Move($parentPidTemporaryPath, $ParentPidPath)
 $child = Join-Path $PSHOME 'powershell.exe'
 $arguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""' + $ChildScript + '"" -MarkerPath ""' + $MarkerPath + '""'
 $process = [Diagnostics.Process]::Start($child, $arguments)
+$childPidTemporaryPath = $ChildPidPath + '.tmp'
+[IO.File]::WriteAllText($childPidTemporaryPath, [string]$process.Id)
+[IO.File]::Move($childPidTemporaryPath, $ChildPidPath)
+$deadline = [DateTime]::UtcNow.AddSeconds(5)
+while (-not [IO.File]::Exists($MarkerPath) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 10 }
+if (-not [IO.File]::Exists($MarkerPath)) { throw 'The synthetic child did not publish its startup marker before the bounded handshake expired.' }
 if ($ExitAfterStart -eq 'true') { [Console]::Out.WriteLine('0'); exit 0 }
 Start-Sleep -Seconds 60
 ";
@@ -578,28 +658,97 @@ Start-Sleep -Seconds 60
             {
                 "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
                 "-File", parentScript, "-ChildScript", childScript, "-MarkerPath", MarkerPath,
+                "-ParentPidPath", ParentProcessIdPath, "-ChildPidPath", ChildProcessIdPath,
                 "-ExitAfterStart", parentExitsAfterStartingChild ? "true" : "false"
             });
         }
 
         public string Root { get; }
         public string MarkerPath { get; }
+        public string ParentProcessIdPath { get; }
+        public string ChildProcessIdPath { get; }
         public LauncherProcessRequest Request { get; }
+        public int? ParentProcessId { get; private set; }
+        public int? ChildProcessId { get; private set; }
 
-        public async Task<int> WaitForChildAsync(Task<LauncherProcessResult>? runTask = null)
+        public async Task<WindowsProcessIds> WaitForChildAsync(Task<LauncherProcessResult>? runTask = null)
         {
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(8);
             while (!File.Exists(MarkerPath) && runTask?.IsCompleted != true && DateTime.UtcNow < deadline)
             {
                 await Task.Delay(20);
             }
-            Assert.True(File.Exists(MarkerPath), "The synthetic Windows child did not start.");
-            return int.Parse(await File.ReadAllTextAsync(MarkerPath));
+            if (File.Exists(ParentProcessIdPath))
+                ParentProcessId = int.Parse(await File.ReadAllTextAsync(ParentProcessIdPath));
+            if (File.Exists(ChildProcessIdPath))
+                ChildProcessId = int.Parse(await File.ReadAllTextAsync(ChildProcessIdPath));
+            Assert.True(ParentProcessId.HasValue, "The synthetic Windows PowerShell host did not publish its process ID.");
+            Assert.True(ChildProcessId.HasValue,
+                $"The synthetic Windows PowerShell host {ParentProcessId} did not publish the launched child process ID.");
+            Assert.True(File.Exists(MarkerPath),
+                $"The synthetic Windows child {ChildProcessId} did not complete its startup handshake (host PID {ParentProcessId}).");
+            Assert.Equal(ChildProcessId.Value, int.Parse(await File.ReadAllTextAsync(MarkerPath)));
+            return new WindowsProcessIds(ParentProcessId.Value, ChildProcessId.Value);
         }
 
         public void Dispose()
         {
-            if (Directory.Exists(Root)) Directory.Delete(Root, recursive: true);
+            if (!Directory.Exists(Root)) return;
+            if (ParentProcessId is int parentProcessId && !IsWindowsProcessStopped(parentProcessId)) return;
+            if (ChildProcessId is int childProcessId && !IsWindowsProcessStopped(childProcessId)) return;
+            Directory.Delete(Root, recursive: true);
+        }
+    }
+
+    private sealed class RecordingWindowsJobApi : IWindowsJobApi
+    {
+        private readonly NativeWindowsJobApi _inner = new();
+        public List<uint> ActiveProcessCounts { get; } = new();
+
+        public SafeWindowsJobHandle CreateConfiguredJob() => _inner.CreateConfiguredJob();
+
+        public void AssignToJob(SafeWindowsJobHandle job, IntPtr processHandle) => _inner.AssignToJob(job, processHandle);
+
+        public uint ResumePrimaryThread(IntPtr threadHandle) => _inner.ResumePrimaryThread(threadHandle);
+
+        public uint QueryActiveProcessCount(SafeWindowsJobHandle job)
+        {
+            var activeProcessCount = _inner.QueryActiveProcessCount(job);
+            ActiveProcessCounts.Add(activeProcessCount);
+            return activeProcessCount;
+        }
+
+        public void TerminateJob(SafeWindowsJobHandle job, uint exitCode) => _inner.TerminateJob(job, exitCode);
+    }
+
+    private sealed class EmptyReportingWindowsJobApi : IWindowsJobApi
+    {
+        private readonly NativeWindowsJobApi _inner = new();
+
+        public SafeWindowsJobHandle CreateConfiguredJob() => _inner.CreateConfiguredJob();
+
+        public void AssignToJob(SafeWindowsJobHandle job, IntPtr processHandle) => _inner.AssignToJob(job, processHandle);
+
+        public uint ResumePrimaryThread(IntPtr threadHandle) => _inner.ResumePrimaryThread(threadHandle);
+
+        public uint QueryActiveProcessCount(SafeWindowsJobHandle job) => 0;
+
+        public void TerminateJob(SafeWindowsJobHandle job, uint exitCode)
+        {
+            // Deliberately do not terminate; this test isolates the process-handle confirmation.
+        }
+    }
+
+    private static bool IsWindowsProcessStopped(int processId)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            return process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return true;
         }
     }
 
