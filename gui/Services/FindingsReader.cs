@@ -62,13 +62,17 @@ public sealed class FindingsReadResult
         string? computerName,
         IReadOnlyList<ScreenConnectFinding> instances,
         IReadOnlyList<OtherTargetFinding> otherTargets,
-        IReadOnlyList<string> issues)
+        IReadOnlyList<string> issues,
+        bool canDisplayFindings,
+        bool hasIdentityMismatch)
     {
         RunId = runId;
         ComputerName = computerName;
         Instances = instances;
         OtherTargets = otherTargets;
         Issues = issues;
+        CanDisplayFindings = canDisplayFindings;
+        HasIdentityMismatch = hasIdentityMismatch;
     }
 
     public string? RunId { get; }
@@ -76,6 +80,9 @@ public sealed class FindingsReadResult
     public IReadOnlyList<ScreenConnectFinding> Instances { get; }
     public IReadOnlyList<OtherTargetFinding> OtherTargets { get; }
     public IReadOnlyList<string> Issues { get; }
+    /// <summary>True only when identity, artifact path, and findings schema are trusted.</summary>
+    public bool CanDisplayFindings { get; }
+    public bool HasIdentityMismatch { get; }
     public bool IsComplete => Issues.Count == 0;
     public bool HasFindings => Instances.Count > 0 || OtherTargets.Any(target => target.Hits.Count > 0);
     public bool IsClean => IsComplete && !HasFindings;
@@ -124,7 +131,7 @@ public static class FindingsReader
 
         try
         {
-            CheckForAmbiguousArtifacts(resolvedPaths, findingsRelativePath, issues);
+            var artifactPathIsUnambiguous = CheckForAmbiguousArtifacts(resolvedPaths, findingsRelativePath, issues);
 
             using var artifactHandle = OpenArtifactHandle(resolvedPaths.ArtifactPath);
             if (!PathsMatch(GetFinalPath(artifactHandle), resolvedPaths.ExpectedArtifactPhysicalPath))
@@ -142,9 +149,11 @@ public static class FindingsReader
 
             var bytes = new byte[checked((int)stream.Length)];
             stream.ReadExactly(bytes);
-            if (!PathsMatch(GetFinalPath(resolvedPaths.TrustedRunsRootHandle), resolvedPaths.TrustedRunsRootPhysicalPath) ||
-                !PathsMatch(GetFinalPath(resolvedPaths.RootHandle), resolvedPaths.RootPhysicalPath) ||
-                !PathsMatch(GetFinalPath(artifactHandle), resolvedPaths.ExpectedArtifactPhysicalPath))
+            var physicalPathsMatch =
+                PathsMatch(GetFinalPath(resolvedPaths.TrustedRunsRootHandle), resolvedPaths.TrustedRunsRootPhysicalPath) &&
+                PathsMatch(GetFinalPath(resolvedPaths.RootHandle), resolvedPaths.RootPhysicalPath) &&
+                PathsMatch(GetFinalPath(artifactHandle), resolvedPaths.ExpectedArtifactPhysicalPath);
+            if (!physicalPathsMatch)
             {
                 AddIssue(issues, "The findings artifact or run root changed physical paths while being read.");
             }
@@ -174,29 +183,50 @@ public static class FindingsReader
                 return EmptyResult(issues);
             }
 
-            if (ContainsDuplicateProperties(root))
+            var hasDuplicateProperties = ContainsDuplicateProperties(root);
+            if (hasDuplicateProperties)
             {
                 AddIssue(issues, "The findings artifact contains duplicate JSON properties.");
             }
 
             var runId = ReadRequiredString(root, "RunId", "The findings RunId is missing or malformed.", issues);
             var computerName = ReadRequiredString(root, "ComputerName", "The findings computer name is missing or malformed.", issues);
+            var hasIdentityMismatch = false;
+            var identityMatches = runId is not null && computerName is not null;
             if (runId is not null && !string.Equals(runId, resolvedPaths.NestedRunId, StringComparison.OrdinalIgnoreCase))
             {
+                hasIdentityMismatch = true;
+                identityMatches = false;
                 AddIssue(issues, "The findings RunId does not match its nested detector directory.");
             }
 
             if (computerName is not null &&
                 !string.Equals(computerName, expectedComputerName, StringComparison.OrdinalIgnoreCase))
             {
+                hasIdentityMismatch = true;
+                identityMatches = false;
                 AddIssue(issues, "The findings computer name does not match the current run.");
             }
 
-            var instances = ReadInstances(root, issues);
-            var otherTargets = ReadOtherTargets(root, issues);
-            ValidateCollectionStatus(root, issues);
+            var instances = ReadInstances(root, issues, out var instancesSchemaIsValid);
+            var otherTargets = ReadOtherTargets(root, issues, out var otherTargetsSchemaIsValid);
+            var collectionSchemaIsValid = ValidateCollectionStatus(root, issues);
+            var canDisplayFindings = artifactPathIsUnambiguous &&
+                physicalPathsMatch &&
+                !hasDuplicateProperties &&
+                identityMatches &&
+                instancesSchemaIsValid &&
+                otherTargetsSchemaIsValid &&
+                collectionSchemaIsValid;
 
-            return new FindingsReadResult(runId, computerName, instances, otherTargets, issues.ToArray());
+            return new FindingsReadResult(
+                runId,
+                computerName,
+                instances,
+                otherTargets,
+                issues.ToArray(),
+                canDisplayFindings,
+                hasIdentityMismatch);
         }
         catch (JsonException)
         {
@@ -357,8 +387,9 @@ public static class FindingsReader
         }
     }
 
-    private static void CheckForAmbiguousArtifacts(ArtifactPaths paths, string requestedRelativePath, List<string> issues)
+    private static bool CheckForAmbiguousArtifacts(ArtifactPaths paths, string requestedRelativePath, List<string> issues)
     {
+        var isUnambiguous = true;
         try
         {
             var findingsFiles = new List<string>();
@@ -367,6 +398,7 @@ public static class FindingsReader
                 if (IsReparsePoint(directory))
                 {
                     AddIssue(issues, "The detector directory contains a reparse point.");
+                    isUnambiguous = false;
                     continue;
                 }
 
@@ -382,26 +414,36 @@ public static class FindingsReader
             if (findingsFiles.Count != 1 || !findingsFiles.Any(path => string.Equals(path, requestedPath, pathComparison)))
             {
                 AddIssue(issues, "The current detector findings artifact is missing or ambiguous.");
+                isUnambiguous = false;
             }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
             AddIssue(issues, "The detector directory could not be checked for ambiguous artifacts.");
+            isUnambiguous = false;
         }
+
+        return isUnambiguous;
     }
 
-    private static IReadOnlyList<ScreenConnectFinding> ReadInstances(JsonElement root, List<string> issues)
+    private static IReadOnlyList<ScreenConnectFinding> ReadInstances(
+        JsonElement root,
+        List<string> issues,
+        out bool schemaIsValid)
     {
         var results = new List<ScreenConnectFinding>();
+        schemaIsValid = true;
         if (!TryGetUniqueProperty(root, "ScreenConnect", out var screenConnect) || screenConnect.ValueKind != JsonValueKind.Object)
         {
             AddIssue(issues, "ScreenConnect findings are missing or malformed.");
+            schemaIsValid = false;
             return results;
         }
 
         if (!TryGetUniqueProperty(screenConnect, "Instances", out var instances))
         {
             AddIssue(issues, "ScreenConnect.Instances is missing.");
+            schemaIsValid = false;
             return results;
         }
 
@@ -412,6 +454,7 @@ public static class FindingsReader
                 if (instance.ValueKind != JsonValueKind.Object)
                 {
                     AddIssue(issues, "ScreenConnect.Instances contains a malformed item.");
+                    schemaIsValid = false;
                     continue;
                 }
 
@@ -429,15 +472,21 @@ public static class FindingsReader
         }
 
         AddIssue(issues, "ScreenConnect.Instances must be a JSON array.");
+        schemaIsValid = false;
         return results;
     }
 
-    private static IReadOnlyList<OtherTargetFinding> ReadOtherTargets(JsonElement root, List<string> issues)
+    private static IReadOnlyList<OtherTargetFinding> ReadOtherTargets(
+        JsonElement root,
+        List<string> issues,
+        out bool schemaIsValid)
     {
         var results = new List<OtherTargetFinding>();
+        schemaIsValid = true;
         if (!TryGetUniqueProperty(root, "OtherTargets", out var targets))
         {
             AddIssue(issues, "OtherTargets is missing.");
+            schemaIsValid = false;
             return results;
         }
 
@@ -445,7 +494,7 @@ public static class FindingsReader
         {
             foreach (var target in targets.EnumerateArray())
             {
-                ReadOtherTarget(target, results, issues);
+                ReadOtherTarget(target, results, issues, ref schemaIsValid);
             }
 
             return results;
@@ -461,18 +510,24 @@ public static class FindingsReader
 
         if (targets.ValueKind == JsonValueKind.Object)
         {
-            ReadOtherTarget(targets, results, issues);
+            ReadOtherTarget(targets, results, issues, ref schemaIsValid);
         }
 
         AddIssue(issues, "OtherTargets must be a JSON array.");
+        schemaIsValid = false;
         return results;
     }
 
-    private static void ReadOtherTarget(JsonElement target, List<OtherTargetFinding> results, List<string> issues)
+    private static void ReadOtherTarget(
+        JsonElement target,
+        List<OtherTargetFinding> results,
+        List<string> issues,
+        ref bool schemaIsValid)
     {
         if (target.ValueKind != JsonValueKind.Object)
         {
             AddIssue(issues, "OtherTargets contains a malformed item.");
+            schemaIsValid = false;
             return;
         }
 
@@ -485,6 +540,7 @@ public static class FindingsReader
         if (!TryGetUniqueProperty(target, "Hits", out var hits))
         {
             AddIssue(issues, "An OtherTargets entry has no Hits collection.");
+            schemaIsValid = false;
             return;
         }
 
@@ -501,20 +557,28 @@ public static class FindingsReader
         {
             hitList = new[] { hits.Clone() };
             AddIssue(issues, "An OtherTargets Hits collection is not an array.");
+            schemaIsValid = false;
         }
         else
         {
             hitList = Array.Empty<JsonElement>();
             AddIssue(issues, "An OtherTargets Hits collection is malformed.");
+            schemaIsValid = false;
         }
 
         results.Add(new OtherTargetFinding(target.Clone(), productName, hitList));
     }
 
-    private static void ValidateCollectionStatus(JsonElement root, List<string> issues)
+    private static bool ValidateCollectionStatus(JsonElement root, List<string> issues)
     {
+        var schemaIsValid = true;
         if (!TryGetUniqueProperty(root, "CollectionComplete", out var complete) ||
-            complete.ValueKind != JsonValueKind.True)
+            complete.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+        {
+            AddIssue(issues, "CollectionComplete is missing or is not true.");
+            schemaIsValid = false;
+        }
+        else if (complete.ValueKind == JsonValueKind.False)
         {
             AddIssue(issues, "CollectionComplete is missing or is not true.");
         }
@@ -522,6 +586,7 @@ public static class FindingsReader
         if (!TryGetUniqueProperty(root, "CollectionErrors", out var collectionErrors))
         {
             AddIssue(issues, "CollectionErrors is missing.");
+            schemaIsValid = false;
         }
         else if (collectionErrors.ValueKind == JsonValueKind.Array)
         {
@@ -537,6 +602,7 @@ public static class FindingsReader
                     !HasNonEmptyString(item, "Error"))
                 {
                     AddIssue(issues, "CollectionErrors contains a malformed item.");
+                    schemaIsValid = false;
                     break;
                 }
             }
@@ -544,6 +610,7 @@ public static class FindingsReader
         else
         {
             AddIssue(issues, "CollectionErrors is malformed or nonempty.");
+            schemaIsValid = false;
         }
 
         if (!TryGetUniqueProperty(root, "ScreenConnect", out var screenConnect) ||
@@ -551,6 +618,7 @@ public static class FindingsReader
             !TryGetUniqueProperty(screenConnect, "ParseIssues", out var parseIssues))
         {
             AddIssue(issues, "ScreenConnect.ParseIssues is missing or malformed.");
+            schemaIsValid = false;
         }
         else if (parseIssues.ValueKind == JsonValueKind.Array)
         {
@@ -562,11 +630,13 @@ public static class FindingsReader
         else
         {
             AddIssue(issues, "ScreenConnect.ParseIssues is malformed or nonempty.");
+            schemaIsValid = false;
         }
 
         if (!TryGetUniqueProperty(root, "EventLogError", out var eventLogError))
         {
             AddIssue(issues, "EventLogError is missing.");
+            schemaIsValid = false;
         }
         else if (eventLogError.ValueKind == JsonValueKind.String)
         {
@@ -582,7 +652,10 @@ public static class FindingsReader
         else if (eventLogError.ValueKind is not (JsonValueKind.Null or JsonValueKind.False))
         {
             AddIssue(issues, "EventLogError is malformed.");
+            schemaIsValid = false;
         }
+
+        return schemaIsValid;
     }
 
     private static bool TryGetUniqueProperty(JsonElement element, string propertyName, out JsonElement value)
@@ -874,7 +947,7 @@ public static class FindingsReader
     }
 
     private static FindingsReadResult EmptyResult(List<string> issues) =>
-        new(null, null, Array.Empty<ScreenConnectFinding>(), Array.Empty<OtherTargetFinding>(), issues.ToArray());
+        new(null, null, Array.Empty<ScreenConnectFinding>(), Array.Empty<OtherTargetFinding>(), issues.ToArray(), false, false);
 
     private sealed record ArtifactPaths(
         string RootPath,

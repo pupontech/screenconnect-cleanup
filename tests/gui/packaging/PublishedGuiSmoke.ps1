@@ -119,7 +119,11 @@ function Assert-SimpleModeSurface {
         throw 'Simple scan button is not a visible, enabled button.'
     }
     [void](Get-VisibleElement -Window $Window -Name 'Simple scan status')
-    [void](Get-VisibleElement -Window $Window -Name 'Simple detected items')
+    $items = Get-VisibleElement -Window $Window -Name 'Simple detected items'
+    $bounds = $items.Current.BoundingRectangle
+    if ($bounds.Height -lt 100 -or $bounds.Height -gt 600 -or $bounds.Width -lt 100) {
+        throw "Simple detected-items viewport is unusable or unbounded: width=$($bounds.Width), height=$($bounds.Height)."
+    }
     [void](Assert-EnabledModeControl -Window $Window -Name 'Use Advanced mode')
 }
 
@@ -142,58 +146,88 @@ function Assert-NoChildProcesses {
     }
 }
 
+function Invoke-PublishedGuiSmokeCleanup {
+    param(
+        [object]$Process,
+        [string]$FixtureRoot,
+        [int]$ExitTimeoutMilliseconds = 10000,
+        [scriptblock]$StopProcess = {
+            param($ProcessToStop)
+            Stop-Process -Id $ProcessToStop.Id -Force -ErrorAction Stop
+        },
+        [scriptblock]$DeleteFixture = {
+            param($PathToDelete)
+            if ([IO.Directory]::Exists($PathToDelete)) {
+                Remove-Item -LiteralPath $PathToDelete -Recurse -Force -ErrorAction Stop
+            }
+        }
+    )
+    if ($ExitTimeoutMilliseconds -le 0) { throw 'Process exit timeout must be positive.' }
+
+    if ($null -ne $Process) {
+        $Process.Refresh()
+        $stopFailure = $null
+        if (-not $Process.HasExited) {
+            try { & $StopProcess $Process } catch { $stopFailure = $_ }
+        }
+        if (-not $Process.WaitForExit($ExitTimeoutMilliseconds)) {
+            $stopDetail = ''
+            if ($null -ne $stopFailure) { $stopDetail = " Stop request failed: $($stopFailure.Exception.Message)" }
+            throw "Packaged GUI process $($Process.Id) did not exit within $ExitTimeoutMilliseconds ms; retaining fixture '$FixtureRoot'.$stopDetail"
+        }
+    }
+
+    & $DeleteFixture $FixtureRoot
+}
+
 [void][IO.Directory]::CreateDirectory($root)
+$process = $null
 try {
     Expand-Archive -LiteralPath $zip -DestinationPath $root
     $exe = Join-Path $root 'ScreenConnectCleanup.Gui.exe'
     if (-not [IO.File]::Exists($exe)) { throw 'Extracted package does not contain the GUI executable.' }
     $process = Start-Process -FilePath $exe -PassThru -WorkingDirectory $root
-    try {
-        $deadline = [DateTime]::UtcNow.AddSeconds(25)
-        $window = $null
-        while ([DateTime]::UtcNow -lt $deadline) {
-            $process.Refresh()
-            if ($process.HasExited) { throw "Extracted GUI exited early with code $($process.ExitCode)." }
-            $window = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
-                [System.Windows.Automation.TreeScope]::Children,
-                (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $process.Id)))
-            if ($null -ne $window) { break }
-            Start-Sleep -Milliseconds 250
-        }
-        if ($null -eq $window) { throw 'No top-level UI Automation window appeared for the extracted packaged process.' }
-        if ($window.Current.Name -notlike '*Detect-only Inspection*') { throw "Unexpected packaged window title: $($window.Current.Name)" }
-
-        Assert-SimpleModeSurface -Window $window
-        Assert-ElementNotVisible -Window $window -Name 'Start Detect Only inspection'
-        Assert-NoChildProcesses -Process $process
-
-        $advancedMode = Assert-EnabledModeControl -Window $window -Name 'Use Advanced mode'
-        Invoke-ModeControl -Control $advancedMode
-        [void](Wait-ForEnabledModeControl -Window $window -Name 'Use Simple mode')
-
-        $nav = Get-VisibleElement -Window $window -Name 'Navigate to Investigation view'
-        if ($nav.Current.ControlType -ne [System.Windows.Automation.ControlType]::Button -or
-            -not $nav.Current.IsEnabled) { throw 'Investigation navigation control is not an enabled button in Advanced mode.' }
-        $nav.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-
-        [void](Wait-ForEnabledButton -Window $window -Name 'Start Detect Only inspection')
-        $disabled = Get-VisibleElement -Window $window -Name 'Full Investigation unavailable because its snapshot may load and unload the Amcache registry hive'
-        if ($disabled.Current.IsEnabled) { throw 'Full Investigation control is enabled.' }
-        [void](Get-VisibleElement -Window $window -Name 'Detect-only inspection safety notice')
-        Assert-NoChildProcesses -Process $process
-
-        $simpleMode = Assert-EnabledModeControl -Window $window -Name 'Use Simple mode'
-        Invoke-ModeControl -Control $simpleMode
-        [void](Wait-ForEnabledButton -Window $window -Name 'Start simple Detect Only scan')
-        Assert-SimpleModeSurface -Window $window
-        Assert-ElementNotVisible -Window $window -Name 'Start Detect Only inspection'
-        Assert-NoChildProcesses -Process $process
-
-        Write-Output "PASS: extracted ZIP starts in Simple mode; Advanced exposes Detect Only enabled and Full Investigation disabled; Simple mode is restored; no Scan control was invoked and no child process was observed."
-    } finally {
+    $deadline = [DateTime]::UtcNow.AddSeconds(25)
+    $window = $null
+    while ([DateTime]::UtcNow -lt $deadline) {
         $process.Refresh()
-        if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+        if ($process.HasExited) { throw "Extracted GUI exited early with code $($process.ExitCode)." }
+        $window = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
+            [System.Windows.Automation.TreeScope]::Children,
+            (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $process.Id)))
+        if ($null -ne $window) { break }
+        Start-Sleep -Milliseconds 250
     }
+    if ($null -eq $window) { throw 'No top-level UI Automation window appeared for the extracted packaged process.' }
+    if ($window.Current.Name -notlike '*Detect-only Inspection*') { throw "Unexpected packaged window title: $($window.Current.Name)" }
+
+    Assert-SimpleModeSurface -Window $window
+    Assert-ElementNotVisible -Window $window -Name 'Start Detect Only inspection'
+    Assert-NoChildProcesses -Process $process
+
+    $advancedMode = Assert-EnabledModeControl -Window $window -Name 'Use Advanced mode'
+    Invoke-ModeControl -Control $advancedMode
+    [void](Wait-ForEnabledModeControl -Window $window -Name 'Use Simple mode')
+
+    $nav = Get-VisibleElement -Window $window -Name 'Navigate to Investigation view'
+    if ($nav.Current.ControlType -ne [System.Windows.Automation.ControlType]::Button -or
+        -not $nav.Current.IsEnabled) { throw 'Investigation navigation control is not an enabled button in Advanced mode.' }
+    $nav.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+
+    [void](Wait-ForEnabledButton -Window $window -Name 'Start Detect Only inspection')
+    $disabled = Get-VisibleElement -Window $window -Name 'Full Investigation unavailable because its snapshot may load and unload the Amcache registry hive'
+    if ($disabled.Current.IsEnabled) { throw 'Full Investigation control is enabled.' }
+    [void](Get-VisibleElement -Window $window -Name 'Detect-only inspection safety notice')
+    Assert-NoChildProcesses -Process $process
+
+    $simpleMode = Assert-EnabledModeControl -Window $window -Name 'Use Simple mode'
+    Invoke-ModeControl -Control $simpleMode
+    [void](Wait-ForEnabledButton -Window $window -Name 'Start simple Detect Only scan')
+    Assert-SimpleModeSurface -Window $window
+    Assert-ElementNotVisible -Window $window -Name 'Start Detect Only inspection'
+    Assert-NoChildProcesses -Process $process
+
+    Write-Output "PASS: extracted ZIP starts in Simple mode; Advanced exposes Detect Only enabled and Full Investigation disabled; Simple mode is restored; no Scan control was invoked and no child process was observed."
 } finally {
-    if ([IO.Directory]::Exists($root)) { Remove-Item -LiteralPath $root -Recurse -Force }
+    Invoke-PublishedGuiSmokeCleanup -Process $process -FixtureRoot $root
 }

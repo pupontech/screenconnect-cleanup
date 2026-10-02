@@ -28,6 +28,9 @@
                 <TextBlock Text="Detected items" Style="{DynamicResource SectionHeaderStyle}" Margin="0,16,0,4" />
                 <TextBlock Text="{Binding SimpleDetectedCount}" AutomationProperties.Name="Simple detected item count" />
                 <ListBox ItemsSource="{Binding SimpleDetectedItems}" Margin="0,6,0,0"
+                         MinHeight="120" MaxHeight="300"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                          AutomationProperties.Name="Simple detected items" />
                 <TextBlock Text="{Binding SimpleDetectedItemsNote}" TextWrapping="Wrap" Margin="0,6,0,0" />
             </StackPanel>

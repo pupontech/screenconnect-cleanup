@@ -198,6 +198,60 @@ public sealed class InvestigationViewModelTests
         }
     }
 
+    [Theory]
+    [InlineData("RunId")]
+    [InlineData("ComputerName")]
+    public async Task FindingsIdentityMismatchIsNotPresentedAsValidatedDetections(string mismatchedIdentity)
+    {
+        const string runId = "HOST-SIMPLE-IDENTITY-MISMATCH-001";
+        const string detectorRunId = "HOST-DETECTOR-IDENTITY-MISMATCH-001";
+        const string computerName = "HOST";
+        var trustedRoot = Path.Combine(Path.GetTempPath(), $"gui vm simple identity mismatch {Guid.NewGuid():N}");
+        var runRoot = Path.Combine(trustedRoot, runId);
+        Directory.CreateDirectory(runRoot);
+        var launcher = DispatchProxy.Create<IReadOnlyRunLauncher, ProgressLauncherProxy>();
+        var proxy = (ProgressLauncherProxy)(object)launcher;
+        proxy.RunId = runId;
+        proxy.ComputerName = computerName;
+        proxy.RunRoot = runRoot;
+        proxy.StateRead = WriteAndReadActiveState(trustedRoot, runRoot, runId, computerName);
+        WriteCompletedStateAndFindings(
+            trustedRoot,
+            runRoot,
+            runId,
+            detectorRunId,
+            computerName,
+            instances: "[{ \"Identifier\": \"untrusted-positive\" }]",
+            findingsRunId: mismatchedIdentity == "RunId" ? "HOST-DETECTOR-OTHER-001" : null,
+            findingsComputerName: mismatchedIdentity == "ComputerName" ? "OTHER-HOST" : null);
+        var viewModel = new InvestigationViewModel(launcher, trustedRoot);
+        InvestigationRunSnapshot? loaded = null;
+        viewModel.RunLoaded += snapshot => loaded = snapshot;
+
+        try
+        {
+            var execution = viewModel.StartDetectOnlyCommand.ExecuteAsync(null);
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, 0, null));
+            await execution;
+
+            Assert.NotNull(loaded?.Findings);
+            Assert.Single(loaded!.Findings!.Instances);
+            Assert.False(loaded.Findings.CanDisplayFindings);
+            Assert.Equal("Finished", viewModel.SimpleScanStatus);
+            Assert.Equal(0, viewModel.SimpleDetectedCount);
+            Assert.Empty(viewModel.SimpleDetectedItems);
+            Assert.Empty(viewModel.SimpleDetectionSummary);
+            Assert.Equal(
+                "Findings identity does not match this run; results are inconclusive and detections are not shown.",
+                viewModel.SimpleIncompleteCaution);
+        }
+        finally
+        {
+            proxy.Complete(new ReadOnlyRunResult(runId, computerName, runRoot, -1, "synthetic test cleanup"));
+            if (Directory.Exists(trustedRoot)) Directory.Delete(trustedRoot, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task StaleProgressAfterCompletionCannotReplaceSimpleResult()
     {
@@ -791,7 +845,9 @@ public sealed class InvestigationViewModelTests
         string instances = "[]",
         string otherTargets = "[]",
         bool collectionComplete = true,
-        string collectionErrors = "[]")
+        string collectionErrors = "[]",
+        string? findingsRunId = null,
+        string? findingsComputerName = null)
     {
         var stageNames = new[]
         {
@@ -828,8 +884,8 @@ public sealed class InvestigationViewModelTests
         Directory.CreateDirectory(findingsDirectory);
         var findings = $$"""
             {
-              "RunId": "{{detectorRunId}}",
-              "ComputerName": "{{computerName}}",
+              "RunId": "{{findingsRunId ?? detectorRunId}}",
+              "ComputerName": "{{findingsComputerName ?? computerName}}",
               "ScreenConnect": { "Instances": {{instances}}, "ParseIssues": [] },
               "OtherTargets": {{otherTargets}},
               "CollectionComplete": {{collectionComplete.ToString().ToLowerInvariant()}},

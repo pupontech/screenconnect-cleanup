@@ -543,14 +543,15 @@ public partial class InvestigationViewModel : ViewModelBase
     {
         SimpleScanStatus = "Finished";
         var findings = currentRun.Findings;
+        var canDisplayFindings = findings is { CanDisplayFindings: true };
         var displayedItems = new List<string>();
-        var instanceCount = findings?.Instances.Count ?? 0;
-        var otherTargetHitCount = findings?.OtherTargets.Sum(target => target.Hits.Count) ?? 0;
+        var instanceCount = canDisplayFindings ? findings!.Instances.Count : 0;
+        var otherTargetHitCount = canDisplayFindings ? findings!.OtherTargets.Sum(target => target.Hits.Count) : 0;
         SimpleDetectedCount = instanceCount + otherTargetHitCount;
 
-        if (findings is not null)
+        if (canDisplayFindings)
         {
-            foreach (var finding in findings.Instances.Take(MaximumSimpleVisibleItems))
+            foreach (var finding in findings!.Instances.Take(MaximumSimpleVisibleItems))
             {
                 var identifier = finding.DisplayValue("Identifier");
                 var relayHost = finding.DisplayValue("RelayHost");
@@ -588,12 +589,16 @@ public partial class InvestigationViewModel : ViewModelBase
         SimpleDetectedItemsNote = SimpleDetectedCount > displayedItems.Count
             ? $"Showing {displayedItems.Count} of {SimpleDetectedCount} detected items."
             : string.Empty;
-        SimpleDetectionSummary = currentRun.IsSuccessfulCompletion && findings is { IsClean: true }
+        SimpleDetectionSummary = currentRun.IsSuccessfulCompletion && findings is { CanDisplayFindings: true, IsClean: true }
             ? "No detections found."
             : string.Empty;
-        SimpleIncompleteCaution = currentRun.IsSuccessfulCompletion && findings is { IsComplete: true }
-            ? string.Empty
-            : "Results are incomplete; detections may be missing.";
+        SimpleIncompleteCaution = findings is { HasIdentityMismatch: true }
+            ? "Findings identity does not match this run; results are inconclusive and detections are not shown."
+            : findings is { CanDisplayFindings: false }
+                ? "Findings could not be validated for this run; results are inconclusive and detections are not shown."
+                : currentRun.IsSuccessfulCompletion && findings is { IsComplete: true }
+                    ? string.Empty
+                    : "Results are incomplete; detections may be missing.";
     }
 
     private static string SimpleHitLabel(JsonElement hit)

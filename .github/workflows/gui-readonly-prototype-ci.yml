@@ -87,6 +87,9 @@ jobs:
           }
           $testScratch = Join-Path $env:RUNNER_TEMP 'gui-packaging-safety-tests'
           ./tests/gui/packaging/PackagingSafetyTests.ps1 -ScratchRoot $testScratch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./tests/gui/packaging/PublishedGuiCleanupTests.ps1 -ScratchRoot $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build the WPF GUI in Release
         shell: pwsh
