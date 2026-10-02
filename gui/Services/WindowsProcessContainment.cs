@@ -90,11 +90,26 @@ internal sealed class NativeWindowsJobApi : IWindowsJobApi
 
 internal sealed class WindowsProcessStartException : Exception
 {
-    public WindowsProcessStartException(bool terminationConfirmed)
-        : base("The suspended adapter process could not be safely contained or started.") =>
+    public WindowsProcessStartException(bool terminationConfirmed, Exception cause)
+        : base(CreateSafeMessage(cause))
+    {
         TerminationConfirmed = terminationConfirmed;
+        FailureKind = cause.GetType().Name;
+        NativeErrorCode = cause is Win32Exception win32Error ? win32Error.NativeErrorCode : null;
+    }
 
     public bool TerminationConfirmed { get; }
+    public string FailureKind { get; }
+    public int? NativeErrorCode { get; }
+
+    private static string CreateSafeMessage(Exception cause)
+    {
+        ArgumentNullException.ThrowIfNull(cause);
+        var nativeCode = cause is Win32Exception win32Error
+            ? $", native error {win32Error.NativeErrorCode}"
+            : string.Empty;
+        return $"The suspended adapter process could not be safely contained or started (failure kind: {cause.GetType().Name}{nativeCode}).";
+    }
 }
 
 internal enum WindowsJobEmptyState
@@ -149,6 +164,9 @@ internal sealed class WindowsProcessContainment : IDisposable
         SafeFileHandle? stdoutWrite = null;
         SafeFileHandle? stderrRead = null;
         SafeFileHandle? stderrWrite = null;
+        FileStream? outputFileStream = null;
+        StreamReader? outputReader = null;
+        Stream? errorStream = null;
         var assignedToJob = false;
         try
         {
@@ -172,21 +190,30 @@ internal sealed class WindowsProcessContainment : IDisposable
             thread.Dispose();
             thread = null;
 
-            var outputReader = new StreamReader(
-                new FileStream(stdoutRead, FileAccess.Read, 4096, isAsync: true),
+            // CreatePipe anonymous-pipe handles are synchronous; they cannot use overlapped I/O.
+            // FileStream's async read APIs remain safe to call with isAsync:false.
+            outputFileStream = new FileStream(stdoutRead, FileAccess.Read, 4096, isAsync: false);
+            stdoutRead = null;
+            outputReader = new StreamReader(
+                outputFileStream,
                 Encoding.Default,
                 detectEncodingFromByteOrderMarks: true);
-            stdoutRead = null;
-            var errorStream = new FileStream(stderrRead, FileAccess.Read, 4096, isAsync: true);
+            outputFileStream = null;
+            errorStream = new FileStream(stderrRead, FileAccess.Read, 4096, isAsync: false);
             stderrRead = null;
             var result = new WindowsProcessContainment(jobApi, process, job, outputReader, errorStream);
             process = null;
             job = null;
+            outputReader = null;
+            errorStream = null;
             return result;
         }
-        catch
+        catch (Exception cause)
         {
             var terminationConfirmed = TerminatePartialStart(jobApi, job, process, assignedToJob);
+            DisposeQuietly(outputReader);
+            DisposeQuietly(outputFileStream);
+            DisposeQuietly(errorStream);
             DisposeQuietly(thread);
             DisposeQuietly(process);
             DisposeQuietly(stdoutRead);
@@ -194,7 +221,7 @@ internal sealed class WindowsProcessContainment : IDisposable
             DisposeQuietly(stderrRead);
             DisposeQuietly(stderrWrite);
             DisposeQuietly(job);
-            throw new WindowsProcessStartException(terminationConfirmed);
+            throw new WindowsProcessStartException(terminationConfirmed, cause);
         }
     }
 

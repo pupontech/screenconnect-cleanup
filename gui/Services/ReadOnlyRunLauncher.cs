@@ -567,7 +567,7 @@ internal sealed class WindowsPowerShellProcessRunner : ILauncherProcessRunner
         {
             return new LauncherProcessResult(
                 -1,
-                Error: "The read-only GUI process could not be safely contained or started.",
+                Error: error.Message,
                 PreserveRequest: !error.TerminationConfirmed);
         }
         catch

@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -297,6 +298,35 @@ public sealed class ReadOnlyRunLauncherTests
     }
 
     [Fact]
+    public void ProcessStartFailureDiagnosticsExposeOnlyFailureKindAndNativeCode()
+    {
+        var cause = new Win32Exception(87, "synthetic path and argv must not be exposed");
+        var error = new WindowsProcessStartException(terminationConfirmed: true, cause: cause);
+
+        Assert.Equal("Win32Exception", error.FailureKind);
+        Assert.Equal(87, error.NativeErrorCode);
+        Assert.Contains("failure kind: Win32Exception", error.Message, StringComparison.Ordinal);
+        Assert.Contains("native error 87", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("synthetic path", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("argv", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(error.InnerException);
+    }
+
+    [Fact]
+    public void WindowsAnonymousPipeStreamsUseSynchronousFileStreamHandles()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        using var fixture = new WindowsProcessFixture();
+        using var process = WindowsProcessContainment.Start(fixture.Request, new NativeWindowsJobApi());
+
+        var outputFile = Assert.IsType<FileStream>(process.StandardOutput.BaseStream);
+        var errorFile = Assert.IsType<FileStream>(process.StandardError);
+        Assert.False(outputFile.IsAsync);
+        Assert.False(errorFile.IsAsync);
+    }
+
+    [Fact]
     public async Task CancellationTerminatesSyntheticParentAndChildWithoutClaimingTreeExit()
     {
         if (!OperatingSystem.IsLinux()) return;
@@ -414,6 +444,7 @@ public sealed class ReadOnlyRunLauncherTests
         var result = await runner.RunAsync(fixture.Request, TimeSpan.FromSeconds(10), CancellationToken.None);
 
         Assert.NotNull(result.Error);
+        Assert.Contains("failure kind: InvalidOperationException", result.Error, StringComparison.Ordinal);
         Assert.False(result.PreserveRequest);
         Assert.False(File.Exists(fixture.MarkerPath));
         var assignIndex = jobApi.Calls.IndexOf("assign");
