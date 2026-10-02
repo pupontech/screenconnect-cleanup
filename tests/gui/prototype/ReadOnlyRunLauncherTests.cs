@@ -702,7 +702,26 @@ Start-Sleep -Seconds 60
             if (!Directory.Exists(Root)) return;
             if (ParentProcessId is int parentProcessId && !IsWindowsProcessStopped(parentProcessId)) return;
             if (ChildProcessId is int childProcessId && !IsWindowsProcessStopped(childProcessId)) return;
-            Directory.Delete(Root, recursive: true);
+            // Process/job assertions run before disposal. Windows can briefly keep
+            // directory handles during terminated console-helper teardown; retry
+            // that filesystem boundary only, and still fail if it stays locked.
+            var cleanup = Stopwatch.StartNew();
+            while (true)
+            {
+                try
+                {
+                    Directory.Delete(Root, recursive: true);
+                    return;
+                }
+                catch (DirectoryNotFoundException)
+                {
+                    return;
+                }
+                catch (IOException) when (cleanup.Elapsed < TimeSpan.FromSeconds(5))
+                {
+                    Thread.Sleep(25);
+                }
+            }
         }
     }
 
