@@ -1,0 +1,224 @@
+<UserControl x:Class="ScreenConnectCleanup.Gui.Views.InvestigationView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             UseLayoutRounding="True" SnapsToDevicePixels="True"
+             Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <Grid Margin="24">
+            <StackPanel>
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding DataContext.Investigation.IsAdvancedMode, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
+                                         Value="False">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
+                <TextBlock Text="Detect Only" Style="{DynamicResource ViewTitleStyle}" />
+                <Button Content="_Scan" Command="{Binding StartDetectOnlyCommand}"
+                        AutomationProperties.Name="Start simple Detect Only scan"
+                        HorizontalAlignment="Left" Padding="18,9" Margin="0,0,0,16" />
+                <TextBlock Text="{Binding SimpleScanStatus}" FontSize="18" FontWeight="SemiBold"
+                           AutomationProperties.Name="Simple scan status" />
+                <TextBlock Text="{Binding SimpleDetectionSummary}" TextWrapping="Wrap" Margin="0,8,0,0" />
+                <TextBlock Text="{Binding SimpleIncompleteCaution}" TextWrapping="Wrap" Margin="0,8,0,0" />
+                <TextBlock Text="Detected items" Style="{DynamicResource SectionHeaderStyle}" Margin="0,16,0,4" />
+                <TextBlock Text="{Binding SimpleDetectedCount}" AutomationProperties.Name="Simple detected item count" />
+                <ListBox ItemsSource="{Binding SimpleDetectedItems}" Margin="0,6,0,0"
+                         MinHeight="120" MaxHeight="300"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         AutomationProperties.Name="Simple detected items" />
+                <TextBlock Text="{Binding SimpleDetectedItemsNote}" TextWrapping="Wrap" Margin="0,6,0,0" />
+            </StackPanel>
+
+            <StackPanel>
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding DataContext.Investigation.IsAdvancedMode, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
+                                         Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
+            <TextBlock Text="{Binding Title}" Style="{DynamicResource ViewTitleStyle}" />
+            <Border Padding="14,10" Margin="0,0,0,12"
+                    BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                    BorderThickness="1"
+                    Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}">
+                <StackPanel>
+                    <TextBlock Text="Detect-only inspection" FontWeight="SemiBold" />
+                    <TextBlock Text="Detect Only runs the bounded detector and writes output artifacts. It may also write a detector transcript to the current user's Desktop. This GUI does not approve or perform cleanup, removal, scanning, AV uninstall, or upload. Full Investigation is unavailable because its snapshot path may load and unload the Amcache registry hive."
+                               TextWrapping="Wrap" Margin="0,4,0,0" />
+                </StackPanel>
+            </Border>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,16"
+                        KeyboardNavigation.TabNavigation="Once">
+                <Button Content="_Detect Only" Command="{Binding StartDetectOnlyCommand}"
+                        AutomationProperties.Name="Start Detect Only inspection"
+                        Margin="0,0,8,0" Padding="14,7" />
+                <Button Content="Full Investigation (Unavailable)"
+                        AutomationProperties.Name="Full Investigation unavailable because its snapshot may load and unload the Amcache registry hive"
+                        IsEnabled="False"
+                        Margin="0,0,8,0" Padding="14,7" />
+                <Button Content="_Cancel" Command="{Binding CancelRunCommand}"
+                        AutomationProperties.Name="Cancel the current Detect Only inspection"
+                        Padding="14,7" />
+            </StackPanel>
+
+            <StackPanel>
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasRealRun}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
+                <TextBlock Text="Current validated run" Style="{DynamicResource SectionHeaderStyle}" />
+                <Grid Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="Run ID" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding RunState.RunId}" Margin="0,3,0,0" />
+                        <TextBlock Text="Computer" FontWeight="SemiBold" Margin="0,8,0,0" />
+                        <TextBlock Text="{Binding RunState.ComputerName}" Margin="0,3,0,0" />
+                        <TextBlock Text="Run root" FontWeight="SemiBold" Margin="0,8,0,0" />
+                        <TextBlock Text="{Binding RunRoot}" TextWrapping="Wrap" Margin="0,3,0,0" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                        <TextBlock Text="Validated state" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                        <TextBlock Text="{Binding RunState.OverallStatus}" Margin="0,3,0,0"
+                                   AutomationProperties.Name="Validated run status" />
+                    </StackPanel>
+                </Grid>
+                <TextBlock Text="{Binding OperationStatus}" TextWrapping="Wrap" Margin="0,0,0,4"
+                           AutomationProperties.Name="Detect Only inspection status" />
+                <TextBlock Text="{Binding FindingsStatus}" TextWrapping="Wrap" Margin="0,0,0,8"
+                           AutomationProperties.Name="Validated findings status" />
+                <TextBlock Text="{Binding ElapsedTime}" Margin="0,0,0,8" />
+
+                <TextBlock Text="Validated pipeline stages" Style="{DynamicResource SectionHeaderStyle}" />
+                <ItemsControl ItemsSource="{Binding Stages}" AutomationProperties.Name="Validated pipeline stages">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Padding="10,8" Margin="0,0,0,6"
+                                    BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                                    BorderThickness="1">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="42" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding Id}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding Operation}" TextWrapping="Wrap" Margin="0,2,0,0" />
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="2" Text="{Binding Status}" VerticalAlignment="Center"
+                                               Margin="12,0,0,0" AutomationProperties.Name="Validated stage status" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <TextBlock Text="Run warnings" Style="{DynamicResource SectionHeaderStyle}" />
+                <ItemsControl ItemsSource="{Binding Warnings}" AutomationProperties.Name="Validated run warnings">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="0,0,0,4" /></DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <TextBlock Text="Run errors and validation issues" Style="{DynamicResource SectionHeaderStyle}" />
+                <ItemsControl ItemsSource="{Binding Errors}" AutomationProperties.Name="Run errors and validation issues">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="0,0,0,4" /></DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+
+            <StackPanel>
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasRealRun}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
+            <Border Style="{DynamicResource PreviewBannerStyle}" AutomationProperties.Name="Synthetic investigation notice">
+                <StackPanel>
+                    <TextBlock Text="Synthetic investigation timeline" FontWeight="SemiBold" />
+                    <TextBlock Text="Illustrative stage data only; it is not a detector result. Use Detect Only above to start an inspection. Full Investigation, cleanup, and later stages are unavailable in this prototype."
+                               TextWrapping="Wrap" Margin="0,4,0,0" />
+                </StackPanel>
+            </Border>
+
+            <Grid Margin="0,0,0,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="Sample run" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding RunState.RunId}" Margin="0,4,0,0" />
+                    <TextBlock Text="{Binding RunState.ComputerName}" Margin="0,2,0,0" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                    <TextBlock Text="Status" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                    <TextBlock Text="{Binding RunState.OverallStatus}" Margin="0,4,0,0"
+                               AutomationProperties.Name="Synthetic run status" />
+                </StackPanel>
+            </Grid>
+
+            <TextBlock Text="Ten-stage pipeline preview" Style="{DynamicResource SectionHeaderStyle}" />
+            <ItemsControl ItemsSource="{Binding Stages}" AutomationProperties.Name="Synthetic pipeline stages">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Padding="10,8" Margin="0,0,0,6"
+                                BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                                BorderThickness="1">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="42" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{Binding Id}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding Operation}" TextWrapping="Wrap" Margin="0,2,0,0" />
+                                </StackPanel>
+                                <TextBlock Grid.Column="2" Text="{Binding Status}" VerticalAlignment="Center"
+                                           Margin="12,0,0,0" AutomationProperties.Name="Stage status" />
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <TextBlock Text="Sample warnings" Style="{DynamicResource SectionHeaderStyle}" />
+            <ItemsControl ItemsSource="{Binding Warnings}" AutomationProperties.Name="Synthetic warnings" />
+
+            <TextBlock Text="Log preview" Style="{DynamicResource SectionHeaderStyle}" />
+            <TextBox Text="{Binding LogContent}" IsReadOnly="True" IsReadOnlyCaretVisible="True"
+                     TextWrapping="Wrap" MinHeight="72" Padding="10"
+                     AutomationProperties.Name="Synthetic log preview" />
+            </StackPanel>
+            </StackPanel>
+        </Grid>
+    </ScrollViewer>
+</UserControl>
