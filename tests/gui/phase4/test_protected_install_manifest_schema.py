@@ -16,6 +16,8 @@ from jsonschema import validators
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--powershell', default='pwsh')
+    parser.add_argument('--legacy-array-output', action='store_true',
+                        help='Exercise the legacy non-enumerating JSON-array output contract')
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[3]
     schema = json.loads((Path(__file__).with_name('protected-install-manifest.schema.json')).read_text())
@@ -89,7 +91,7 @@ param([string]$ValidatorPath, [string]$FixturesPath)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 . $ValidatorPath
-$cases = @(Get-Content -LiteralPath $FixturesPath -Raw | ConvertFrom-Json)
+$cases = Get-Content -LiteralPath $FixturesPath -Raw | ConvertFrom-Json
 $results = @()
 foreach ($case in $cases) {
     $encoding = New-Object System.Text.UTF8Encoding($false, $true)
@@ -109,6 +111,20 @@ foreach ($case in $cases) {
 }
 ConvertTo-Json -InputObject @($results) -Depth 4 -Compress
 """, encoding='ascii')
+        if args.legacy_array_output:
+            # This shim exercises collection shape, not native PS5.1 compatibility.
+            shim = r'''function ConvertFrom-Json {
+    [CmdletBinding()]
+    param([Parameter(ValueFromPipeline = $true)][string]$InputObject)
+    process {
+        $decoded = Microsoft.PowerShell.Utility\ConvertFrom-Json -InputObject $InputObject
+        Write-Output -NoEnumerate $decoded
+    }
+}
+'''
+            text = probe.read_text(encoding='ascii')
+            text = text.replace('. $ValidatorPath\n', shim + '. $ValidatorPath\n', 1)
+            probe.write_text(text, encoding='ascii')
         run = subprocess.run([powershell, '-NoLogo', '-NoProfile', '-NonInteractive', '-File', str(probe),
                               '-ValidatorPath', str(repo / 'gui-bridge/ProtectedInstallManifest.ps1'),
                               '-FixturesPath', str(fixtures)], capture_output=True, text=True,
