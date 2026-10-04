@@ -1,0 +1,123 @@
+name: gui-native-protection-ci
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/gui-native-protection-ci.yml'
+      - 'gui-bridge/ProtectedWindowsTrust.ps1'
+      - 'tests/gui/phase4/ProtectedWindowsTrustTests.ps1'
+      - 'tests/ci/Test-HouseRules.ps1'
+      - 'tests/ci/Test-Parse.ps1'
+  push:
+    branches: [main, feat/minimal-wpf-gui]
+    paths:
+      - '.github/workflows/gui-native-protection-ci.yml'
+      - 'gui-bridge/ProtectedWindowsTrust.ps1'
+      - 'tests/gui/phase4/ProtectedWindowsTrustTests.ps1'
+      - 'tests/ci/Test-HouseRules.ps1'
+      - 'tests/ci/Test-Parse.ps1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gui-native-protection-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-observer-ps51:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: powershell
+    env:
+      REVIEWED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout exact reviewed source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify identity and native PowerShell host
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $actual = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -cne $env:REVIEWED_SHA) { throw 'Reviewed checkout mismatch.' }
+          if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Native Windows proof requires Windows.' }
+          if ('powershell' -eq 'powershell' -and
+              ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1)) { throw 'Expected Windows PowerShell 5.1.' }
+          if ('powershell' -eq 'pwsh' -and $PSVersionTable.PSVersion.Major -lt 7) { throw 'Expected PowerShell 7.' }
+          Write-Host "Verified source $actual with Windows PowerShell $($PSVersionTable.PSVersion)."
+
+      - name: House rules and parser
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./tests/ci/Test-HouseRules.ps1
+          ./tests/ci/Test-Parse.ps1
+
+      - name: Execute actual native observer tests in runner-temp fixtures
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:TEMP = $env:RUNNER_TEMP
+          $env:TMP = $env:RUNNER_TEMP
+          $proof = @(& ./tests/gui/phase4/ProtectedWindowsTrustTests.ps1)
+          $proof | ForEach-Object { Write-Host $_ }
+          if (-not ($proof | Where-Object { $_ -match '^PASS: [0-9]+ assertions; Windows-native fixture checks executed[.]$' })) {
+            throw 'Missing native execution proof; non-Windows skips or compilation alone do not pass.'
+          }
+          Write-Host 'Only isolated synthetic fixture ACLs were exercised; no protected installation, UAC, accounts, detector, remover, rollback acquisition, scanner, external upload or reboot.'
+
+  native-observer-ps7:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      REVIEWED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout exact reviewed source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify identity and native PowerShell host
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $actual = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -cne $env:REVIEWED_SHA) { throw 'Reviewed checkout mismatch.' }
+          if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Native Windows proof requires Windows.' }
+          if ('pwsh' -eq 'powershell' -and
+              ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1)) { throw 'Expected Windows PowerShell 5.1.' }
+          if ('pwsh' -eq 'pwsh' -and $PSVersionTable.PSVersion.Major -lt 7) { throw 'Expected PowerShell 7.' }
+          Write-Host "Verified source $actual with Windows PowerShell $($PSVersionTable.PSVersion)."
+
+      - name: House rules and parser
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./tests/ci/Test-HouseRules.ps1
+          ./tests/ci/Test-Parse.ps1
+
+      - name: Execute actual native observer tests in runner-temp fixtures
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:TEMP = $env:RUNNER_TEMP
+          $env:TMP = $env:RUNNER_TEMP
+          $proof = @(& ./tests/gui/phase4/ProtectedWindowsTrustTests.ps1)
+          $proof | ForEach-Object { Write-Host $_ }
+          if (-not ($proof | Where-Object { $_ -match '^PASS: [0-9]+ assertions; Windows-native fixture checks executed[.]$' })) {
+            throw 'Missing native execution proof; non-Windows skips or compilation alone do not pass.'
+          }
+          Write-Host 'Only isolated synthetic fixture ACLs were exercised; no protected installation, UAC, accounts, detector, remover, rollback acquisition, scanner, external upload or reboot.'
