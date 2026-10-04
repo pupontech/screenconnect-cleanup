@@ -1,0 +1,105 @@
+name: gui-phase4-foundation-ci
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/gui-phase4-foundation-ci.yml'
+      - 'gui-bridge/Protected*.ps1'
+      - 'tests/gui/phase4/**'
+      - 'tests/ci/Test-HouseRules.ps1'
+      - 'tests/ci/Test-Parse.ps1'
+      - 'docs/GUI-FULL-WORKFLOW-DECISIONS.md'
+  push:
+    branches: [main, feat/minimal-wpf-gui]
+    paths:
+      - '.github/workflows/gui-phase4-foundation-ci.yml'
+      - 'gui-bridge/Protected*.ps1'
+      - 'tests/gui/phase4/**'
+      - 'tests/ci/Test-HouseRules.ps1'
+      - 'tests/ci/Test-Parse.ps1'
+      - 'docs/GUI-FULL-WORKFLOW-DECISIONS.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gui-phase4-foundation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pure-foundations:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+        shell: [powershell, pwsh]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      REVIEWED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout exact reviewed source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify checkout identity and PowerShell version
+        shell: ${{ matrix.shell }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $actual = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -cne $env:REVIEWED_SHA) { throw 'Reviewed checkout identity mismatch.' }
+          if ('${{ matrix.shell }}' -eq 'powershell' -and
+              ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1)) {
+            throw 'Expected Windows PowerShell 5.1.'
+          }
+          if ('${{ matrix.shell }}' -eq 'pwsh' -and $PSVersionTable.PSVersion.Major -lt 7) {
+            throw 'Expected PowerShell 7 or later.'
+          }
+          Write-Host "Verified source $actual with PowerShell $($PSVersionTable.PSVersion)."
+
+      - name: House rules and parser
+        shell: ${{ matrix.shell }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./tests/ci/Test-HouseRules.ps1
+          ./tests/ci/Test-Parse.ps1
+
+      - name: Set up Python for schema parity
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install the pinned schema validator
+        shell: pwsh
+        run: |
+          python -m pip install jsonschema==4.26.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Prove schema and PowerShell runtime agree
+        shell: ${{ matrix.shell }}
+        run: |
+          python tests/gui/phase4/test_protected_install_manifest_schema.py --powershell '${{ matrix.shell }}'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Execute every pure synthetic foundation suite
+        shell: ${{ matrix.shell }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $suites = @(
+            @{ Path = './tests/gui/phase4/ProtectedEvidenceTests.ps1'; Count = 360 },
+            @{ Path = './tests/gui/phase4/ProtectedPathPolicyTests.ps1'; Count = 48 },
+            @{ Path = './tests/gui/phase4/ProtectedRollbackProofTests.ps1'; Count = 191 },
+            @{ Path = './tests/gui/phase4/ProtectedInstallManifestTests.ps1'; Count = 231 }
+          )
+          foreach ($suite in $suites) {
+            $proof = @(& $suite.Path)
+            $proof | ForEach-Object { Write-Host $_ }
+            $expected = '^PASS: ' + $suite.Count + ' assertions;'
+            if (-not ($proof | Where-Object { $_ -match $expected })) {
+              throw "Missing executed assertion proof for $($suite.Path)."
+            }
+          }
+          Write-Host 'PASS: four pure synthetic suites executed; no live installer, ACL mutation, restore point, registry export, detector, remover, scanner, upload, or UAC action.'
