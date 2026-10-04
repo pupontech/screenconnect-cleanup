@@ -35,6 +35,9 @@ jobs:
         os: [windows-2022, windows-2025]
         shell: [powershell, pwsh]
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     timeout-minutes: 15
     env:
       REVIEWED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -46,7 +49,6 @@ jobs:
           persist-credentials: false
 
       - name: Verify checkout identity and PowerShell version
-        shell: ${{ matrix.shell }}
         run: |
           $ErrorActionPreference = 'Stop'
           $actual = (git rev-parse HEAD).Trim()
@@ -61,7 +63,6 @@ jobs:
           Write-Host "Verified source $actual with PowerShell $($PSVersionTable.PSVersion)."
 
       - name: House rules and parser
-        shell: ${{ matrix.shell }}
         run: |
           $ErrorActionPreference = 'Stop'
           ./tests/ci/Test-HouseRules.ps1
@@ -79,13 +80,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Prove schema and PowerShell runtime agree
-        shell: ${{ matrix.shell }}
         run: |
           python tests/gui/phase4/test_protected_install_manifest_schema.py --powershell '${{ matrix.shell }}'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Execute every pure synthetic foundation suite
-        shell: ${{ matrix.shell }}
         run: |
           $ErrorActionPreference = 'Stop'
           $suites = @(
