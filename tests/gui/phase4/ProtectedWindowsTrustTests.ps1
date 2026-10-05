@@ -44,6 +44,10 @@ Assert-True $nativeSourceMatch.Success 'the exact production C# here-string is p
 Assert-True $fixtureSourceMatch.Success 'the exact fixture C# here-string is present for compilation on every platform'
 Add-Type -TypeDefinition $nativeSourceMatch.Groups[1].Value -Language CSharp -ErrorAction Stop | Out-Null
 Add-Type -TypeDefinition $fixtureSourceMatch.Groups[1].Value -Language CSharp -ErrorAction Stop | Out-Null
+$fixtureSetupMethod = [regex]::Match($fixtureSourceMatch.Groups[1].Value, '(?s)public static bool SetDaclSddl\(.*?\n    \}')
+$fixtureSetupBody = if ($fixtureSetupMethod.Success) { $fixtureSetupMethod.Groups[0].Value } else { '' }
+Assert-True ($fixtureSetupMethod.Success -and $fixtureSetupBody -match 'HeldHandlesByPath\.TryGetValue\(path,\s*out fixtureHandle\)' -and $fixtureSetupBody -notmatch '\bCreateFile\s*\(') 'fixture DACL setup reuses its pre-opened recovery handle and never reopens WRITE_DAC after the owner deny is applied'
+Assert-True ($fixtureSetupBody -match 'LastSetupSddlValid\s*=\s*true' -and $fixtureSourceMatch.Groups[1].Value -match 'GetLastSetupDiagnostic\(\)' -and $fixtureSourceMatch.Groups[1].Value -match 'sddl=') 'native fixture failure diagnostics identify phase, Win32 error, and SDDL conversion validity without logging the SDDL or path'
 
 $normalizer = @([ProtectedWindowsTrust.NativeVerifier].GetMethods([System.Reflection.BindingFlags]::NonPublic -bor [System.Reflection.BindingFlags]::Static) | Where-Object {
     $_.Name -ceq 'MarkIncompleteEvidence' -and $_.GetParameters().Count -eq 2 -and $_.GetParameters()[0].ParameterType.Name -ceq 'ObjectEvidence'
@@ -156,6 +160,7 @@ $fixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('ProtectedWindowsTru
 $fixturePaths = @{}
 $failure = $null
 $cleanupFailure = $null
+$cleanupDiagnostic = ''
 $impersonationActive = $false
 try {
     [void][System.IO.Directory]::CreateDirectory($fixtureRoot)
@@ -175,10 +180,31 @@ try {
 using System;
 using System.Runtime.InteropServices;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Security.Principal;
 public static class ProtectedWindowsTrustFixtureNative
 {
     private static readonly List<IntPtr> HeldHandles = new List<IntPtr>();
+    private sealed class HeldFixtureHandle
+    {
+        public IntPtr Handle;
+        public bool Directory;
+        public bool Reparse;
+    }
+    private static readonly Dictionary<string, HeldFixtureHandle> HeldHandlesByPath = new Dictionary<string, HeldFixtureHandle>(StringComparer.OrdinalIgnoreCase);
+    private static string LastRecoveryHandlePhase = "NotStarted";
+    private static int LastRecoveryHandleErrorCode;
+    private static string LastSetupPhase = "NotStarted";
+    private static int LastSetupErrorCode;
+    private static bool LastSetupSddlValid;
+    private static string LastCleanupPhase = "NotStarted";
+    private static int LastCleanupErrorCode;
+    private static int RestoredHandleCount;
+    private static int ClosedHandleCount;
+    private static int CleanupHandleCount;
+    private static int CleanupAdditionalErrorCount;
+    private static int CleanupCloseErrorCode;
+    private static int CleanupCloseFailureCount;
     private static IntPtr RestrictedImpersonationToken = IntPtr.Zero;
     [StructLayout(LayoutKind.Sequential)]
     private struct SidAndAttributes
@@ -243,6 +269,27 @@ public static class ProtectedWindowsTrustFixtureNative
     [DllImport("advapi32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool EqualSid(IntPtr firstSid, IntPtr secondSid);
+
+    private static string FormatFixtureDiagnostic(string phase, int errorCode)
+    {
+        string boundedPhase = phase.Length > 32 ? phase.Substring(0, 32) : phase;
+        return "phase=" + boundedPhase + ";win32=" + unchecked((uint)errorCode).ToString(CultureInfo.InvariantCulture);
+    }
+
+    public static string GetLastRecoveryHandleDiagnostic()
+    {
+        return FormatFixtureDiagnostic(LastRecoveryHandlePhase, LastRecoveryHandleErrorCode);
+    }
+
+    public static string GetLastSetupDiagnostic()
+    {
+        return FormatFixtureDiagnostic(LastSetupPhase, LastSetupErrorCode) + ";sddl=" + (LastSetupSddlValid ? "valid" : "invalid");
+    }
+
+    public static string GetLastCleanupDiagnostic()
+    {
+        return FormatFixtureDiagnostic(LastCleanupPhase, LastCleanupErrorCode) + ";restored=" + RestoredHandleCount.ToString(CultureInfo.InvariantCulture) + ";closed=" + ClosedHandleCount.ToString(CultureInfo.InvariantCulture) + ";handles=" + CleanupHandleCount.ToString(CultureInfo.InvariantCulture) + ";additionalErrors=" + CleanupAdditionalErrorCount.ToString(CultureInfo.InvariantCulture) + ";closeWin32=" + unchecked((uint)CleanupCloseErrorCode).ToString(CultureInfo.InvariantCulture) + ";closeFailures=" + CleanupCloseFailureCount.ToString(CultureInfo.InvariantCulture);
+    }
 
     private static bool ReadTokenUInt32(IntPtr token, int infoClass, out uint value)
     {
@@ -467,55 +514,192 @@ public static class ProtectedWindowsTrustFixtureNative
 
     public static bool HoldRestoreHandle(string path, bool directory, bool reparse)
     {
+        LastRecoveryHandlePhase = "OpenRecoveryHandle";
+        LastRecoveryHandleErrorCode = 0;
+        if (String.IsNullOrEmpty(path))
+        {
+            LastRecoveryHandlePhase = "InvalidFixturePath";
+            LastRecoveryHandleErrorCode = 87;
+            return false;
+        }
         uint flags = directory ? 0x02000000 : 0u;
         if (reparse) flags |= 0x00200000;
         IntPtr handle = CreateFile(path, 0x00040000 | 0x00020000, 7, IntPtr.Zero, 3, flags, IntPtr.Zero);
-        if (handle == IntPtr.Zero || handle == new IntPtr(-1)) return false;
+        if (handle == IntPtr.Zero || handle == new IntPtr(-1))
+        {
+            LastRecoveryHandleErrorCode = Marshal.GetLastWin32Error();
+            return false;
+        }
+        if (HeldHandlesByPath.ContainsKey(path))
+        {
+            LastRecoveryHandlePhase = "DuplicateFixturePath";
+            LastRecoveryHandleErrorCode = 183;
+            if (!CloseHandle(handle))
+            {
+                LastRecoveryHandlePhase = "CloseDuplicateHandle";
+                LastRecoveryHandleErrorCode = Marshal.GetLastWin32Error();
+            }
+            return false;
+        }
         HeldHandles.Add(handle);
+        HeldHandlesByPath.Add(path, new HeldFixtureHandle { Handle = handle, Directory = directory, Reparse = reparse });
+        LastRecoveryHandlePhase = "Complete";
         return true;
     }
 
     public static bool SetDaclSddl(string path, bool directory, string sddl)
     {
         IntPtr descriptor = IntPtr.Zero;
-        IntPtr handle = IntPtr.Zero;
         uint descriptorSize;
+        bool success = false;
+        LastSetupPhase = "ConvertSddl";
+        LastSetupErrorCode = 0;
+        LastSetupSddlValid = false;
         try
         {
-            if (!ConvertSecurityDescriptor(sddl, 1, out descriptor, out descriptorSize)) return false;
-            uint flags = directory ? 0x02000000 : 0u;
-            handle = CreateFile(path, 0x00040000 | 0x00020000, 7, IntPtr.Zero, 3, flags, IntPtr.Zero);
-            if (handle == IntPtr.Zero || handle == new IntPtr(-1)) return false;
-            IntPtr dacl;
-            bool present;
-            bool defaulted;
-            if (!GetSecurityDescriptorDacl(descriptor, out present, out dacl, out defaulted) || !present || dacl == IntPtr.Zero) return false;
-            return SetSecurityInfo(handle, 1, 4, IntPtr.Zero, IntPtr.Zero, dacl, IntPtr.Zero) == 0;
+            if (!ConvertSecurityDescriptor(sddl, 1, out descriptor, out descriptorSize))
+            {
+                LastSetupErrorCode = Marshal.GetLastWin32Error();
+            }
+            else
+            {
+                LastSetupSddlValid = true;
+                LastSetupPhase = "FindPreopenedHandle";
+                HeldFixtureHandle fixtureHandle;
+                if (String.IsNullOrEmpty(path) || !HeldHandlesByPath.TryGetValue(path, out fixtureHandle) || fixtureHandle == null || fixtureHandle.Handle == IntPtr.Zero || fixtureHandle.Handle == new IntPtr(-1) || fixtureHandle.Directory != directory || fixtureHandle.Reparse)
+                {
+                    LastSetupErrorCode = 6;
+                }
+                else
+                {
+                    LastSetupPhase = "ReadSddlDacl";
+                    IntPtr dacl;
+                    bool present;
+                    bool defaulted;
+                    if (!GetSecurityDescriptorDacl(descriptor, out present, out dacl, out defaulted))
+                    {
+                        LastSetupErrorCode = Marshal.GetLastWin32Error();
+                    }
+                    else if (!present || dacl == IntPtr.Zero)
+                    {
+                        LastSetupErrorCode = 87;
+                    }
+                    else
+                    {
+                        LastSetupPhase = "SetFixtureDacl";
+                        LastSetupErrorCode = SetSecurityInfo(fixtureHandle.Handle, 1, 4, IntPtr.Zero, IntPtr.Zero, dacl, IntPtr.Zero);
+                        if (LastSetupErrorCode == 0)
+                        {
+                            LastSetupPhase = "Complete";
+                            success = true;
+                        }
+                    }
+                }
+            }
         }
         finally
         {
-            if (handle != IntPtr.Zero && handle != new IntPtr(-1)) CloseHandle(handle);
-            if (descriptor != IntPtr.Zero) LocalFree(descriptor);
+            if (descriptor != IntPtr.Zero && LocalFree(descriptor) != IntPtr.Zero)
+            {
+                LastSetupPhase = "FreeSddlDescriptor";
+                LastSetupErrorCode = Marshal.GetLastWin32Error();
+                success = false;
+            }
         }
+        return success;
     }
 
     public static bool RestoreAndClose()
     {
         IntPtr descriptor = IntPtr.Zero;
         uint ignoredSize;
-        bool success = ConvertSecurityDescriptor("D:(A;;GA;;;WD)", 1, out descriptor, out ignoredSize);
+        bool success = true;
+        LastCleanupPhase = "ConvertRestoreSddl";
+        LastCleanupErrorCode = 0;
+        RestoredHandleCount = 0;
+        ClosedHandleCount = 0;
+        CleanupHandleCount = HeldHandles.Count;
+        CleanupAdditionalErrorCount = 0;
+        CleanupCloseErrorCode = 0;
+        CleanupCloseFailureCount = 0;
         IntPtr dacl = IntPtr.Zero;
         bool present = false;
         bool defaulted = false;
-        if (success) success = GetSecurityDescriptorDacl(descriptor, out present, out dacl, out defaulted) && present && dacl != IntPtr.Zero;
+        if (!ConvertSecurityDescriptor("D:(A;;GA;;;WD)", 1, out descriptor, out ignoredSize))
+        {
+            LastCleanupErrorCode = Marshal.GetLastWin32Error();
+            success = false;
+        }
+        else
+        {
+            LastCleanupPhase = "ReadRestoreDacl";
+            if (!GetSecurityDescriptorDacl(descriptor, out present, out dacl, out defaulted))
+            {
+                LastCleanupErrorCode = Marshal.GetLastWin32Error();
+                success = false;
+            }
+            else if (!present || dacl == IntPtr.Zero)
+            {
+                LastCleanupErrorCode = 87;
+                success = false;
+            }
+        }
         if (success)
         {
+            LastCleanupPhase = "RestoreFixtureDacl";
             foreach (IntPtr handle in HeldHandles)
-                if (SetSecurityInfo(handle, 1, 4, IntPtr.Zero, IntPtr.Zero, dacl, IntPtr.Zero) != 0) success = false;
+            {
+                int errorCode = SetSecurityInfo(handle, 1, 4, IntPtr.Zero, IntPtr.Zero, dacl, IntPtr.Zero);
+                if (errorCode == 0) RestoredHandleCount++;
+                else
+                {
+                    if (LastCleanupErrorCode == 0) LastCleanupErrorCode = errorCode;
+                    else CleanupAdditionalErrorCount++;
+                    success = false;
+                }
+            }
         }
-        if (descriptor != IntPtr.Zero) LocalFree(descriptor);
-        foreach (IntPtr handle in HeldHandles) if (!CloseHandle(handle)) success = false;
+        if (descriptor != IntPtr.Zero)
+        {
+            if (LocalFree(descriptor) != IntPtr.Zero)
+            {
+                int freeErrorCode = Marshal.GetLastWin32Error();
+                if (LastCleanupErrorCode == 0)
+                {
+                    LastCleanupPhase = "FreeRestoreDescriptor";
+                    LastCleanupErrorCode = freeErrorCode;
+                }
+                else CleanupAdditionalErrorCount++;
+                success = false;
+            }
+        }
+        LastCleanupPhase = success ? "CloseRecoveryHandles" : LastCleanupPhase;
+        foreach (IntPtr handle in HeldHandles)
+        {
+            if (CloseHandle(handle)) ClosedHandleCount++;
+            else
+            {
+                int closeErrorCode = Marshal.GetLastWin32Error();
+                if (CleanupCloseFailureCount == 0) CleanupCloseErrorCode = closeErrorCode;
+                CleanupCloseFailureCount++;
+                if (LastCleanupErrorCode == 0)
+                {
+                    LastCleanupPhase = "CloseRecoveryHandle";
+                    LastCleanupErrorCode = closeErrorCode;
+                }
+                else CleanupAdditionalErrorCount++;
+                success = false;
+            }
+        }
+        if (success && (RestoredHandleCount != CleanupHandleCount || ClosedHandleCount != CleanupHandleCount))
+        {
+            LastCleanupPhase = "HandleCountMismatch";
+            LastCleanupErrorCode = 13;
+            success = false;
+        }
         HeldHandles.Clear();
+        HeldHandlesByPath.Clear();
+        if (success) LastCleanupPhase = "Complete";
         return success;
     }
 }
@@ -526,15 +710,15 @@ public static class ProtectedWindowsTrustFixtureNative
     $linkCreated = [ProtectedWindowsTrustFixtureNative]::CreateDirectorySymbolicLink($linkPath, $targetPath, 3)
     if (-not $linkCreated) { throw 'Windows test fixture could not create a directory symlink.' }
     if (-not [ProtectedWindowsTrustFixtureNative]::CreateDirectorySymbolicLink($ancestorLinkPath, $targetPath, 3)) { throw 'Windows ancestor reparse fixture could not be created.' }
-    if (-not [ProtectedWindowsTrustFixtureNative]::HoldRestoreHandle($fixtureRoot, $true, $false)) { throw 'Windows fixture recovery handle acquisition failed.' }
+    if (-not [ProtectedWindowsTrustFixtureNative]::HoldRestoreHandle($fixtureRoot, $true, $false)) { throw ('Windows fixture recovery handle acquisition failed (' + [ProtectedWindowsTrustFixtureNative]::GetLastRecoveryHandleDiagnostic() + ').') }
     foreach ($name in $fixtureNames) {
         $dir = Join-Path $fixtureRoot $name
         $file = Join-Path $dir 'object.bin'
-        if (-not [ProtectedWindowsTrustFixtureNative]::HoldRestoreHandle($dir, $true, $false)) { throw 'Windows fixture recovery handle acquisition failed.' }
-        if (-not [ProtectedWindowsTrustFixtureNative]::HoldRestoreHandle($file, $false, $false)) { throw 'Windows fixture recovery handle acquisition failed.' }
+        if (-not [ProtectedWindowsTrustFixtureNative]::HoldRestoreHandle($dir, $true, $false)) { throw ('Windows fixture recovery handle acquisition failed (' + [ProtectedWindowsTrustFixtureNative]::GetLastRecoveryHandleDiagnostic() + ').') }
+        if (-not [ProtectedWindowsTrustFixtureNative]::HoldRestoreHandle($file, $false, $false)) { throw ('Windows fixture recovery handle acquisition failed (' + [ProtectedWindowsTrustFixtureNative]::GetLastRecoveryHandleDiagnostic() + ').') }
     }
-    if (-not [ProtectedWindowsTrustFixtureNative]::HoldRestoreHandle($linkPath, $true, $true)) { throw 'Windows fixture reparse recovery handle acquisition failed.' }
-    if (-not [ProtectedWindowsTrustFixtureNative]::HoldRestoreHandle($ancestorLinkPath, $true, $true)) { throw 'Windows ancestor reparse recovery handle acquisition failed.' }
+    if (-not [ProtectedWindowsTrustFixtureNative]::HoldRestoreHandle($linkPath, $true, $true)) { throw ('Windows fixture reparse recovery handle acquisition failed (' + [ProtectedWindowsTrustFixtureNative]::GetLastRecoveryHandleDiagnostic() + ').') }
+    if (-not [ProtectedWindowsTrustFixtureNative]::HoldRestoreHandle($ancestorLinkPath, $true, $true)) { throw ('Windows ancestor reparse recovery handle acquisition failed (' + [ProtectedWindowsTrustFixtureNative]::GetLastRecoveryHandleDiagnostic() + ').') }
 
     $adminSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')
     $systemSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
@@ -601,11 +785,11 @@ public static class ProtectedWindowsTrustFixtureNative
     Set-TestAcl -Path $fixturePaths['unsafe-owner'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]0) -ExtraSid $null -ProtectOwnerRights $false
     Set-TestAcl -Path $fixturePaths['unknown-principal'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]0) -ExtraSid $unknownSid
     Set-TestAcl -Path $fixturePaths['generic-write'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]0) -ExtraSid $null
-    if (-not [ProtectedWindowsTrustFixtureNative]::SetDaclSddl($fixturePaths['generic-write'], $false, 'D:(A;;FA;;;SY)(A;;FA;;;BA)(D;;0x00060000;;;OW)(A;;GW;;;BU)')) { throw 'Native GENERIC_WRITE ACE fixture setup failed.' }
+    if (-not [ProtectedWindowsTrustFixtureNative]::SetDaclSddl($fixturePaths['generic-write'], $false, 'D:(A;;FA;;;SY)(A;;FA;;;BA)(D;;0x00060000;;;OW)(A;;GW;;;BU)')) { throw ('Native GENERIC_WRITE ACE fixture setup failed (' + [ProtectedWindowsTrustFixtureNative]::GetLastSetupDiagnostic() + ').') }
     Set-TestAcl -Path $fixturePaths['generic-all'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]0) -ExtraSid $null
-    if (-not [ProtectedWindowsTrustFixtureNative]::SetDaclSddl($fixturePaths['generic-all'], $false, 'D:(A;;FA;;;SY)(A;;FA;;;BA)(D;;0x00060000;;;OW)(A;;GA;;;BU)')) { throw 'Native GENERIC_ALL ACE fixture setup failed.' }
+    if (-not [ProtectedWindowsTrustFixtureNative]::SetDaclSddl($fixturePaths['generic-all'], $false, 'D:(A;;FA;;;SY)(A;;FA;;;BA)(D;;0x00060000;;;OW)(A;;GA;;;BU)')) { throw ('Native GENERIC_ALL ACE fixture setup failed (' + [ProtectedWindowsTrustFixtureNative]::GetLastSetupDiagnostic() + ').') }
     Set-TestAcl -Path $fixturePaths['unsupported-ace'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]0) -ExtraSid $null
-    if (-not [ProtectedWindowsTrustFixtureNative]::SetDaclSddl($fixturePaths['unsupported-ace'], $false, 'D:(A;;FA;;;SY)(A;;FA;;;BA)(D;;0x00060000;;;OW)(OA;;0x00000002;00000000-0000-0000-0000-000000000000;;BU)')) { throw 'Native unsupported object-ACE fixture setup failed.' }
+    if (-not [ProtectedWindowsTrustFixtureNative]::SetDaclSddl($fixturePaths['unsupported-ace'], $false, 'D:(A;;FA;;;SY)(A;;FA;;;BA)(D;;0x00060000;;;OW)(OA;;0x00000002;00000000-0000-0000-0000-000000000000;;BU)')) { throw ('Native unsupported object-ACE fixture setup failed (' + [ProtectedWindowsTrustFixtureNative]::GetLastSetupDiagnostic() + ').') }
     Set-TestAcl -Path $fixturePaths['owner-missing-write-dac'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]0) -ExtraSid $null -OwnerRightsMode 'MissingWriteDac'
     Set-TestAcl -Path $fixturePaths['owner-missing-write-owner'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]0) -ExtraSid $null -OwnerRightsMode 'MissingWriteOwner'
     Set-TestAcl -Path $fixturePaths['owner-inherit-only'] -IsDirectory $true -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]0) -ExtraSid $null -OwnerRightsMode 'InheritOnly'
@@ -752,12 +936,18 @@ public static class ProtectedWindowsTrustFixtureNative
             $impersonationActive = $false
         }
         if ($null -ne ('ProtectedWindowsTrustFixtureNative' -as [type])) {
-            if (-not [ProtectedWindowsTrustFixtureNative]::RestoreAndClose()) { throw 'Fixture ACL restoration failed.' }
+            if (-not [ProtectedWindowsTrustFixtureNative]::RestoreAndClose()) {
+                $cleanupDiagnostic = [ProtectedWindowsTrustFixtureNative]::GetLastCleanupDiagnostic()
+                throw ('Fixture ACL restoration failed (' + $cleanupDiagnostic + ').')
+            }
         }
         if ([System.IO.Directory]::Exists($fixtureRoot)) { [System.IO.Directory]::Delete($fixtureRoot, $true) }
     } catch {
         $cleanupFailure = $_.Exception
     }
 }
-if ($null -ne $cleanupFailure) { throw 'Windows fixture cleanup failed; inspect only the GUID test directory under runner temp.' }
+if ($null -ne $cleanupFailure) {
+    if ([string]::IsNullOrEmpty($cleanupDiagnostic)) { throw 'Windows fixture cleanup failed; inspect only the GUID test directory under runner temp.' }
+    throw ('Windows fixture cleanup failed (' + $cleanupDiagnostic + '); inspect only the GUID test directory under runner temp.')
+}
 if ($null -ne $failure) { throw $failure }
