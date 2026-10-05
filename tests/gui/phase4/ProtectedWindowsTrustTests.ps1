@@ -59,6 +59,17 @@ foreach ($status in @('WalkIncomplete', 'RecheckIncomplete')) {
     Assert-True ($row.ObservationStatus -ceq $status) ("incomplete $status is explicitly labeled")
 }
 
+$testAst = [System.Management.Automation.Language.Parser]::ParseFile($MyInvocation.MyCommand.Path, [ref]$tokens, [ref]$parseErrors)
+$rightsMembers = @($testAst.FindAll({ param($node)
+    $node -is [System.Management.Automation.Language.MemberExpressionAst] -and
+    $node.Expression -is [System.Management.Automation.Language.TypeExpressionAst] -and
+    $node.Expression.TypeName.FullName -ceq 'System.Security.AccessControl.FileSystemRights'
+}, $true))
+$validRightsMembers = [Enum]::GetNames([System.Security.AccessControl.FileSystemRights])
+foreach ($member in $rightsMembers) {
+    Assert-True ($validRightsMembers -ccontains $member.Member.Value) 'Windows fixture uses an actual FileSystemRights enum member'
+}
+
 $pathCases = @(
     @{ Path = 'C:\'; Valid = $false; Code = 'RootPathRefused' },
     @{ Path = 'C:\ProgramData\Safe'; Valid = $true; Code = 'None' },
@@ -532,7 +543,7 @@ public static class ProtectedWindowsTrustFixtureNative
     $unknownSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-21-987654321-987654321-987654321-7777')
     $currentUserSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
     function Set-TestAcl {
-        param([string]$Path, [bool]$IsDirectory, [System.Security.Principal.SecurityIdentifier]$Owner, [System.Security.AccessControl.FileSystemRights]$UsersRights, [System.Security.Principal.SecurityIdentifier]$ExtraSid, [bool]$ProtectOwnerRights = $true, [System.Security.AccessControl.FileSystemRights]$DenyUsersRights = [System.Security.AccessControl.FileSystemRights]::None, [bool]$IncludeReadRule = $true, [string]$OwnerRightsMode = 'Both')
+        param([string]$Path, [bool]$IsDirectory, [System.Security.Principal.SecurityIdentifier]$Owner, [System.Security.AccessControl.FileSystemRights]$UsersRights, [System.Security.Principal.SecurityIdentifier]$ExtraSid, [bool]$ProtectOwnerRights = $true, [System.Security.AccessControl.FileSystemRights]$DenyUsersRights = [System.Security.AccessControl.FileSystemRights]0, [bool]$IncludeReadRule = $true, [string]$OwnerRightsMode = 'Both')
         if ($IsDirectory) { $acl = New-Object System.Security.AccessControl.DirectorySecurity }
         else { $acl = New-Object System.Security.AccessControl.FileSecurity }
         $acl.SetAccessRuleProtection($true, $false)
@@ -559,11 +570,11 @@ public static class ProtectedWindowsTrustFixtureNative
             $readRule = New-Object System.Security.AccessControl.FileSystemAccessRule($usersSid, [System.Security.AccessControl.FileSystemRights]::ReadAndExecute, $inheritance, $propagation, [System.Security.AccessControl.AccessControlType]::Allow)
             $acl.AddAccessRule($readRule)
         }
-        if ($UsersRights -ne [System.Security.AccessControl.FileSystemRights]::None) {
+        if ($UsersRights -ne [System.Security.AccessControl.FileSystemRights]0) {
             $writeRule = New-Object System.Security.AccessControl.FileSystemAccessRule($usersSid, $UsersRights, $inheritance, $propagation, [System.Security.AccessControl.AccessControlType]::Allow)
             $acl.AddAccessRule($writeRule)
         }
-        if ($DenyUsersRights -ne [System.Security.AccessControl.FileSystemRights]::None) {
+        if ($DenyUsersRights -ne [System.Security.AccessControl.FileSystemRights]0) {
             $denyRule = New-Object System.Security.AccessControl.FileSystemAccessRule($usersSid, $DenyUsersRights, $inheritance, $propagation, [System.Security.AccessControl.AccessControlType]::Deny)
             $acl.AddAccessRule($denyRule)
         }
@@ -573,11 +584,11 @@ public static class ProtectedWindowsTrustFixtureNative
         }
         Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop
     }
-    Set-TestAcl -Path $fixtureRoot -IsDirectory $true -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]::None) -ExtraSid $null
+    Set-TestAcl -Path $fixtureRoot -IsDirectory $true -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]0) -ExtraSid $null
     foreach ($name in $fixtureNames) {
-        Set-TestAcl -Path (Split-Path -Parent $fixturePaths[$name]) -IsDirectory $true -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]::None) -ExtraSid $null
+        Set-TestAcl -Path (Split-Path -Parent $fixturePaths[$name]) -IsDirectory $true -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]0) -ExtraSid $null
     }
-    Set-TestAcl -Path $fixturePaths.safe -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]::None) -ExtraSid $null
+    Set-TestAcl -Path $fixturePaths.safe -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]0) -ExtraSid $null
     Set-TestAcl -Path $fixturePaths['read-control-only'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]::ReadPermissions) -ExtraSid $null -IncludeReadRule $false
     Set-TestAcl -Path $fixturePaths['unsafe-write'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]::WriteData) -ExtraSid $null
     Set-TestAcl -Path $fixturePaths['unsafe-denied-write'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]::WriteData) -ExtraSid $null -DenyUsersRights ([System.Security.AccessControl.FileSystemRights]::WriteData)
@@ -587,17 +598,17 @@ public static class ProtectedWindowsTrustFixtureNative
     Set-TestAcl -Path $fixturePaths['unsafe-delete-child'] -IsDirectory $true -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles) -ExtraSid $null
     Set-TestAcl -Path $fixturePaths['unsafe-acl'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]::ChangePermissions) -ExtraSid $null
     Set-TestAcl -Path $fixturePaths['unsafe-owner-right'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]::TakeOwnership) -ExtraSid $null -ProtectOwnerRights $false
-    Set-TestAcl -Path $fixturePaths['unsafe-owner'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]::None) -ExtraSid $null -ProtectOwnerRights $false
-    Set-TestAcl -Path $fixturePaths['unknown-principal'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]::None) -ExtraSid $unknownSid
-    Set-TestAcl -Path $fixturePaths['generic-write'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]::None) -ExtraSid $null
+    Set-TestAcl -Path $fixturePaths['unsafe-owner'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]0) -ExtraSid $null -ProtectOwnerRights $false
+    Set-TestAcl -Path $fixturePaths['unknown-principal'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]0) -ExtraSid $unknownSid
+    Set-TestAcl -Path $fixturePaths['generic-write'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]0) -ExtraSid $null
     if (-not [ProtectedWindowsTrustFixtureNative]::SetDaclSddl($fixturePaths['generic-write'], $false, 'D:(A;;FA;;;SY)(A;;FA;;;BA)(D;;0x00060000;;;OW)(A;;GW;;;BU)')) { throw 'Native GENERIC_WRITE ACE fixture setup failed.' }
-    Set-TestAcl -Path $fixturePaths['generic-all'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]::None) -ExtraSid $null
+    Set-TestAcl -Path $fixturePaths['generic-all'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]0) -ExtraSid $null
     if (-not [ProtectedWindowsTrustFixtureNative]::SetDaclSddl($fixturePaths['generic-all'], $false, 'D:(A;;FA;;;SY)(A;;FA;;;BA)(D;;0x00060000;;;OW)(A;;GA;;;BU)')) { throw 'Native GENERIC_ALL ACE fixture setup failed.' }
-    Set-TestAcl -Path $fixturePaths['unsupported-ace'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]::None) -ExtraSid $null
+    Set-TestAcl -Path $fixturePaths['unsupported-ace'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]0) -ExtraSid $null
     if (-not [ProtectedWindowsTrustFixtureNative]::SetDaclSddl($fixturePaths['unsupported-ace'], $false, 'D:(A;;FA;;;SY)(A;;FA;;;BA)(D;;0x00060000;;;OW)(OA;;0x00000002;00000000-0000-0000-0000-000000000000;;BU)')) { throw 'Native unsupported object-ACE fixture setup failed.' }
-    Set-TestAcl -Path $fixturePaths['owner-missing-write-dac'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]::None) -ExtraSid $null -OwnerRightsMode 'MissingWriteDac'
-    Set-TestAcl -Path $fixturePaths['owner-missing-write-owner'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]::None) -ExtraSid $null -OwnerRightsMode 'MissingWriteOwner'
-    Set-TestAcl -Path $fixturePaths['owner-inherit-only'] -IsDirectory $true -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]::None) -ExtraSid $null -OwnerRightsMode 'InheritOnly'
+    Set-TestAcl -Path $fixturePaths['owner-missing-write-dac'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]0) -ExtraSid $null -OwnerRightsMode 'MissingWriteDac'
+    Set-TestAcl -Path $fixturePaths['owner-missing-write-owner'] -IsDirectory $false -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]0) -ExtraSid $null -OwnerRightsMode 'MissingWriteOwner'
+    Set-TestAcl -Path $fixturePaths['owner-inherit-only'] -IsDirectory $true -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]0) -ExtraSid $null -OwnerRightsMode 'InheritOnly'
     Set-TestAcl -Path $fixturePaths['ProgramData'] -IsDirectory $true -Owner $currentUserSid -UsersRights ([System.Security.AccessControl.FileSystemRights]::AppendData) -ExtraSid $null
 
     if (-not [ProtectedWindowsTrustFixtureNative]::BeginRestrictedStandardTokenImpersonation()) {
