@@ -67,7 +67,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "1.7.54"
+$ScriptVersion = "1.7.55"
 
 # ---------------------------------------------------------------------------
 # Embedded target defaults - keeps the script standalone if targets.json is

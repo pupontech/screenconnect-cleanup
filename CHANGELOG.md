@@ -3,6 +3,16 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.7.55] - 2026-10-07
+**TESTING ONLY - not production-validated. Owner live Windows testing is required before production use.**
+- After UAC and before the keep-awake helper or any cleanup setup, START-HERE
+  checks Windows AC-line status. When AC is disconnected, a modal warning
+  requires an explicit "Confirm and continue" click; Cancel is the default and
+  exits before the run starts.
+- Added a PS 5.1-compatible native power-status helper, a non-interactive
+  classifier self-test, and Windows CI coverage under PowerShell 5.1 and pwsh.
+  The visible dialog still requires an owner live check on a battery-powered PC.
+
 ## [1.7.54] - 2026-10-07
 **TESTING ONLY - not production-validated. Owner live Windows testing is required before production use.**
 - `START-HERE.bat` now runs in a dedicated `cmd.exe` process and launches a

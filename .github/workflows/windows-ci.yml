@@ -110,6 +110,14 @@ jobs:
         shell: pwsh
         run: ./tests/ci/Test-KeepAwakeRuntime.ps1
 
+      - name: Battery warning classifier runtime (Windows PowerShell 5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/ci/Test-BatteryConfirmRuntime.ps1
+
+      - name: Battery warning classifier runtime (pwsh)
+        shell: pwsh
+        run: ./tests/ci/Test-BatteryConfirmRuntime.ps1
+
       - name: Scanner process contracts (powershell 5.1)
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/ci/Test-ScannerProcessContracts.ps1

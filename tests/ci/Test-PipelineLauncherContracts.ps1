@@ -402,6 +402,50 @@ if ($bundleBuilder -notmatch 'Keep-Awake\.ps1') {
     Add-Failure 'C13' 'make-deploy-bundle.sh does not include Keep-Awake.ps1 in deploy ZIPs.'
 }
 
+# --- C14: require confirmation before starting while on battery ----------------
+# The guided launcher must detect known AC-offline state after UAC and stop
+# before the keep-awake helper, run-root creation, or any cleanup stage unless
+# the technician explicitly confirms. The popup defaults to cancellation.
+$confirmBatteryPath = Join-Path $repoRoot 'tools\Confirm-OnBattery.ps1'
+if (-not (Test-Path -LiteralPath $confirmBatteryPath)) {
+    Add-Failure 'C14' 'tools\Confirm-OnBattery.ps1 is missing.'
+} else {
+    $confirmBattery = Read-AsciiText $confirmBatteryPath
+    if ($confirmBattery -notmatch 'GetSystemPowerStatus' -or $confirmBattery -notmatch 'ACLineStatus') {
+        Add-Failure 'C14' 'Confirm-OnBattery.ps1 does not read the Windows AC-line status.'
+    }
+    if ($confirmBattery -notmatch 'ACLineStatus\s*-eq\s*0') {
+        Add-Failure 'C14' 'Confirm-OnBattery.ps1 does not identify the disconnected-AC state.'
+    }
+    if ($confirmBattery -notmatch 'ShowDialog\(' -or $confirmBattery -notmatch 'Confirm and continue' -or $confirmBattery -notmatch 'Cancel') {
+        Add-Failure 'C14' 'Confirm-OnBattery.ps1 does not show a modal confirm/cancel warning.'
+    }
+    if ($confirmBattery -notmatch 'CancelButton' -or $confirmBattery -notmatch 'DialogResult.*Cancel') {
+        Add-Failure 'C14' 'Confirm-OnBattery.ps1 does not make cancellation the default/safe dialog outcome.'
+    }
+    if ($confirmBattery -notmatch 'SelfTest') {
+        Add-Failure 'C14' 'Confirm-OnBattery.ps1 is missing its non-interactive classifier self-test.'
+    }
+}
+$confirmBatteryAt = $startHereBat.IndexOf('Confirm-OnBattery.ps1')
+$confirmBatteryFailAt = $startHereBat.IndexOf('if errorlevel 1 goto :battery_not_confirmed')
+$keepAwakeStartedAt = $startHereBat.IndexOf('Keep-Awake.ps1')
+$runRootCreatedAt = $startHereBat.IndexOf('SCC_RUN_ROOT=%%R')
+if ($confirmBatteryAt -lt 0 -or $confirmBatteryFailAt -lt $confirmBatteryAt -or $keepAwakeStartedAt -lt $confirmBatteryFailAt -or $runRootCreatedAt -lt $confirmBatteryFailAt) {
+    Add-Failure 'C14' 'START-HERE.bat must abort on missing confirmation before keep-awake startup and run setup.'
+}
+if ($confirmBatteryAt -lt $elevationFinishedAt) {
+    Add-Failure 'C14' 'START-HERE.bat must check battery state after UAC elevation.'
+}
+$bundleBuilder = Read-AsciiText (Join-Path $repoRoot 'make-deploy-bundle.sh')
+if ($bundleBuilder -notmatch 'Confirm-OnBattery\.ps1') {
+    Add-Failure 'C14' 'make-deploy-bundle.sh does not include Confirm-OnBattery.ps1 in deploy ZIPs.'
+}
+$toolsIgnore = Read-AsciiText (Join-Path $repoRoot 'tools\.gitignore')
+if ($toolsIgnore -notmatch '(?m)^!Confirm-OnBattery\.ps1$') {
+    Add-Failure 'C14' 'tools/.gitignore does not permit tracking Confirm-OnBattery.ps1.'
+}
+
 if ($failures.Count -gt 0) {
     Write-Host ""
     Write-Host ("FAIL: {0} contract violation(s):" -f $failures.Count) -ForegroundColor Red
