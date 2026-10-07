@@ -5,10 +5,18 @@ rem  Steps 1-4 and 8-9 run automatically (tool download, preflight, snapshots,
 rem  detection, diff, report share). Step 5 asks ONE typed confirmation before
 rem  ScreenConnect removal. Steps 6-7 launch attended scanner/AV-uninstall work.
 rem  Self-elevates.
+rem  Requires explicit confirmation before starting when AC power is disconnected.
 rem  Pure ASCII, no BOM.
 rem ============================================================================
 
 setlocal EnableDelayedExpansion
+rem ---- Use a dedicated cmd.exe so the keep-awake helper has a bounded lifetime ----
+if not defined SCC_RUNNER_CHILD (
+    set "SCC_RUNNER_CHILD=1"
+    start "" /b /wait cmd.exe /d /s /c ""%~f0""
+    set "SCC_RUNNER_RC=!errorlevel!"
+    exit /b !SCC_RUNNER_RC!
+)
 title ScreenConnect Cleanup Tool
 
 rem ---- Self-elevate: relaunch as admin automatically if not already --------
@@ -30,6 +38,14 @@ if %errorlevel% neq 0 (
     exit /b
 )
 set "SCC_SELF="
+
+rem ---- Confirm battery power before starting any cleanup work ----------------
+powershell.exe -NoLogo -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0tools\Confirm-OnBattery.ps1"
+if errorlevel 1 goto :battery_not_confirmed
+
+rem ---- Keep the system and display awake for this runner only ----------------
+start "" powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0tools\Keep-Awake.ps1"
+if errorlevel 1 echo     [WARN] Keep-awake helper could not start; this computer may sleep during the run.
 
 cd /d "%~dp0"
 
@@ -296,3 +312,9 @@ exit /b 1
 
 :done
 exit /b !PIPE_RC!
+
+:battery_not_confirmed
+echo.
+echo [CANCELLED] Battery warning was not confirmed. No cleanup stages ran.
+pause
+exit /b 1

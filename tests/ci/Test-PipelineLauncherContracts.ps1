@@ -353,6 +353,99 @@ if ($cleanup -notmatch 'Could not copy report\.html to the Desktop') {
     Add-Failure 'C12' "sc-cleanup.ps1 Stage 9 does not fail visibly when the Desktop report copy fails."
 }
 
+# --- C13: keep the computer and display awake only for the guided runner -------
+# The monitor must own no machine-wide configuration. It requests execution
+# state only from a hidden helper process, watches the isolated runner cmd.exe,
+# and clears its request when that process exits.
+$keepAwakePath = Join-Path $repoRoot 'tools\Keep-Awake.ps1'
+if (-not (Test-Path -LiteralPath $keepAwakePath)) {
+    Add-Failure 'C13' 'tools\Keep-Awake.ps1 is missing.'
+} else {
+    $keepAwake = Read-AsciiText $keepAwakePath
+    $flagValues = @{
+        ES_CONTINUOUS = '0x80000000u'
+        ES_SYSTEM_REQUIRED = '0x00000001u'
+        ES_DISPLAY_REQUIRED = '0x00000002u'
+    }
+    foreach ($flag in @('ES_CONTINUOUS', 'ES_SYSTEM_REQUIRED', 'ES_DISPLAY_REQUIRED')) {
+        if ($keepAwake -notmatch ($flag + '\s*=\s*' + [regex]::Escape($flagValues[$flag]))) {
+            Add-Failure 'C13' ("Keep-Awake.ps1 assigns the wrong native value to {0}." -f $flag)
+        }
+    }
+    if ($keepAwake -notmatch 'SetThreadExecutionState') {
+        Add-Failure 'C13' 'Keep-Awake.ps1 does not call SetThreadExecutionState.'
+    }
+    if ($keepAwake -notmatch 'Win32_Process' -or $keepAwake -notmatch 'ParentProcessId') {
+        Add-Failure 'C13' 'Keep-Awake.ps1 does not identify its parent runner process.'
+    }
+    if ($keepAwake -notmatch '(?is)finally\s*\{.*?ES_CONTINUOUS') {
+        Add-Failure 'C13' 'Keep-Awake.ps1 does not clear the execution-state request in finally.'
+    }
+    if ($keepAwake -match '(?i)Caffeine|powercfg(?:\.exe)?|reg(?:\.exe)?\s+add|Set-ItemProperty|New-ItemProperty') {
+        Add-Failure 'C13' 'Keep-Awake.ps1 changes machine configuration or uses an external keep-awake tool.'
+    }
+}
+$keepAwakeLaunch = [regex]::Match($startHereBat, '(?im)^.*Keep-Awake\.ps1.*$')
+if (-not $keepAwakeLaunch.Success -or $keepAwakeLaunch.Value -notmatch 'start "" powershell\.exe' -or $keepAwakeLaunch.Value -notmatch '-WindowStyle Hidden') {
+    Add-Failure 'C13' 'START-HERE.bat does not launch the keep-awake helper as a hidden, detached PowerShell process.'
+}
+$elevationFinishedAt = $startHereBat.IndexOf('set "SCC_SELF="')
+$keepAwakeStartedAt = $startHereBat.IndexOf('Keep-Awake.ps1')
+if ($elevationFinishedAt -lt 0 -or $keepAwakeStartedAt -lt $elevationFinishedAt) {
+    Add-Failure 'C13' 'START-HERE.bat must start the helper only after the UAC/elevation branch completes.'
+}
+if ($startHereBat -notmatch '(?i)SCC_RUNNER_CHILD' -or $startHereBat -notmatch '(?i)cmd\.exe /d /s /c') {
+    Add-Failure 'C13' 'START-HERE.bat does not isolate its run in a dedicated cmd.exe process for reliable helper cleanup.'
+}
+$bundleBuilder = Read-AsciiText (Join-Path $repoRoot 'make-deploy-bundle.sh')
+if ($bundleBuilder -notmatch 'Keep-Awake\.ps1') {
+    Add-Failure 'C13' 'make-deploy-bundle.sh does not include Keep-Awake.ps1 in deploy ZIPs.'
+}
+
+# --- C14: require confirmation before starting while on battery ----------------
+# The guided launcher must detect known AC-offline state after UAC and stop
+# before the keep-awake helper, run-root creation, or any cleanup stage unless
+# the technician explicitly confirms. The popup defaults to cancellation.
+$confirmBatteryPath = Join-Path $repoRoot 'tools\Confirm-OnBattery.ps1'
+if (-not (Test-Path -LiteralPath $confirmBatteryPath)) {
+    Add-Failure 'C14' 'tools\Confirm-OnBattery.ps1 is missing.'
+} else {
+    $confirmBattery = Read-AsciiText $confirmBatteryPath
+    if ($confirmBattery -notmatch 'GetSystemPowerStatus' -or $confirmBattery -notmatch 'ACLineStatus') {
+        Add-Failure 'C14' 'Confirm-OnBattery.ps1 does not read the Windows AC-line status.'
+    }
+    if ($confirmBattery -notmatch 'ACLineStatus\s*-eq\s*0') {
+        Add-Failure 'C14' 'Confirm-OnBattery.ps1 does not identify the disconnected-AC state.'
+    }
+    if ($confirmBattery -notmatch 'ShowDialog\(' -or $confirmBattery -notmatch 'Confirm and continue' -or $confirmBattery -notmatch 'Cancel') {
+        Add-Failure 'C14' 'Confirm-OnBattery.ps1 does not show a modal confirm/cancel warning.'
+    }
+    if ($confirmBattery -notmatch 'CancelButton' -or $confirmBattery -notmatch 'DialogResult.*Cancel') {
+        Add-Failure 'C14' 'Confirm-OnBattery.ps1 does not make cancellation the default/safe dialog outcome.'
+    }
+    if ($confirmBattery -notmatch 'SelfTest') {
+        Add-Failure 'C14' 'Confirm-OnBattery.ps1 is missing its non-interactive classifier self-test.'
+    }
+}
+$confirmBatteryAt = $startHereBat.IndexOf('Confirm-OnBattery.ps1')
+$confirmBatteryFailAt = $startHereBat.IndexOf('if errorlevel 1 goto :battery_not_confirmed')
+$keepAwakeStartedAt = $startHereBat.IndexOf('Keep-Awake.ps1')
+$runRootCreatedAt = $startHereBat.IndexOf('SCC_RUN_ROOT=%%R')
+if ($confirmBatteryAt -lt 0 -or $confirmBatteryFailAt -lt $confirmBatteryAt -or $keepAwakeStartedAt -lt $confirmBatteryFailAt -or $runRootCreatedAt -lt $confirmBatteryFailAt) {
+    Add-Failure 'C14' 'START-HERE.bat must abort on missing confirmation before keep-awake startup and run setup.'
+}
+if ($confirmBatteryAt -lt $elevationFinishedAt) {
+    Add-Failure 'C14' 'START-HERE.bat must check battery state after UAC elevation.'
+}
+$bundleBuilder = Read-AsciiText (Join-Path $repoRoot 'make-deploy-bundle.sh')
+if ($bundleBuilder -notmatch 'Confirm-OnBattery\.ps1') {
+    Add-Failure 'C14' 'make-deploy-bundle.sh does not include Confirm-OnBattery.ps1 in deploy ZIPs.'
+}
+$toolsIgnore = Read-AsciiText (Join-Path $repoRoot 'tools\.gitignore')
+if ($toolsIgnore -notmatch '(?m)^!Confirm-OnBattery\.ps1\r?$') {
+    Add-Failure 'C14' 'tools/.gitignore does not permit tracking Confirm-OnBattery.ps1.'
+}
+
 if ($failures.Count -gt 0) {
     Write-Host ""
     Write-Host ("FAIL: {0} contract violation(s):" -f $failures.Count) -ForegroundColor Red

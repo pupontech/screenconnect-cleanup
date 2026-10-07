@@ -1,4 +1,4 @@
-# Windows Live-Test Matrix (validation checklist, current for v1.7.39)
+# Windows Live-Test Matrix (historical v1.7.39 checklist + v1.7.55 additions)
 
 This document is the exact validation checklist for the ScreenConnect Cleanup
 Tool. All items run on a dedicated, disposable Windows lab VM under Windows
@@ -25,12 +25,15 @@ exit 0. Any parse error here is a release blocker.
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Test-Parse.ps1
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Test-RemovalRuntimeContracts.ps1
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Test-PipelineLauncherContracts.ps1
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Test-KeepAwakeRuntime.ps1
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Test-ScannerProcessContracts.ps1
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Test-WindowsIntegration.ps1
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ci\Test-HouseRules.ps1
 
 Expected: "Parser check ... 0 with errors", "PASS: all pipeline-launcher
-contracts hold", scanner contracts OK (incl. the new agreement-flag and
+contracts hold", keep-awake runtime tests pass (native request/reset, normal
+runner exit, and forced runner termination), battery warning classifier tests
+pass under both PowerShell editions, scanner contracts OK (incl. the new agreement-flag and
 no-NAS assertions), removal runtime contracts OK, integration OK,
 "House rules OK".
 
@@ -259,6 +262,32 @@ MOVES them (never deletes) to `<LogDir>\av-uninstall-quarantine`.
 7b.2 `-Force` re-extracts; a folder missing VERSION or START-HERE.bat is
     auto-repaired (re-installed fresh).
 
+## 7c. START-HERE keep-awake behavior [NEW v1.7.54]
+
+7c.1 Windows CI's `Test-KeepAwakeRuntime.ps1` exercises the real native
+    SetThreadExecutionState request/reset and verifies the helper stays alive
+    while the isolated runner cmd.exe lives, then exits after normal completion
+    and forced termination. This does not simulate a physical sleep/display
+    timeout.
+7c.2 Owner live check (authorized lab machine only): run START-HERE and leave
+    it active through an attended scanner window. If safe, use a temporary short
+    idle timeout on the lab machine to confirm system and display stay awake;
+    close the runner normally and by closing its window, and confirm the machine
+    returns to its prior idle behavior. Restore any test-only power settings.
+    The shipped helper itself must never change the power plan or registry.
+
+## 7d. Battery-power confirmation [NEW v1.7.55]
+
+7d.1 Battery classifier CI runs `Test-BatteryConfirmRuntime.ps1` under Windows
+    PowerShell 5.1 and pwsh. It exercises AC-line status classification without
+    showing a dialog; it does not prove the interactive window is visible.
+7d.2 Owner live check (battery-powered Windows laptop): with AC disconnected,
+    start START-HERE and verify the warning appears before any run directory or
+    cleanup stage is created. Confirm that Cancel exits without starting the
+    helper or cleanup; rerun and click "Confirm and continue" to proceed. With
+    AC connected, verify no warning appears. If API status is unknown, the
+    launcher proceeds without the battery-specific prompt.
+
 ## 8. Release gate summary
 
 A release is blocked if ANY of the following fails on Windows PowerShell 5.1:
@@ -269,4 +298,7 @@ resume marker; results.json showing null AfterSnapshot/DiffPath/RemovalManifest
 after a normal run; a scanner that dies at launch being reported as Completed;
 a failed scanner download exiting 0; the report omitting scanner status (or
 implying clean when -sa was used); the UAC-disabled prompt not appearing (or
-not waiting); the installer hard-erroring on a same-version re-run.
+not waiting); the installer hard-erroring on a same-version re-run; the keep-awake
+runtime suite failing to reset the native request or leaving a helper after its
+runner exits; the battery warning failing to require explicit confirmation on
+AC-offline status, or Cancel allowing the cleanup runner to proceed.
