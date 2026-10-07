@@ -442,7 +442,7 @@ if ($bundleBuilder -notmatch 'Confirm-OnBattery\.ps1') {
     Add-Failure 'C14' 'make-deploy-bundle.sh does not include Confirm-OnBattery.ps1 in deploy ZIPs.'
 }
 $toolsIgnore = Read-AsciiText (Join-Path $repoRoot 'tools\.gitignore')
-if ($toolsIgnore -notmatch '(?m)^!Confirm-OnBattery\.ps1$') {
+if ($toolsIgnore -notmatch '(?m)^!Confirm-OnBattery\.ps1\r?$') {
     Add-Failure 'C14' 'tools/.gitignore does not permit tracking Confirm-OnBattery.ps1.'
 }
 
