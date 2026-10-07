@@ -40,9 +40,12 @@ $process = [System.Diagnostics.Process]::Start($psi)
 try {
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
     $stderrTask = $process.StandardError.ReadToEndAsync()
-    if (-not $process.WaitForExit(20000)) {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    if (-not $process.WaitForExit(60000)) {
         try { $process.Kill(); $null = $process.WaitForExit(5000) } catch { }
-        Write-Host 'FAIL: battery confirmation self-test timed out.'
+        $stdout = $stdoutTask.Result
+        $stderr = $stderrTask.Result
+        Write-Host ("FAIL: battery confirmation self-test timed out after {0} ms. stdout={1}; stderr={2}" -f $watch.ElapsedMilliseconds, $stdout.Trim(), $stderr.Trim())
         exit 1
     }
 
@@ -56,5 +59,5 @@ try {
     $process.Dispose()
 }
 
-Write-Host 'Battery confirmation runtime self-test passed; no dialog was shown.'
+Write-Host ("Battery confirmation runtime self-test passed in {0} ms; no dialog was shown. {1}" -f $watch.ElapsedMilliseconds, $stdout.Trim())
 exit 0

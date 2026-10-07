@@ -53,11 +53,15 @@ function Test-OnBattery {
 }
 
 if ($SelfTest) {
+    Write-Output 'ON_BATTERY_SELFTEST_TYPE_READY'
     if (-not (Test-OnBattery -ACLineStatus 0)) { throw 'AC-offline state was not recognized.' }
     if (Test-OnBattery -ACLineStatus 1) { throw 'AC-online state was misclassified as battery power.' }
     if (Test-OnBattery -ACLineStatus 255) { throw 'Unknown AC state was misclassified as battery power.' }
     if (Test-OnBattery -ACLineStatus -1) { throw 'Power-status API failure was misclassified as battery power.' }
+    Write-Output 'ON_BATTERY_SELFTEST_CLASSIFIER_OK'
+    Write-Output 'ON_BATTERY_SELFTEST_API_START'
     $actualStatus = [SccPowerStatusNative]::GetACLineStatus()
+    Write-Output 'ON_BATTERY_SELFTEST_API_RETURNED'
     if ($actualStatus -notin @(-1, 0, 1, 255)) { throw ('Unexpected ACLineStatus value: ' + $actualStatus) }
     Write-Output ('ON_BATTERY_SELFTEST_OK ACLineStatus=' + $actualStatus)
     exit 0
