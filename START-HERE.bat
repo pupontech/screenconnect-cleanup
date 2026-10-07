@@ -9,6 +9,13 @@ rem  Pure ASCII, no BOM.
 rem ============================================================================
 
 setlocal EnableDelayedExpansion
+rem ---- Use a dedicated cmd.exe so the keep-awake helper has a bounded lifetime ----
+if not defined SCC_RUNNER_CHILD (
+    set "SCC_RUNNER_CHILD=1"
+    start "" /b /wait cmd.exe /d /s /c ""%~f0""
+    set "SCC_RUNNER_RC=!errorlevel!"
+    exit /b !SCC_RUNNER_RC!
+)
 title ScreenConnect Cleanup Tool
 
 rem ---- Self-elevate: relaunch as admin automatically if not already --------
@@ -30,6 +37,10 @@ if %errorlevel% neq 0 (
     exit /b
 )
 set "SCC_SELF="
+
+rem ---- Keep the system and display awake for this runner only ----------------
+start "" powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0tools\Keep-Awake.ps1"
+if errorlevel 1 echo     [WARN] Keep-awake helper could not start; this computer may sleep during the run.
 
 cd /d "%~dp0"
 

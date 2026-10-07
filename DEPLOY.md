@@ -26,7 +26,8 @@ Get-MalwarebytesDownloadDiagnostics.ps1 <- read-only Malwarebytes filter/proxy f
 Invoke-AVUninstaller.ps1        <- opens installed-AV uninstallers, attended (Stage 6)
 tools\Get-ToolPack.ps1          <- downloader ONLY; do NOT copy tools\* exes
 tools\Get-AVTools.ps1           <- KVRT/ESET stager (Malwarebytes via winget since v1.7.3)
-docs\                           <- optional but recommended (work log + roadmap)
+tools\Keep-Awake.ps1            <- START-HERE-only system/display wake request, no installation
+docs\\                           <- optional but recommended (work log + roadmap)
 DEPLOY.md                       <- this file
 ```
 
@@ -74,6 +75,12 @@ failure; review the listed endpoints with the network/filter administrator.
 
 Requirements: Windows 10/11 or Server 2016+, PowerShell 5.1 (built in),
 local administrator, internet access for the tool pack and scanners.
+
+`START-HERE.bat` keeps Windows awake for the guided run, including its attended
+scanner windows. Its bundled hidden helper resets the execution-state request
+when the dedicated runner process ends. This is process-scoped only: no install,
+registry/power-plan change, or runtime file is created. Direct `sc-cleanup.ps1`
+runs do not start the helper.
 
 ```
 1. Copy screenconnect-cleanup-deploy.zip to the machine (USB / secure share).

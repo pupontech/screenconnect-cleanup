@@ -28,6 +28,9 @@ done
 [ -f "$SRC/README.md" ] && cp "$SRC/README.md" "$D/"
 [ -d "$SRC/docs" ] && cp -r "$SRC/docs" "$D/docs"
 
+# Keep-awake helper is required by START-HERE.bat.
+cp "$SRC/tools/Keep-Awake.ps1" "$D/tools/"
+
 # Optional tool-pack downloader/stager scripts. Copy when present, warn when not.
 missing_tools=""
 for f in Get-ToolPack.ps1 Get-AVTools.ps1; do
