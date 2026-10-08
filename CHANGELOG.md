@@ -3,6 +3,23 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.1] - 2026-10-08
+**TESTING ONLY - attended console visibility fix. Owner live acceptance remains required.**
+- Removed `-WindowStyle Hidden` from the foreground battery-check invocation:
+  it shares the elevated runner console and could hide that whole window while
+  the run continued at an unseen approval prompt. The separately started
+  keep-awake helper remains hidden. Battery confirmation and cancel behavior
+  are otherwise unchanged.
+- Added a harmless native Windows console-visibility regression with the old
+  Hidden flag as a negative control, plus continue/cancel stub paths. CI runs
+  it under PowerShell 5.1 and 7 and repeats it against the extracted ZIP.
+- Do not resume old hidden cleanup sessions blindly. Before retrying, close
+  only the identified old ScreenConnect cleanup/stub runs, or reboot after
+  saving work. Do not terminate unrelated cmd.exe processes.
+- Post-AV persistence and its separate typed approval are unchanged. The
+  agents do not run the real cleanup; actual UAC consent and battery dialog
+  acceptance remain owner-live tests.
+
 ## [1.8.0] - 2026-10-08
 **TESTING ONLY - post-AV persistence prototype. Owner live Windows acceptance is required.**
 - Added a mandatory persistence investigation after AV scans in both runners,
