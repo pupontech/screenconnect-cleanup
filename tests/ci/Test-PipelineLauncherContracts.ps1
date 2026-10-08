@@ -148,10 +148,17 @@ foreach ($name in $launchers) {
     if ($bat -notmatch 'set "?SCC_SELF=?=%~f0"?') {
         Add-Failure 'C3' ("{0}: SCC_SELF is never populated from %%~f0." -f $name)
     }
-    # Elevation failure must be visible, not swallowed by >nul 2>&1 + bare exit.
-    $elevBlock = [regex]::Match($bat, '(?ms)fltmc\.exe.*?\r?\n\)\r?\n')
+    # Elevation must be decided by the real admin token (no external probe) and
+    # must be bounded to ONE UAC request, so a wrong answer cannot loop prompts.
+    if ($bat -match '(?i)fltmc') {
+        Add-Failure 'C3' ("{0}: elevation still depends on the fltmc probe, which can misreport and re-prompt." -f $name)
+    }
+    if ($bat -notmatch 'WindowsBuiltInRole\]::Administrator') {
+        Add-Failure 'C3' ("{0}: elevation does not check the real administrator token." -f $name)
+    }
+    $elevBlock = [regex]::Match($bat, '(?ms)powershell[^\r\n]*WindowsBuiltInRole.*?\r?\n\)\r?\n')
     if (-not $elevBlock.Success) {
-        Add-Failure 'C3' ("{0}: could not locate the fltmc self-elevation block." -f $name)
+        Add-Failure 'C3' ("{0}: could not locate the token-based self-elevation block." -f $name)
     } else {
         if ($elevBlock.Value -match '>nul 2>&1\s*\r?\n\s*exit /b\s*$') {
             Add-Failure 'C3' ("{0}: elevation attempt is silenced with >nul 2>&1 and a silent 'exit /b' - a cancelled/blocked UAC prompt leaves no error." -f $name)
@@ -162,6 +169,15 @@ foreach ($name in $launchers) {
         if ($elevBlock.Value -notmatch 'pause') {
             Add-Failure 'C3' ("{0}: elevation failure path does not pause, so the window closes before the technician can read it." -f $name)
         }
+        if ($elevBlock.Value -notmatch '--elevation-attempted') {
+            Add-Failure 'C3' ("{0}: elevation block has no one-shot marker, so a still-unelevated window can prompt again." -f $name)
+        }
+        if ($elevBlock.Value -notmatch '"%~1"="?--elevation-attempted"?' -and $elevBlock.Value -notmatch '--elevation-attempted') {
+            Add-Failure 'C3' ("{0}: elevation block does not refuse a repeat attempt." -f $name)
+        }
+    }
+    if (([regex]::Matches($bat, '-Verb\s+RunAs')).Count -ne 1) {
+        Add-Failure 'C3' ("{0}: expected exactly one elevation request in the launcher." -f $name)
     }
 }
 

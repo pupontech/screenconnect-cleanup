@@ -3,6 +3,28 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.3] - 2026-10-08
+**TESTING ONLY - single UAC prompt per launch.**
+- Fixed repeated administrator prompts when opening the tool. The launcher
+  decided elevation with `fltmc.exe` and had no guard against asking again, so
+  a console that still reported "not elevated" after the UAC request relaunched
+  itself and prompted again, indefinitely, leaving several elevated windows
+  parked at the same step.
+- Elevation is now decided from the real administrator token, the relaunch
+  carries a one-shot `--elevation-attempted` marker, and a still-unelevated
+  window stops with clear "run as administrator" guidance instead of prompting
+  again. The dedicated-child wrapper forwards that marker.
+- `Run-DetectRemoteAccess.bat` uses the same bounded pattern and strips the
+  internal marker before forwarding its own arguments.
+- Added a fixture that replays the launcher's elevation region with a stub
+  `powershell.exe` and asserts: no request when already elevated, exactly one
+  request on the first unelevated run, and zero further requests once the
+  marker is present. Run under PowerShell 5.1 and 7, and against the extracted
+  ZIP. No real UAC prompt is shown by the fixture.
+- Third-party scanners (KVRT, ESET, Malwarebytes) still show their own Windows
+  elevation prompt when launched; that prompt belongs to the vendor binary and
+  cannot be suppressed by this tool.
+
 ## [1.8.2] - 2026-10-08
 **TESTING ONLY - persistence collection progress and hard deadlines.**
 - Fixed the silent unbounded wait at guided Step 6d: read-only inventory now

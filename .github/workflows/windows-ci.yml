@@ -129,6 +129,14 @@ jobs:
         shell: pwsh
         run: ./tests/ci/Test-BatteryConsoleVisibility.ps1
 
+      - name: Launcher elevation bound (Windows PowerShell 5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/ci/Test-LauncherElevationBound.ps1
+
+      - name: Launcher elevation bound (pwsh)
+        shell: pwsh
+        run: ./tests/ci/Test-LauncherElevationBound.ps1
+
       - name: Scanner process contracts (powershell 5.1)
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/ci/Test-ScannerProcessContracts.ps1
@@ -292,6 +300,12 @@ jobs:
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File $visibilityTest -RepositoryRoot $package
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pwsh -NoProfile -File $visibilityTest -RepositoryRoot $package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $elevationTest = Join-Path $env:RUNNER_TEMP 'Test-LauncherElevationBound.ps1'
+          Copy-Item -LiteralPath 'tests/ci/Test-LauncherElevationBound.ps1' -Destination $elevationTest
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File $elevationTest -RepositoryRoot $package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoProfile -File $elevationTest -RepositoryRoot $package
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $digest = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           [IO.File]::WriteAllText(($zip + '.sha256'), ($digest + '  ' + [IO.Path]::GetFileName($zip) + "`n"), [Text.Encoding]::ASCII)
