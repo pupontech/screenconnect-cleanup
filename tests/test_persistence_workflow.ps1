@@ -100,15 +100,19 @@ echo ReplayRC=!PIPE_RC!`r`nexit /b !PIPE_RC!`r`n"
     if(-not $failedReplay.WaitForExit(20000)){$failedReplay.Kill();throw 'cmd failure-path fixture exceeded its bounded wait.'}
     if($failedReplay.ExitCode -ne 3 -or $failedOut.Result -notmatch 'ReplayRC=3' -or $failedOut.Result -notmatch 'evidence will still be reported') {throw ('cmd failed persistence step did not continue truthfully: '+$failedOut.Result+' | '+$failedErr.Result)}
     # --- Step 6e replay: answering y opens the review; answering n skips it ---
+    # The answer is fed from a FILE redirect: `set /p` reading a child PIPE is not
+    # dependable (it silently leaves the variable empty, which the launcher treats
+    # as "yes"), while `< file` is the documented idiom.
     function Invoke-ReviewReplay([string]$Answer) {
         if(Test-Path -LiteralPath $logPath){Remove-Item -LiteralPath $logPath -Force}
+        $answerFile=Join-Path $work ('answer-'+$Answer+'.txt')
+        [IO.File]::WriteAllText($answerFile,($Answer+"`r`n"),[Text.Encoding]::ASCII)
         $info=New-Object Diagnostics.ProcessStartInfo
         $info.FileName=$cmd
-        $info.Arguments='/d /s /c ""'+$reviewBat+'"'
+        $info.Arguments='/d /s /c ""'+$reviewBat+'" < "'+$answerFile+'""'
         $info.UseShellExecute=$false;$info.CreateNoWindow=$true
-        $info.RedirectStandardInput=$true;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
+        $info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
         $proc=[Diagnostics.Process]::Start($info)
-        $proc.StandardInput.WriteLine($Answer);$proc.StandardInput.Close()
         $outTask=$proc.StandardOutput.ReadToEndAsync();$errTask=$proc.StandardError.ReadToEndAsync()
         if(-not $proc.WaitForExit(20000)){$proc.Kill();throw 'Step 6e replay exceeded its bounded wait.'}
         $rc=$proc.ExitCode
@@ -124,6 +128,7 @@ echo ReplayRC=!PIPE_RC!`r`nexit /b !PIPE_RC!`r`n"
     if($reviewYes.Text -notmatch 'STEP 6e/9'){throw 'Step 6e did not announce itself.'}
     if($reviewYes.Text -notmatch 'ReachedEnd'){throw 'Step 6e did not continue to the next step after the review.'}
     $reviewNo=Invoke-ReviewReplay 'n'
+    if(Test-Path -LiteralPath $logPath){throw ('Declining the review still launched it: '+(Get-Content -LiteralPath $logPath -Raw))}
     if($reviewNo.Calls.Count -ne 0){throw ('Declining the review still launched it: '+($reviewNo.Calls -join '|'))}
     if($reviewNo.Text -notmatch 'ReachedEnd'){throw 'Declining the review aborted the run instead of skipping the step.'}
     Remove-Item Env:SCC_STUB_RC -ErrorAction SilentlyContinue
