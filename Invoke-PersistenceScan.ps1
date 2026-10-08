@@ -92,7 +92,7 @@ if ($WhatIf) {
         Import-Module (Join-Path $PSScriptRoot 'Persistence.Inventory.psm1') -Force -ErrorAction Stop
         $null=Get-SccPersistenceInventory -OutDir $persistDir
         if (-not (Test-Path -LiteralPath $inventoryPath -PathType Leaf)) { throw 'Inventory module did not write inventory.json.' }
-        $inventoryObject=Get-Content -LiteralPath $inventoryPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        $inventoryObject=Get-Content -LiteralPath $inventoryPath -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
         $inventoryStatus=[string]$inventoryObject.Status
         if ($inventoryStatus -notin @('Complete','Incomplete','Unsupported')) { throw 'Inventory status is invalid.' }
         if ($inventoryStatus -ne 'Complete') { [void]$ErrorList.Add('Inventory collection status: '+$inventoryStatus); [void]$ErrorList.AddRange([object[]]@($inventoryObject.Errors)) }

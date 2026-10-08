@@ -60,7 +60,7 @@ if($env:OS -eq 'Windows_NT' -and (Get-Command cmd.exe -ErrorAction SilentlyConti
     # Framework csc creates an executable usable from cmd.exe in both host
     # editions; PowerShell 7 Add-Type cannot emit ConsoleApplication output.
     $stubSource=Join-Path $shimDir 'stub.cs'
-    [IO.File]::WriteAllText($stubSource,'using System; using System.IO; public class Stub { public static int Main(string[] args) { File.WriteAllLines(Environment.GetEnvironmentVariable("SCC_STUB_LOG"), args); return 0; } }',[Text.Encoding]::ASCII)
+    [IO.File]::WriteAllText($stubSource,'using System; using System.IO; public class Stub { public static int Main(string[] args) { File.WriteAllLines(Environment.GetEnvironmentVariable("SCC_STUB_LOG"), args); int rc=0; int.TryParse(Environment.GetEnvironmentVariable("SCC_STUB_RC"),out rc); return rc; } }',[Text.Encoding]::ASCII)
     $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
     if(-not(Test-Path -LiteralPath $compiler)){$compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe'}
     if(-not(Test-Path -LiteralPath $compiler)){throw 'Windows fixture C# compiler is unavailable.'}
@@ -73,11 +73,24 @@ if($env:OS -eq 'Windows_NT' -and (Get-Command cmd.exe -ErrorAction SilentlyConti
 echo ReplayRC=!PIPE_RC!`r`nexit /b !PIPE_RC!`r`n"
     [IO.File]::WriteAllText($fixtureBat,$fixtureText,[Text.Encoding]::ASCII)
     $cmd=(Get-Command cmd.exe).Source
-    $replayOutput=& $cmd /d /c ('""'+$fixtureBat+'""') 2>&1
-    if($LASTEXITCODE -ne 0){throw ('cmd Step 6d replay failed: '+($replayOutput -join ' | '))}
+    $cmdInfo=New-Object Diagnostics.ProcessStartInfo
+    $cmdInfo.FileName=$cmd
+    $cmdInfo.Arguments='/d /s /c ""'+$fixtureBat+'""'
+    $cmdInfo.UseShellExecute=$false;$cmdInfo.RedirectStandardOutput=$true;$cmdInfo.RedirectStandardError=$true
+    $cmdProcess=[Diagnostics.Process]::Start($cmdInfo)
+    $cmdOut=$cmdProcess.StandardOutput.ReadToEndAsync();$cmdErr=$cmdProcess.StandardError.ReadToEndAsync()
+    if(-not $cmdProcess.WaitForExit(20000)){$cmdProcess.Kill();throw 'cmd Step 6d fixture exceeded its bounded wait.'}
+    $replayOutput=$cmdOut.Result;$replayError=$cmdErr.Result
+    if($cmdProcess.ExitCode -ne 0){throw ('cmd Step 6d replay failed: '+$replayOutput+' | '+$replayError)}
     $stubArgs=Get-Content -LiteralPath $logPath
     if($stubArgs -notcontains '-WorkDir' -or $stubArgs -notcontains $work -or $stubArgs -notcontains '-PreflightRoot'){throw 'cmd Step 6d replay lost a quoted path or omitted a mandatory argument.'}
     if(($replayOutput -join ' ') -notmatch 'STEP 6d/9'){throw 'cmd Step 6d did not execute unconditionally.'}
+    $env:SCC_STUB_RC='3'
+    $failedReplay=[Diagnostics.Process]::Start($cmdInfo)
+    $failedOut=$failedReplay.StandardOutput.ReadToEndAsync();$failedErr=$failedReplay.StandardError.ReadToEndAsync()
+    if(-not $failedReplay.WaitForExit(20000)){$failedReplay.Kill();throw 'cmd failure-path fixture exceeded its bounded wait.'}
+    if($failedReplay.ExitCode -ne 3 -or $failedOut.Result -notmatch 'ReplayRC=3' -or $failedOut.Result -notmatch 'evidence will still be reported') {throw ('cmd failed persistence step did not continue truthfully: '+$failedOut.Result+' | '+$failedErr.Result)}
+    Remove-Item Env:SCC_STUB_RC -ErrorAction SilentlyContinue
     Remove-Item Env:SCC_STUB_LOG -ErrorAction SilentlyContinue
 }
 $psHost=(Get-Command pwsh -ErrorAction Stop).Source

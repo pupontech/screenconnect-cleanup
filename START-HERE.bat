@@ -187,7 +187,7 @@ echo  STEP 6d/9: Persistence inventory and review
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-PersistenceScan.ps1" -WorkDir "!SCC_RUN_ROOT!" -PreflightRoot "!SCC_RUN_ROOT!"
 set "PERSIST_RC=!errorlevel!"
 if not "!PERSIST_RC!"=="0" (
-    echo     [WARN] Persistence scan/review incomplete (exit !PERSIST_RC!); evidence will still be reported.
+    echo     [WARN] Persistence scan/review incomplete - exit !PERSIST_RC!; evidence will still be reported.
     if "!PIPE_RC!"=="0" set "PIPE_RC=!PERSIST_RC!"
 )
 
