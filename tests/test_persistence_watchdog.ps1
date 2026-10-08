@@ -20,6 +20,17 @@ function Test-SccOwnedFixtureProcess {
     if($path -cne $hostExe -or $started -lt $testStarted.AddSeconds(-2)){ return $null }
     return $p
 }
+function Read-SccSharedText {
+    # The wrapper keeps the progress log open for writing; a plain
+    # [IO.File]::ReadAllText takes only FileShare.Read and is refused on Windows.
+    param([string]$Path)
+    if(-not (Test-Path -LiteralPath $Path)){return ''}
+    $stream=New-Object IO.FileStream($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
+    try {
+        $reader=New-Object IO.StreamReader($stream)
+        try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
+    } finally { $stream.Dispose() }
+}
 try {
     Copy-Item -LiteralPath (Join-Path $repo 'Invoke-PersistenceScan.ps1') -Destination $temp
     $worker=Join-Path $repo 'Invoke-PersistenceInventoryWorker.ps1'
@@ -57,7 +68,7 @@ Export-ModuleMember -Function Get-SccPersistenceInventory
     try {
         $progressLog=Join-Path (Join-Path $run 'persistence') 'collection-progress.log'
         while(-not $process.HasExited -and $observe.Elapsed.TotalSeconds -lt 100) {
-            if((Test-Path -LiteralPath $progressLog) -and ([IO.File]::ReadAllText($progressLog) -match 'FixtureBlocked')){ $observedBeforeExit=$true; break }
+            if((Test-Path -LiteralPath $progressLog) -and ((Read-SccSharedText $progressLog) -match 'FixtureBlocked')){ $observedBeforeExit=$true; break }
             Start-Sleep -Milliseconds 100
         }
         if(-not $process.WaitForExit(25000)) {
@@ -87,7 +98,7 @@ Export-ModuleMember -Function Get-SccPersistenceInventory
         [void]$script:FixturePidFiles.Add((Join-Path $persist 'fixture-PID.txt'))
         $alive=Get-Process -Id $workerPid -ErrorAction SilentlyContinue
         if($alive -and -not $alive.HasExited){throw 'Timed-out inventory worker was left alive.'}
-        $log=[IO.File]::ReadAllText((Join-Path $persist 'collection-progress.log'))
+        $log=Read-SccSharedText (Join-Path $persist 'collection-progress.log')
         if($log -notmatch 'FixtureBlocked' -or $log -notmatch 'timed out'){throw 'Durable progress log lost the stall diagnosis.'}
         Write-Host 'PASS: stalled provider timed out; section/heartbeat visible; worker ended; incomplete artifacts preserved; removal never reached.'
     } finally {$process.Dispose()}
