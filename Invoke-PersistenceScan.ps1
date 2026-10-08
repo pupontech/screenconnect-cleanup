@@ -65,7 +65,9 @@ function Invoke-SccInventoryWorker {
     $null=New-Item -ItemType Directory -Path $OutDir -Force -ErrorAction Stop
     $logPath=Join-Path $OutDir 'collection-progress.log'
     Assert-ArtifactPath $logPath
-    $logStream=New-Object IO.FileStream($logPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+    # Share read AND write so a technician (or this process's own test) can tail
+    # the log while the run is still writing to it on Windows.
+    $logStream=New-Object IO.FileStream($logPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::ReadWrite)
     $log=New-Object IO.StreamWriter($logStream,(New-Object Text.UTF8Encoding($false)))
     $log.AutoFlush=$true
     $process=$null
