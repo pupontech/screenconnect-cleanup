@@ -71,7 +71,10 @@ try {
 
     # 1. Already elevated (probe reports admin): no elevation request at all.
     $r = Invoke-Replay '' '0'
-    Check ($r.Calls.Count -eq 0 -and $r.Continued) 'elevated console runs without any elevation request' ($r.Calls -join ' ; ')
+    # The probe is itself a powershell call, so count ELEVATION requests only.
+    $runAs = @($r.Calls | Where-Object { $_ -match 'RunAs' })
+    Check ($runAs.Count -eq 0 -and $r.Continued) 'elevated console runs without any elevation request' ($r.Calls -join ' ; ')
+    Check (@($r.Calls | Where-Object { $_ -match 'WindowsBuiltInRole' }).Count -eq 1) 'elevation is decided by exactly one token probe' ($r.Calls -join ' ; ')
 
     # 2. Not elevated, no marker yet: exactly one elevation request, then exit.
     $r = Invoke-Replay '' '1'
@@ -90,7 +93,8 @@ try {
 
     # 4. Elevated AND the marker present (UAC delayed): normal run, no prompt.
     $r = Invoke-Replay ' --elevation-attempted' '0'
-    Check ($r.Calls.Count -eq 0 -and $r.Continued) 'a successful delayed elevation proceeds without a second prompt' ($r.Calls -join ' ; ')
+    $runAs = @($r.Calls | Where-Object { $_ -match 'RunAs' })
+    Check ($runAs.Count -eq 0 -and $r.Continued) 'a successful delayed elevation proceeds without a second prompt' ($r.Calls -join ' ; ')
 
     # 5. The wrapper forwards the marker to its dedicated child cmd.
     Check ($bat -match '(?ms)if not defined SCC_RUNNER_CHILD \(.*?%~f0" %\*"') 'the dedicated-child wrapper forwards arguments'
