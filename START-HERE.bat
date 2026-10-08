@@ -40,7 +40,9 @@ if %errorlevel% neq 0 (
 set "SCC_SELF="
 
 rem ---- Confirm battery power before starting any cleanup work ----------------
-powershell.exe -NoLogo -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0tools\Confirm-OnBattery.ps1"
+rem This foreground child shares the runner console; Hidden would hide the whole run.
+rem Only the separately started keep-awake helper below should use WindowStyle Hidden.
+powershell.exe -NoLogo -NoProfile -STA -ExecutionPolicy Bypass -File "%~dp0tools\Confirm-OnBattery.ps1"
 if errorlevel 1 goto :battery_not_confirmed
 
 rem ---- Keep the system and display awake for this runner only ----------------

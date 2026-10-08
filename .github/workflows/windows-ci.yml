@@ -121,6 +121,14 @@ jobs:
         shell: pwsh
         run: ./tests/ci/Test-BatteryConfirmRuntime.ps1
 
+      - name: Battery foreground console visibility (Windows PowerShell 5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/ci/Test-BatteryConsoleVisibility.ps1
+
+      - name: Battery foreground console visibility (pwsh)
+        shell: pwsh
+        run: ./tests/ci/Test-BatteryConsoleVisibility.ps1
+
       - name: Scanner process contracts (powershell 5.1)
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/ci/Test-ScannerProcessContracts.ps1
@@ -279,6 +287,12 @@ jobs:
             pwsh -NoProfile -File $copied
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+          $visibilityTest = Join-Path $env:RUNNER_TEMP 'Test-BatteryConsoleVisibility.ps1'
+          Copy-Item -LiteralPath 'tests/ci/Test-BatteryConsoleVisibility.ps1' -Destination $visibilityTest
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File $visibilityTest -RepositoryRoot $package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoProfile -File $visibilityTest -RepositoryRoot $package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $digest = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           [IO.File]::WriteAllText(($zip + '.sha256'), ($digest + '  ' + [IO.Path]::GetFileName($zip) + "`n"), [Text.Encoding]::ASCII)
           $uploadDirectory = Join-Path $env:RUNNER_TEMP 'scc-verified-package'
