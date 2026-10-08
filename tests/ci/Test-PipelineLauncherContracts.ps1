@@ -66,7 +66,8 @@ $cleanup = Read-AsciiText $cleanupPath
 if ($cleanup -notmatch "StageId '5b'") { Add-Failure 'C15' 'Mandatory persistence Stage 5b is missing.' }
 if ($cleanup -notmatch "-PersistenceInventory'.*?-PersistenceRemoval'.*?-PersistenceResult'") { Add-Failure 'C15' 'Stage 9 does not pass all expected persistence artifact paths.' }
 $persistenceRunner = Read-AsciiText (Join-Path $repoRoot 'Invoke-PersistenceScan.ps1')
-if ($persistenceRunner -notmatch 'Get-SccPersistenceInventory' -or $persistenceRunner -notmatch 'AllowRemoval:') { Add-Failure 'C15' 'Persistence runner does not scan independently and gate removal.' }
+$persistenceWorker = Read-AsciiText (Join-Path $repoRoot 'Invoke-PersistenceInventoryWorker.ps1')
+if ($persistenceRunner -notmatch 'Invoke-SccInventoryWorker -OutDir' -or $persistenceWorker -notmatch 'Get-SccPersistenceInventory -OutDir' -or $persistenceRunner -notmatch 'AllowRemoval:') { Add-Failure 'C15' 'Persistence runner does not collect through its bounded worker independently and gate attended removal.' }
 if ($cleanup -notmatch '\[string\]\$StageId') { Add-Failure 'C16' 'Invoke-Stage StageId cannot represent the required 5b label.' }
 if ($cleanup -notmatch 'registry_hives' -or $cleanup -notmatch 'HKLM_SOFTWARE\.reg' -or $cleanup -notmatch 'HKLM_SYSTEM\.reg' -or $cleanup -notmatch 'HKCU_SOFTWARE\.reg') { Add-Failure 'C16' 'Direct-run rollback readiness does not require the exact three nonempty registry exports.' }
 $guidedPersistence = Read-AsciiText (Join-Path $repoRoot 'START-HERE.bat')
