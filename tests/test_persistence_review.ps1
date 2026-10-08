@@ -80,6 +80,16 @@ try {
     if($global:ReviewLaunches.Count -ne 0){throw 'Review opened windows without an inventory.'}
     if(($missing -join "`n") -notmatch 'Run the persistence scan'){throw 'Review did not point at the missing scan.'}
 
+    # The direct runner's opt-in switch must respect WhatIf: a plan run must not
+    # open anything, and must not claim the review ran.
+    $hostExe=(Get-Command powershell.exe -ErrorAction SilentlyContinue).Source
+    if(-not $hostExe){$hostExe=(Get-Command pwsh -ErrorAction SilentlyContinue).Source}
+    if(-not $hostExe){$hostExe='pwsh'}
+    $planWork=Join-Path $temp 'direct plan run'
+    $planRun=& $hostExe -NoProfile -File (Join-Path $repo 'Invoke-PersistenceScan.ps1') -WorkDir $planWork -OpenReview -WhatIf *>&1
+    if($LASTEXITCODE -ne 0){throw ('Direct OpenReview plan run failed: '+($planRun -join ' '))}
+    if(Test-Path -LiteralPath (Join-Path $planWork 'persistence/review-opened.json')){throw 'WhatIf with -OpenReview opened the review.'}
+
     # The review step must not be able to change the system.
     $source=[IO.File]::ReadAllText($scriptPath)
     foreach($forbidden in @('Unregister-ScheduledTask','Remove-Item','Stop-Service','Set-Service','Remove-ItemProperty','New-ItemProperty','reg.exe','schtasks','net stop','sc.exe')) {
