@@ -52,6 +52,14 @@ $build=[IO.File]::ReadAllText((Join-Path $repo 'make-deploy-bundle.sh'))
 foreach($name in @('Invoke-PersistenceScan.ps1','Invoke-PersistenceInventoryWorker.ps1','Persistence.Inventory.psm1','Persistence.Removal.psm1')){Check ($build.Contains($name)) ('allowlisted bundle requires '+$name)}
 $commands=@($inventory.FindAll({param($node)$node -is [Management.Automation.Language.CommandAst]},$true)|ForEach-Object {$_.GetCommandName()})
 Check (@($commands | Where-Object {$_ -in @('Unregister-ScheduledTask','Remove-ItemProperty','Remove-CimInstance','Start-Process','Invoke-Expression','Stop-Process')}).Count -eq 0) 'inventory has no system mutation or payload execution commands'
+# Simplified Where-Object over external provider objects throws PSArgumentException
+# as soon as one row lacks the named value; the collector must use the safe accessor.
+# Comments are stripped so documentation of the anti-pattern is not flagged.
+$source=[IO.File]::ReadAllText((Join-Path $repo 'Persistence.Inventory.psm1'))
+$code=@($source -split '\r?\n' | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+$simplified=[regex]::Matches($code,'Where-Object\s+[A-Za-z_][A-Za-z0-9_]*\s+-(?:match|eq|ne|like|notlike|in|notin|gt|lt|ge|le)\b')
+Check ($simplified.Count -eq 0) ('inventory uses no property-unresolved Where-Object form (found '+$simplified.Count+')')
+Check ($source -match 'function Get-SccPropertyValue') 'inventory exposes the property-safe accessor'
 Write-Host "Persistence static AST checks: passed=$passed failed=$failed (not live runtime proof)"
 if($failed){exit 1}
 exit 0

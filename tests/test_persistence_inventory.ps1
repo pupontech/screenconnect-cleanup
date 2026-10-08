@@ -67,6 +67,35 @@ try {
         if($events.Items.Count -ne 1 -or $events.Errors.Count -ne 0){throw 'empty second event query erased prior event evidence'}
         $deniedEvents=Get-SccGenericEvidence -Name 'EventDeniedFixture' -Collector {Get-SccEventRecords -Filter @{LogName='fixture-denied'} -Maximum 400}
         if($deniedEvents.Errors.Count -ne 1){throw 'event access denial was falsely converted to empty successful collection'}
+        # Owner-reported live failure: a registry Uninstall entry with no
+        # DisplayName made the simplified Where-Object form throw
+        # PSArgumentException ("The input name cannot be resolved to a property"),
+        # which under the collector's EAP=Stop aborted the whole section.
+        $mixedRows=@(
+            [pscustomobject]@{PSPath='Microsoft.PowerShell.Core\Registry::HKEY_LOCAL_MACHINE\..\Uninstall\A';Publisher='Orphan'}
+            [pscustomobject]@{PSPath='Microsoft.PowerShell.Core\Registry::HKEY_LOCAL_MACHINE\..\Uninstall\B';DisplayName='AnyDesk';Publisher='Real'}
+        )
+        $savedEap=$ErrorActionPreference
+        try {
+            $ErrorActionPreference='Stop'
+            # Negative control: the old form must actually fail, or the fix is untested.
+            $controlThrew=$false
+            try { $null=@($mixedRows | Where-Object DisplayName -match '(?i)AnyDesk') } catch { $controlThrew=$true }
+            if(-not $controlThrew){throw 'negative control failed: the simplified Where-Object form did not throw on a missing property'}
+            # Production form: property-safe filtering still finds the real entry.
+            $matched=@($mixedRows | Where-Object {(Get-SccPropertyValue $_ 'DisplayName') -match '(?i)AnyDesk'})
+            if($matched.Count -ne 1 -or [string]$matched[0].DisplayName -cne 'AnyDesk'){throw 'property-safe filter lost the matching registry entry'}
+            $missing=@($mixedRows | Where-Object {(Get-SccPropertyValue $_ 'NoSuchValue') -match 'x'})
+            if($missing.Count -ne 0){throw 'property-safe filter matched an absent property'}
+            if((Get-SccPropertyValue $null 'Anything') -ne $null){throw 'property-safe read did not tolerate a null object'}
+        } finally { $ErrorActionPreference=$savedEap }
+        # The same guarantee through the real generic-evidence wrapper under Stop.
+        $savedEap=$ErrorActionPreference
+        try {
+            $ErrorActionPreference='Stop'
+            $evidence=Get-SccGenericEvidence -Name 'MissingPropertyFixture' -Collector {$mixedRows | Where-Object {(Get-SccPropertyValue $_ 'DisplayName') -match '(?i)AnyDesk'}}
+            if($evidence.Errors.Count -ne 0 -or $evidence.Items.Count -ne 1){throw ('generic evidence did not survive a missing-property row: '+($evidence.Errors -join ' | '))}
+        } finally { $ErrorActionPreference=$savedEap }
         # Public collector proof: use the real task helper and fully injected
         # remaining providers. No live Windows inventory source is consulted.
         $script:FixtureTaskCount=1
