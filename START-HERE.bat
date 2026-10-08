@@ -13,21 +13,38 @@ setlocal EnableDelayedExpansion
 rem ---- Use a dedicated cmd.exe so the keep-awake helper has a bounded lifetime ----
 if not defined SCC_RUNNER_CHILD (
     set "SCC_RUNNER_CHILD=1"
-    start "" /b /wait cmd.exe /d /s /c ""%~f0""
+    if "%~1"=="" (
+        start "" /b /wait cmd.exe /d /s /c ""%~f0""
+    ) else (
+        start "" /b /wait cmd.exe /d /s /c ""%~f0" %*"
+    )
     set "SCC_RUNNER_RC=!errorlevel!"
     exit /b !SCC_RUNNER_RC!
 )
 title ScreenConnect Cleanup Tool
 
-rem ---- Self-elevate: relaunch as admin automatically if not already --------
+rem ---- Self-elevate: at most ONE UAC prompt, decided by the real admin token ---
 rem The script path travels via the SCC_SELF environment variable so that
 rem apostrophes (and other quotes) in the path cannot break the PowerShell
 rem command line. A failed/cancelled UAC prompt must be visible, never silent.
+rem The relaunch passes --elevation-attempted. If that flag is present and this
+rem window is STILL not elevated, the runner stops instead of prompting again:
+rem a probe that misreports elevation must never loop UAC at the technician.
 set "SCC_SELF=%~f0"
-fltmc.exe >nul 2>&1
-if %errorlevel% neq 0 (
+powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "if(([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){exit 0}else{exit 1}"
+if errorlevel 1 (
+    if /i "%~1"=="--elevation-attempted" (
+        echo.
+        echo  [ERROR] This window is still not elevated after the UAC request, so
+        echo          the tool will not ask again. Right-click START-HERE.bat and
+        echo          choose "Run as administrator", or open an elevated Command
+        echo          Prompt in this folder and run START-HERE.bat there.
+        pause
+        exit /b 1
+    )
     echo  Requesting administrator privileges...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath $env:SCC_SELF -Verb RunAs"
+    rem This is the ONLY elevation request the tool makes.
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath $env:SCC_SELF -ArgumentList '--elevation-attempted' -Verb RunAs"
     if errorlevel 1 (
         echo.
         echo  [ERROR] Elevation could not be launched or was cancelled.
@@ -40,7 +57,9 @@ if %errorlevel% neq 0 (
 set "SCC_SELF="
 
 rem ---- Confirm battery power before starting any cleanup work ----------------
-powershell.exe -NoLogo -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0tools\Confirm-OnBattery.ps1"
+rem This foreground child shares the runner console; Hidden would hide the whole run.
+rem Only the separately started keep-awake helper below should use WindowStyle Hidden.
+powershell.exe -NoLogo -NoProfile -STA -ExecutionPolicy Bypass -File "%~dp0tools\Confirm-OnBattery.ps1"
 if errorlevel 1 goto :battery_not_confirmed
 
 rem ---- Keep the system and display awake for this runner only ----------------
@@ -181,6 +200,28 @@ echo        Malwarebytes session ended - continuing.
 :skip_6c
 set GO=
 
+rem ---- Step 6d: mandatory persistence scan/review after AV scanners -----------
+echo.
+echo  STEP 6d/9: Persistence inventory and review
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-PersistenceScan.ps1" -WorkDir "!SCC_RUN_ROOT!" -PreflightRoot "!SCC_RUN_ROOT!"
+set "PERSIST_RC=!errorlevel!"
+if not "!PERSIST_RC!"=="0" (
+    echo     [WARN] Persistence scan/review incomplete - exit !PERSIST_RC!; evidence will still be reported.
+    if "!PIPE_RC!"=="0" set "PIPE_RC=!PERSIST_RC!"
+)
+
+rem ---- Step 6e: open the review windows for the technician ----------------------
+echo.
+echo  STEP 6e/9: Open review windows (no changes made)
+echo    Opens the evidence + startup folders, Services and Task Scheduler so you
+echo    can inspect what the persistence scan flagged. Nothing is changed here.
+set /p OPENREVIEW="    Open the review windows now? [Y/n] "
+if /i "%OPENREVIEW%"=="n" goto :skip_6e
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Show-PersistenceReview.ps1" -WorkDir "!SCC_RUN_ROOT!"
+if errorlevel 1 echo     [WARN] Some review windows could not be opened - see the messages above.
+:skip_6e
+set OPENREVIEW=
+
 rem ---- Step 7: Uninstall installed AV (attended) -------------------------------
 echo.
 echo  STEP 7/9: Uninstall third-party AV (attended)
@@ -228,9 +269,9 @@ if not defined FINDINGS_JSON (
 ) else (
     if exist "!FINDINGS_JSON!" (
     if exist "!SCC_RUN_ROOT!/removal-manifest.json" (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -RemovalManifest "!SCC_RUN_ROOT!/removal-manifest.json" -OutputPath "!SCC_RUN_ROOT!/report.html"
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -RemovalManifest "!SCC_RUN_ROOT!/removal-manifest.json" -PersistenceInventory "!SCC_RUN_ROOT!\persistence\inventory.json" -PersistenceRemoval "!SCC_RUN_ROOT!\persistence\removal.json" -PersistenceResult "!SCC_RUN_ROOT!\persistence\result.json" -OutputPath "!SCC_RUN_ROOT!/report.html"
     ) else (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -OutputPath "!SCC_RUN_ROOT!/report.html"
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -PersistenceInventory "!SCC_RUN_ROOT!\persistence\inventory.json" -PersistenceRemoval "!SCC_RUN_ROOT!\persistence\removal.json" -PersistenceResult "!SCC_RUN_ROOT!\persistence\result.json" -OutputPath "!SCC_RUN_ROOT!/report.html"
     )
         set "REPORT_RC=!errorlevel!"
         if not "!REPORT_RC!"=="0" (
@@ -242,7 +283,7 @@ if not defined FINDINGS_JSON (
             if exist "%~dp0Submit-ConnectWiseReport.ps1" (
                 rem MicroBin share is automatic (no relay): the uploader reads the
                 rem server base URL from microbin-url.txt beside the tool.
-                powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Submit-ConnectWiseReport.ps1" -FindingsJson "!FINDINGS_JSON!" -WorkDir "!SCC_RUN_ROOT!" -ReportHtml "!SCC_RUN_ROOT!/report.html"
+                powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Submit-ConnectWiseReport.ps1" -FindingsJson "!FINDINGS_JSON!" -WorkDir "!SCC_RUN_ROOT!" -ReportHtml "!SCC_RUN_ROOT!/report.html" -PersistenceInventory "!SCC_RUN_ROOT!\persistence\inventory.json" -PersistenceRemoval "!SCC_RUN_ROOT!\persistence\removal.json" -PersistenceResult "!SCC_RUN_ROOT!\persistence\result.json"
                 set "UPLOAD_RC=!errorlevel!"
                 if not "!UPLOAD_RC!"=="0" (
                     echo     [WARN] Report share failed with errorlevel !UPLOAD_RC! - local evidence remains available.

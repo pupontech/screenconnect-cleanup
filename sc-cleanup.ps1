@@ -59,7 +59,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Constants & script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.7.55'
+$ScriptVersion = '1.8.5'
 $ScriptName = 'sc-cleanup.ps1'
 $PipelineStages = @(
     @{ Id = 0; Name = 'Preflight';            SkipFlag = '' },
@@ -68,6 +68,7 @@ $PipelineStages = @(
     @{ Id = 3; Name = 'Review Gate';          SkipFlag = '' },
     @{ Id = 4; Name = 'Contain + Remove';     SkipFlag = 'sr' },
     @{ Id = 5; Name = 'Scanners';             SkipFlag = 'sa' },
+    @{ Id = '5b'; Name = 'Persistence scan';  SkipFlag = '' },
     @{ Id = 6; Name = 'Uninstall installed AV'; SkipFlag = 'avu' },
     @{ Id = 7; Name = 'Procmon';              SkipFlag = '' },
     @{ Id = 8; Name = 'Snapshot (After)+Diff'; SkipFlag = '' },
@@ -210,7 +211,8 @@ function Invoke-ChildScript {
     param(
         [string]$ScriptPath,
         [string[]]$ArgumentList,
-        [string]$LogTag = 'child'
+        [string]$LogTag = 'child',
+        [switch]$Interactive
     )
 
     if (-not (Test-Path $ScriptPath)) {
@@ -241,7 +243,8 @@ function Invoke-ChildScript {
     }
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $runnerPath
-    $psi.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $ScriptPath + '"'
+    $psi.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $ScriptPath + '"'
+    if(-not $Interactive){$psi.Arguments='-NonInteractive '+$psi.Arguments}
     foreach ($a in $ArgumentList) {
         if ($null -eq $a) { $a = '' }
         # Quote arguments that contain spaces or special chars.
@@ -255,6 +258,13 @@ function Invoke-ChildScript {
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $psi.CreateNoWindow = $true
+    if($Interactive) {
+        # Inherit the technician's console/input. Buffering a Read-Host child's
+        # output would hide its selection and approval prompts until after exit.
+        $psi.RedirectStandardOutput=$false
+        $psi.RedirectStandardError=$false
+        $psi.CreateNoWindow=$false
+    }
 
     try {
         $proc = [System.Diagnostics.Process]::Start($psi)
@@ -262,6 +272,8 @@ function Invoke-ChildScript {
         Write-StageLog ("$LogTag failed to start: " + $_.Exception.Message) 'Error'
         return 1
     }
+
+    if($Interactive){$proc.WaitForExit();return $proc.ExitCode}
 
     # Read stderr asynchronously. Draining both pipes synchronously deadlocks
     # when the child fills one buffer while we are blocked on the other.
@@ -290,7 +302,7 @@ function Invoke-ChildScript {
 
 function Invoke-Stage {
     param(
-        [int]$StageId,
+        [string]$StageId,
         [string]$StageName,
         [scriptblock]$StageBlock,
         [string]$SkipFlag = ''
@@ -515,6 +527,7 @@ if (-not $uacEnabled -and -not $force) {
 # Stage 0: Preflight
 # -----------------------------------------------------------------------------
 $script:RegistryExportFailed = $false
+$script:RestorePointFailed = $false
 $stage0Result = Invoke-Stage -StageId 0 -StageName 'Preflight' -SkipFlag '' -StageBlock {
     # Admin check - report the truth. Non-admin is tolerated (non-Windows
     # test host / read-only runs), but it must never be logged as PASSED.
@@ -821,7 +834,8 @@ $stage4Result = Invoke-Stage -StageId 4 -StageName 'Contain + Remove' -SkipFlag 
 # -----------------------------------------------------------------------------
 # Stage 5: Scanners (skipped if -sa)
 # -----------------------------------------------------------------------------
-$stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 'sa' -StageBlock {
+$scannerStageFailure = $null
+try { $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 'sa' -StageBlock {
     if ($sa) {
         Write-StageLog "Stage 5 SKIPPED via -sa (no scanners)"
         return @{ Skipped = $true }
@@ -925,9 +939,68 @@ $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 'sa' -St
     Write-StageLog "Scanner results summary: $scannerSummary"
 
     return @{ ScannerResults = $scannerResults; SummaryPath = $scannerSummary }
+} } catch {
+    $scannerStageFailure = $_.Exception.Message
+    Write-StageLog ("Scanner stage failed unexpectedly: " + $scannerStageFailure + "; continuing to mandatory persistence scan.") 'Error'
+    $stage5Result = @{ Skipped = $false; Result = @{ Error = $scannerStageFailure; SummaryPath = (Join-Path $WorkDir 'scanner_results.json') } }
 }
 
 # -----------------------------------------------------------------------------
+# Stage 5b: mandatory persistence inventory/review, after AV scanners
+$stage5bResult = Invoke-Stage -StageId '5b' -StageName 'Persistence scan' -SkipFlag '' -StageBlock {
+    $persistenceScript = Join-Path $ScriptRoot 'Invoke-PersistenceScan.ps1'
+    if (-not (Test-Path -LiteralPath $persistenceScript)) {
+        $persistenceFailure = 'Invoke-PersistenceScan.ps1 missing: ' + $persistenceScript
+        Write-StageLog $persistenceFailure 'Error'
+        try {
+            $persistenceDir = Join-Path $WorkDir 'persistence'; $null = New-Item -ItemType Directory -Path $persistenceDir -Force
+            @{SchemaVersion=1;Status='Incomplete';InventoryPath=(Join-Path $persistenceDir 'inventory.json');RemovalPath=(Join-Path $persistenceDir 'removal.json');InventoryStatus='Missing';RemovalStatus='Incomplete';Errors=@($persistenceFailure)} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $persistenceDir 'result.json') -Encoding UTF8
+            @{SchemaVersion=1;Status='Incomplete';Actions=@();Errors=@($persistenceFailure)} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $persistenceDir 'removal.json') -Encoding UTF8
+        } catch { Write-StageLog ("Could not write persistence failure result: " + $_.Exception.Message) 'Error' }
+        return @{ ExitCode=1; Error=$persistenceFailure; ResultPath=(Join-Path $WorkDir 'persistence\result.json'); InventoryPath=(Join-Path $WorkDir 'persistence\inventory.json'); RemovalPath=(Join-Path $WorkDir 'persistence\removal.json') }
+    }
+    $rollbackReady = $false
+    if (-not $np -and -not $script:RestorePointFailed -and -not $script:RegistryExportFailed) {
+        $registryDir = Join-Path $WorkDir 'registry_hives'
+        $expectedHives = @('HKLM_SOFTWARE.reg','HKLM_SYSTEM.reg','HKCU_SOFTWARE.reg')
+        $rollbackReady = $true
+        foreach ($hiveName in $expectedHives) {
+            $hivePath = Join-Path $registryDir $hiveName
+            if (-not (Test-Path -LiteralPath $hivePath -PathType Leaf) -or (Get-Item -LiteralPath $hivePath).Length -le 0) { $rollbackReady = $false }
+        }
+    }
+    $args = @('-WorkDir', $WorkDir)
+    if ($sr) { $args += '-SkipRemoval' }
+
+    if ($rollbackReady) { $args += '-RollbackReady' }
+    if ($WhatIf) { $args += '-WhatIf' }
+    try { $rc = Invoke-ChildScript -ScriptPath $persistenceScript -ArgumentList $args -LogTag 'Persistence' -Interactive }
+    catch {
+        $rc = 1; $persistenceFailure = 'Persistence child launch failed: ' + $_.Exception.Message
+        Write-StageLog $persistenceFailure 'Error'
+        try {
+            $persistenceDir = Join-Path $WorkDir 'persistence'; $null = New-Item -ItemType Directory -Path $persistenceDir -Force
+            @{SchemaVersion=1;Status='Incomplete';InventoryPath=(Join-Path $persistenceDir 'inventory.json');RemovalPath=(Join-Path $persistenceDir 'removal.json');InventoryStatus='Unknown';RemovalStatus='Incomplete';Errors=@($persistenceFailure)} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $persistenceDir 'result.json') -Encoding UTF8
+            @{SchemaVersion=1;Status='Incomplete';Actions=@();Errors=@($persistenceFailure)} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $persistenceDir 'removal.json') -Encoding UTF8
+        } catch { Write-StageLog ("Could not write persistence failure result: " + $_.Exception.Message) 'Error' }
+    }
+    if ($rc -ne 0) { Write-StageLog ("Persistence scan incomplete (exit $rc); preserving evidence and continuing to report.") 'Error' }
+    $resultPath = Join-Path $WorkDir 'persistence\result.json'
+    if (-not (Test-Path -LiteralPath $resultPath)) {
+        $rc = 1; Write-StageLog 'Persistence child did not write result.json; continuing to report.' 'Error'
+        try {
+            $persistenceDir = Split-Path -Parent $resultPath
+            @{SchemaVersion=1;Status='Incomplete';InventoryPath=(Join-Path $persistenceDir 'inventory.json');RemovalPath=(Join-Path $persistenceDir 'removal.json');InventoryStatus='Unknown';RemovalStatus='Incomplete';Errors=@('Persistence child did not write result.json.')} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $resultPath -Encoding UTF8
+            @{SchemaVersion=1;Status='Incomplete';Actions=@();Errors=@('Persistence child did not write removal.json.')} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $persistenceDir 'removal.json') -Encoding UTF8
+        } catch { Write-StageLog ("Could not persist missing-artifact failure record: " + $_.Exception.Message) 'Error' }
+    }
+    else {
+        try { $pResult = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json -ErrorAction Stop; if ([string]$pResult.Status -ne 'Complete') { $rc = 1 } }
+        catch { $rc = 1; Write-StageLog ("Persistence result artifact is unreadable: " + $_.Exception.Message) 'Error' }
+    }
+    return @{ ExitCode=$rc; ResultPath=$resultPath; InventoryPath=(Join-Path $WorkDir 'persistence\inventory.json'); RemovalPath=(Join-Path $WorkDir 'persistence\removal.json') }
+}
+
 # Stage 6: Uninstall installed third-party AV (opt-in via -avu; attended GUI)
 # -----------------------------------------------------------------------------
 $stage6Result = Invoke-Stage -StageId 6 -StageName 'Uninstall installed AV' -SkipFlag 'avu' -StageBlock {
@@ -1192,6 +1265,12 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
     $scannerSummary = if ($stage5Result -and $stage5Result.Result -and $stage5Result.Result.SummaryPath) { $stage5Result.Result.SummaryPath } else { $null }
     if ($scannerSummary -and (Test-Path -LiteralPath $scannerSummary)) { $repArgs += @('-ScannerSummary', $scannerSummary) }
     elseif ($stage5Result -and $stage5Result.Skipped) { $repArgs += '-ScannersSkipped' }
+    $persistenceInventory = Join-Path $WorkDir 'persistence\inventory.json'
+    $persistenceRemoval = Join-Path $WorkDir 'persistence\removal.json'
+    $persistenceResult = Join-Path $WorkDir 'persistence\result.json'
+    $persistenceInventoryStatus = 'Missing'; $persistenceRemovalStatus = 'Missing'; $persistenceStatus = 'Missing'
+    if (Test-Path -LiteralPath $persistenceResult) { try { $pr=Get-Content -LiteralPath $persistenceResult -Raw | ConvertFrom-Json; $persistenceStatus=[string]$pr.Status; $persistenceInventoryStatus=[string]$pr.InventoryStatus; $persistenceRemovalStatus=[string]$pr.RemovalStatus } catch { $persistenceStatus='Unreadable' } }
+    $repArgs += @('-PersistenceInventory', $persistenceInventory, '-PersistenceRemoval', $persistenceRemoval, '-PersistenceResult', $persistenceResult)
     $reportRemovalManifest = if ($stage8Result -and $stage8Result.Result -and $stage8Result.Result.RemovalManifest) { [string]$stage8Result.Result.RemovalManifest } else { $null }
     if ($reportRemovalManifest -and $stage4Result -and -not $stage4Result.Skipped) {
         # Pass the path even when the removal stage was blocked: the report then
@@ -1240,6 +1319,12 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
         DiffPath = $diffPath
         RemovalManifest = $removalManifest
         ScannerSummary = $scannerSummary
+        PersistenceInventory = $persistenceInventory
+        PersistenceRemoval = $persistenceRemoval
+        PersistenceResult = $persistenceResult
+        PersistenceStatus = $persistenceStatus
+        PersistenceInventoryStatus = $persistenceInventoryStatus
+        PersistenceRemovalStatus = $persistenceRemovalStatus
         PlanJson = $planJson
         SCInstanceCount = $scCount
         OtherHitTotal = $otherTotal
@@ -1257,7 +1342,7 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
         $reportUploadExitCode = 1
         Write-StageLog ("Report uploader not found: " + $uploadScript) 'Error'
     } else {
-        $uploadArgs = @('-FindingsJson', [string]$findingsJson, '-WorkDir', [string]$WorkDir, '-ReportHtml', [string]$reportHtml)
+        $uploadArgs = @('-FindingsJson', [string]$findingsJson, '-WorkDir', [string]$WorkDir, '-ReportHtml', [string]$reportHtml, '-PersistenceInventory', [string]$persistenceInventory, '-PersistenceRemoval', [string]$persistenceRemoval, '-PersistenceResult', [string]$persistenceResult)
         if ($MicroBinUrl) { $uploadArgs += @('-MicroBinUrl', [string]$MicroBinUrl) }
         if ($MicroBinUploaderPasswordFile) { $uploadArgs += @('-MicroBinUploaderPasswordFile', [string]$MicroBinUploaderPasswordFile) }
         if ($NoShare) { $uploadArgs += '-NoUpload' }
@@ -1360,7 +1445,9 @@ if ($stage9Result -and $stage9Result.Result) {
     }
 }
 $reportUploadFailed = ($null -ne $reportUploadExitCode -and $reportUploadExitCode -ne 0)
-$pipelineIncomplete = (($null -ne $removalExitCode -and $removalExitCode -ne 0) -or $diffIncomplete -or $reportUploadFailed)
+$persistenceExitCode = $null
+if ($stage5bResult -and $stage5bResult.ContainsKey('Result') -and $stage5bResult.Result -is [System.Collections.IDictionary] -and $stage5bResult.Result.ContainsKey('ExitCode')) { $persistenceExitCode = [int]$stage5bResult.Result.ExitCode }
+$pipelineIncomplete = (($null -ne $removalExitCode -and $removalExitCode -ne 0) -or $diffIncomplete -or $reportUploadFailed -or [bool]$scannerStageFailure -or ($null -ne $persistenceExitCode -and $persistenceExitCode -ne 0))
 if ($pipelineIncomplete) {
     if ($diffIncomplete -and $null -ne $removalExitCode -and $removalExitCode -ne 0) {
         Write-StageLog ("PIPELINE COMPLETED WITH ERRORS: removal exit " + $removalExitCode + "; before/after collection was incomplete. Post-removal evidence was still produced.") 'Error'
@@ -1430,6 +1517,8 @@ if ($pipelineIncomplete) {
     if ($null -ne $removalExitCode -and $removalExitCode -ne 0) { $reasons += ('Stage 4 exit ' + $removalExitCode) }
     if ($diffIncomplete) { $reasons += 'before/after collection incomplete' }
     if ($reportUploadFailed) { $reasons += ('report upload exit ' + $reportUploadExitCode) }
+    if ($scannerStageFailure) { $reasons += 'scanner stage failed unexpectedly' }
+    if ($null -ne $persistenceExitCode -and $persistenceExitCode -ne 0) { $reasons += ('persistence scan exit ' + $persistenceExitCode) }
     $finalOutcome = 'INCOMPLETE (' + ($reasons -join '; ') + ')'
 }
 Add-Content -Path $MasterLogPath -Value ("Final outcome: " + $finalOutcome) -Encoding UTF8

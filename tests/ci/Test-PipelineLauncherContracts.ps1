@@ -61,6 +61,19 @@ function Read-AsciiText {
 $cleanupPath = Join-Path $repoRoot 'sc-cleanup.ps1'
 $cleanup = Read-AsciiText $cleanupPath
 
+# Persistence scan is an unconditional post-AV stage, and the launcher passes
+# the expected evidence paths even when one or more files are missing.
+if ($cleanup -notmatch "StageId '5b'") { Add-Failure 'C15' 'Mandatory persistence Stage 5b is missing.' }
+if ($cleanup -notmatch "-PersistenceInventory'.*?-PersistenceRemoval'.*?-PersistenceResult'") { Add-Failure 'C15' 'Stage 9 does not pass all expected persistence artifact paths.' }
+$persistenceRunner = Read-AsciiText (Join-Path $repoRoot 'Invoke-PersistenceScan.ps1')
+$persistenceWorker = Read-AsciiText (Join-Path $repoRoot 'Invoke-PersistenceInventoryWorker.ps1')
+if ($persistenceRunner -notmatch 'Invoke-SccInventoryWorker -OutDir' -or $persistenceWorker -notmatch 'Get-SccPersistenceInventory -OutDir' -or $persistenceRunner -notmatch 'AllowRemoval:') { Add-Failure 'C15' 'Persistence runner does not collect through its bounded worker independently and gate attended removal.' }
+if ($cleanup -notmatch '\[string\]\$StageId') { Add-Failure 'C16' 'Invoke-Stage StageId cannot represent the required 5b label.' }
+if ($cleanup -notmatch 'registry_hives' -or $cleanup -notmatch 'HKLM_SOFTWARE\.reg' -or $cleanup -notmatch 'HKLM_SYSTEM\.reg' -or $cleanup -notmatch 'HKCU_SOFTWARE\.reg') { Add-Failure 'C16' 'Direct-run rollback readiness does not require the exact three nonempty registry exports.' }
+$guidedPersistence = Read-AsciiText (Join-Path $repoRoot 'START-HERE.bat')
+if ($guidedPersistence -notmatch '-PreflightRoot "!SCC_RUN_ROOT!"' -or $guidedPersistence -notmatch 'Invoke-PersistenceScan\.ps1" -WorkDir "!SCC_RUN_ROOT!"') { Add-Failure 'C16' 'Guided launcher does not quote and pass its preflight/run roots to persistence.' }
+if ($guidedPersistence -notmatch 'Submit-ConnectWiseReport\.ps1[^\r\n]*-PersistenceInventory[^\r\n]*-PersistenceRemoval[^\r\n]*-PersistenceResult') { Add-Failure 'C16' 'Guided sanitized uploader does not receive expected persistence artifact paths.' }
+
 if ($cleanup -match '(?m)All stages executed successfully\.') {
     # The success line may exist, but only acceptable if the script can
     # still report failure and return nonzero afterwards. Require both:
@@ -135,10 +148,17 @@ foreach ($name in $launchers) {
     if ($bat -notmatch 'set "?SCC_SELF=?=%~f0"?') {
         Add-Failure 'C3' ("{0}: SCC_SELF is never populated from %%~f0." -f $name)
     }
-    # Elevation failure must be visible, not swallowed by >nul 2>&1 + bare exit.
-    $elevBlock = [regex]::Match($bat, '(?ms)fltmc\.exe.*?\r?\n\)\r?\n')
+    # Elevation must be decided by the real admin token (no external probe) and
+    # must be bounded to ONE UAC request, so a wrong answer cannot loop prompts.
+    if ($bat -match '(?i)fltmc') {
+        Add-Failure 'C3' ("{0}: elevation still depends on the fltmc probe, which can misreport and re-prompt." -f $name)
+    }
+    if ($bat -notmatch 'WindowsBuiltInRole\]::Administrator') {
+        Add-Failure 'C3' ("{0}: elevation does not check the real administrator token." -f $name)
+    }
+    $elevBlock = [regex]::Match($bat, '(?ms)powershell[^\r\n]*WindowsBuiltInRole.*?\r?\n\)\r?\n')
     if (-not $elevBlock.Success) {
-        Add-Failure 'C3' ("{0}: could not locate the fltmc self-elevation block." -f $name)
+        Add-Failure 'C3' ("{0}: could not locate the token-based self-elevation block." -f $name)
     } else {
         if ($elevBlock.Value -match '>nul 2>&1\s*\r?\n\s*exit /b\s*$') {
             Add-Failure 'C3' ("{0}: elevation attempt is silenced with >nul 2>&1 and a silent 'exit /b' - a cancelled/blocked UAC prompt leaves no error." -f $name)
@@ -149,6 +169,15 @@ foreach ($name in $launchers) {
         if ($elevBlock.Value -notmatch 'pause') {
             Add-Failure 'C3' ("{0}: elevation failure path does not pause, so the window closes before the technician can read it." -f $name)
         }
+        if ($elevBlock.Value -notmatch '--elevation-attempted') {
+            Add-Failure 'C3' ("{0}: elevation block has no one-shot marker, so a still-unelevated window can prompt again." -f $name)
+        }
+        if ($elevBlock.Value -notmatch '"%~1"="?--elevation-attempted"?' -and $elevBlock.Value -notmatch '--elevation-attempted') {
+            Add-Failure 'C3' ("{0}: elevation block does not refuse a repeat attempt." -f $name)
+        }
+    }
+    if (([regex]::Matches($bat, '-Verb\s+RunAs')).Count -ne 1) {
+        Add-Failure 'C3' ("{0}: expected exactly one elevation request in the launcher." -f $name)
     }
 }
 

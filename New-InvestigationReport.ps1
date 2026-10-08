@@ -16,6 +16,9 @@ param(
     [string]$RemovalManifest,
     [string]$AVUninstall,
     [string]$ScannerSummary,
+    [string]$PersistenceInventory,
+    [string]$PersistenceRemoval,
+    [string]$PersistenceResult,
     [switch]$ScannersSkipped,
     [switch]$PassThru
 )
@@ -250,6 +253,96 @@ foreach ($t in $otherTargets) {
 }
 
 $reportGeneratedLocal = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+
+# Persistence evidence is local-only. Escape every displayed field; commands
+# and identities belong in this local report, never in the sanitized share.
+$expectedPersistenceDir = Join-Path (Split-Path -Parent $OutputPath) 'persistence'
+$persistenceFiles = @(
+    @{ Label='Inventory'; Path=$(if ($PersistenceInventory) { $PersistenceInventory } else { Join-Path $expectedPersistenceDir 'inventory.json' }) },
+    @{ Label='Removal'; Path=$(if ($PersistenceRemoval) { $PersistenceRemoval } else { Join-Path $expectedPersistenceDir 'removal.json' }) },
+    @{ Label='Result'; Path=$(if ($PersistenceResult) { $PersistenceResult } else { Join-Path $expectedPersistenceDir 'result.json' }) }
+)
+$persistenceData = @{}
+$persistenceLoadErrors = New-Object System.Collections.ArrayList
+foreach ($pf in $persistenceFiles) {
+    if (-not $pf.Path) { continue }
+    if (-not (Test-Path -LiteralPath $pf.Path -PathType Leaf)) { [void]$persistenceLoadErrors.Add(($pf.Label + ': file not found.')); continue }
+    try { $persistenceData[$pf.Label] = (Get-Content -LiteralPath $pf.Path -Raw -Encoding UTF8) | ConvertFrom-Json }
+    catch { [void]$persistenceLoadErrors.Add(($pf.Label + ': could not parse JSON.')) }
+}
+$persistenceSectionHtml = ''
+if ($true) {
+    $inventoryData = $persistenceData['Inventory']
+    $removalData = $persistenceData['Removal']
+    $resultData = $persistenceData['Result']
+    $inventoryStatus = if ($null -eq $inventoryData) { 'Missing or unavailable' } else { Get-Prop $inventoryData 'Status' 'Unknown' }
+    $resultStatus = Get-Prop $resultData 'Status' 'Missing or unavailable'
+    $removalStatus = Get-Prop $removalData 'Status' 'Missing or unavailable'
+    if ($null -eq $removalData -and $resultData -and (Get-Prop $resultData 'RemovalStatus') -eq 'Skipped') { $removalStatus = 'Skipped (no removal manifest)' }
+    $resultInventoryStatus = if ($resultData) { Get-Prop $resultData 'InventoryStatus' 'Unknown' } else { 'Missing or unavailable' }
+    $resultRemovalStatus = if ($resultData) { Get-Prop $resultData 'RemovalStatus' 'Unknown' } else { 'Missing or unavailable' }
+    if ($resultData -and $resultInventoryStatus -ne 'Complete') { $inventoryStatus = 'Incomplete or unknown' }
+    if ($resultData -and $resultRemovalStatus -eq 'Incomplete') { $removalStatus = 'Incomplete' }
+    if ($resultData -and $resultRemovalStatus -eq 'Unknown') { $removalStatus = 'Unknown' }
+    if ($resultData -and $removalData -and $resultRemovalStatus -notin @('Unknown',$removalStatus)) { $removalStatus = 'Incomplete or inconsistent' }
+    $sectionCoverageIncomplete = $false
+    $coverageSections = Get-Prop $inventoryData 'Sections'
+    if ($coverageSections -is [System.Management.Automation.PSCustomObject]) {
+        foreach ($coverageSection in $coverageSections.PSObject.Properties) {
+            if ((Get-Prop $coverageSection.Value 'Status' 'Unknown') -ne 'Complete' -or @(Get-Items (Get-Prop $coverageSection.Value 'Errors')).Count -gt 0) { $sectionCoverageIncomplete = $true }
+        }
+    } else { $sectionCoverageIncomplete = $true }
+    if (@(Get-Items (Get-Prop $inventoryData 'Errors')).Count -gt 0 -or $sectionCoverageIncomplete) { $inventoryStatus = 'Incomplete' }
+    if (@(Get-Items (Get-Prop $removalData 'Errors')).Count -gt 0) { $removalStatus = 'Incomplete' }
+    foreach ($actionResult in (Get-Items (Get-Prop $removalData 'Actions'))) {
+        if ((Get-Prop $actionResult 'Status') -notin @('Removed','Failed') -or (Get-Prop $actionResult 'Status') -eq 'Failed' -or (Get-Prop $actionResult 'Error')) { $removalStatus = 'Incomplete' }
+    }
+    $pStatus = $resultStatus
+    $inventoryUnreadable = @($persistenceLoadErrors | Where-Object { $_ -like 'Inventory:*' }).Count -gt 0
+    $resultUnreadable = @($persistenceLoadErrors | Where-Object { $_ -like 'Result:*' }).Count -gt 0
+    $resultHasErrors = @(Get-Items (Get-Prop $resultData 'Errors')).Count -gt 0
+    $removalMissingExpectedSkip = ($null -eq $removalData -and $resultData -and (Get-Prop $resultData 'RemovalStatus') -eq 'Skipped')
+    $removalUnreadable = @($persistenceLoadErrors | Where-Object { $_ -like 'Removal:*' -and ($_ -notlike '*file not found*' -or -not $removalMissingExpectedSkip) }).Count -gt 0
+    if ($resultStatus -eq 'Complete' -and ($inventoryStatus -ne 'Complete' -or $inventoryUnreadable -or $resultUnreadable -or $resultHasErrors -or $removalUnreadable -or ($removalStatus -notmatch '^(Completed|Declined|Skipped|Skipped \(no removal manifest\)|NoCandidates)$'))) { $pStatus = 'Incomplete or inconsistent evidence' }
+    $pRows = ''
+    foreach ($finding in (Get-Items (Get-Prop $inventoryData 'Findings'))) {
+        $pRows += "<tr><td>$(Fmt (Get-Prop $finding 'Kind'))</td><td>$(Fmt (Get-Prop $finding 'Target'))</td><td>$(Fmt (Get-Prop $finding 'Command'))</td><td>$(Fmt (Get-Prop $finding 'Reason'))</td><td>$(FmtBool (Get-Prop $finding 'ReviewOnly'))</td></tr>`n"
+    }
+    if (-not $pRows) { $pRows = '<tr><td colspan="5">No findings were recorded. This is not a malware verdict.</td></tr>' }
+    $outcomeRows = ''
+    foreach ($action in (Get-Items (Get-Prop $removalData 'Actions'))) {
+        $outcomeRows += "<tr><td>$(Fmt (Get-Prop $action 'Kind'))</td><td>$(Fmt (Get-Prop $action 'Target'))</td><td>$(Fmt (Get-Prop $action 'Status'))</td><td>$(Fmt (Get-Prop $action 'BackupPath'))</td><td>$(Fmt (Get-Prop $action 'Error'))</td></tr>`n"
+    }
+    if (-not $outcomeRows) { $outcomeRows = '<tr><td colspan="5">No removal outcomes recorded (not run, missing, or no actions).</td></tr>' }
+    $errorItems = ''
+    foreach ($err in (Get-Items (Get-Prop $inventoryData 'Errors'))) { $errorItems += "<li>Inventory: $(Fmt $err)</li>`n" }
+    foreach ($err in (Get-Items (Get-Prop $removalData 'Errors'))) { $errorItems += "<li>Removal: $(Fmt $err)</li>`n" }
+    foreach ($err in (Get-Items (Get-Prop $resultData 'Errors'))) { $errorItems += "<li>Stage: $(Fmt $err)</li>`n" }
+    foreach ($err in $persistenceLoadErrors) { $errorItems += "<li>$(Fmt $err)</li>`n" }
+    if (-not $errorItems) { $errorItems = '<li>No collection errors were recorded.</li>' }
+    $sectionRows = ''
+    $sectionsObject = Get-Prop $inventoryData 'Sections'
+    if ($sectionsObject -is [System.Management.Automation.PSCustomObject]) {
+        foreach ($sectionProperty in $sectionsObject.PSObject.Properties) {
+            $section = $sectionProperty.Value
+            $notes = @(Get-Items (Get-Prop $section 'Errors')) -join '; '
+            $itemCount=@(Get-Items (Get-Prop $section 'Items')).Count
+            if($sectionProperty.Name -eq 'PrivacyOmissions'){$notes=@(Get-Items (Get-Prop $section 'Items')) -join '; '}
+            $sectionRows += "<tr><td>$(Fmt $sectionProperty.Name)</td><td>$(Fmt (Get-Prop $section 'Status' 'Unknown'))</td><td>$(Fmt $itemCount)</td><td>$(Fmt $notes)</td></tr>`n"
+        }
+    }
+    if (-not $sectionRows) { $sectionRows = '<tr><td colspan="4">No section coverage details available.</td></tr>' }
+    $persistenceSectionHtml = @"
+<section id="persistence">
+  <h2>Persistence review</h2>
+  <p class="warn-line">Current-run persistence status: $(Fmt $pStatus). Inventory status: $(Fmt $inventoryStatus). Removal status: $(Fmt $removalStatus). Collection completeness is not a malware verdict. Script-host and writable-location heuristics are review leads only.</p>
+  <h3>Collection errors and coverage</h3><ul>$errorItems</ul>
+  <h3>Section coverage</h3><div class="table-scroll"><table class="data-table"><thead><tr><th>Section</th><th>Status</th><th>Items</th><th>Coverage note</th></tr></thead><tbody>$sectionRows</tbody></table></div>
+  <h3>Findings</h3><div class="table-scroll"><table class="data-table"><thead><tr><th>Kind</th><th>Target</th><th>Command / action</th><th>Reason</th><th>Review only</th></tr></thead><tbody>$pRows</tbody></table></div>
+  <h3>Removal action outcomes</h3><div class="table-scroll"><table class="data-table"><thead><tr><th>Kind</th><th>Target</th><th>Result</th><th>Backup</th><th>Error</th></tr></thead><tbody>$outcomeRows</tbody></table></div>
+</section>
+"@
+}
 
 # ---------------------------------------------------------------------------
 # Header
@@ -1019,6 +1112,7 @@ $css
 $headerHtml
 <main>
 $summaryHtml
+$persistenceSectionHtml
 $scSectionHtml
 $otherSectionHtml
 $avUninstallSectionHtml

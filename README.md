@@ -1,5 +1,37 @@
 # ScreenConnect Cleanup Tool
 
+## Post-AV persistence prototype - TESTING ONLY
+
+The guided runner now includes a mandatory persistence investigation immediately
+after its attended antivirus stage (Step 6d). The direct pipeline does the same
+after Stage 5, even when `-sa` skips antivirus scanners. Declining an AV scanner
+does not skip this investigation. `-WhatIf` remains a no-execution preview.
+
+Step 6e then offers to open the review surface for a technician: the evidence,
+task-XML, quarantine, on-disk task and observed startup folders, plus Services
+and Task Scheduler, together with a printed list of what was flagged and where
+to look for it. That step only opens windows - it changes nothing and never
+approves cleanup.
+
+Findings and collection gaps appear in the local HTML report. Selected suspicious
+scheduled tasks, Run/RunOnce values and startup-folder files can be removed only
+after a separate selection and typed `REMOVE` approval, successful rollback
+prerequisites, a backup, and fresh target revalidation. `-sr` disables this
+cleanup without disabling the scan; the lab-only `-ExecuteRemoval` flag does not
+approve persistence cleanup. Heuristic matches are not malware verdicts.
+
+Services, WMI subscriptions, hidden-task discrepancies and sensitive system
+startup settings remain investigation-only. Original-user offline registry hives
+are not mounted for this prototype. Raw script samples and PowerShell histories
+are not copied. The existing sanitized share contains only persistence status and
+aggregate counts, not commands, file paths, task XML or raw evidence.
+
+Download the release marked **TESTING ONLY** (the newest `v1.8.x` prerelease),
+extract the whole ZIP,
+and read [the persistence testing guide](docs/12-post-av-persistence.md) before
+running `START-HERE.bat`. This extends the existing guided cleanup runner, not
+the separate DetectOnly WPF GUI. Owner live Windows acceptance remains required.
+
 > **Completely vibe coded.** This entire project - every script, the docs, the CI -
 > was created through AI-assisted ("vibe-coded") development across multiple agent
 > sessions. It has been parser-checked, ASCII/no-BOM checked, and Linux/pwsh
@@ -17,13 +49,13 @@ drives existing tools rather than reimplementing them. Roughly **90% orchestrati
 10% original code** — the original code being the ScreenConnect module, because no
 existing tool answers the question that actually matters.
 
-> **Status: full 10-stage pipeline built** (Stages 0–9), including a Stage 4 removal
+> **Status: 10 primary stages plus mandatory persistence substage 5b** (Stages 0–9), including a Stage 4 removal
 > module (`remove-screenconnect.ps1`). Removal is **not read-only**: given an approved
 > plan and `-Execute`, it stops services, runs vendor uninstallers, moves files to
 > quarantine, and removes service/persistence registrations. It is dry-run by default
 > and gated behind a technician review in `sc-cleanup.ps1`; the **guided runner
-> (`START-HERE.bat` Step 5) requires typed per-instance approval and a final
-> confirmation** before removal. **On live Windows, nothing beyond the dry-run has
+> (`START-HERE.bat` Step 5) requires a typed confirmation for all detected
+> ScreenConnect instances** before removal. **On live Windows, nothing beyond the dry-run has
 > been validated** — see [Status](#status) and the caveats.
 
 ---
@@ -109,11 +141,12 @@ Two further consequences worth stating plainly:
 || 3 — Technician review | approval gate - nothing is removed without it | **built** (interactive y/n prompt in `sc-cleanup.ps1` and the guided runner; lab-only `-ExecuteRemoval` is the separate automatic path) |
 | 4 — Remove / quarantine | stop, uninstall, quarantine, clean persistence | **built, dry-run default** (never run on live Windows; skipped by default via `-sr`) |
 | 5 — Scanners | KVRT, ESET Online Scanner (GUI, attended); Malwarebytes installed via winget (`winget install -e --id Malwarebytes.Malwarebytes --accept-package-agreements --accept-source-agreements`) | **built** (`Get-AVTools.ps1` downloads KVRT + ESET from official vendor URLs; `Invoke-GUIScanner` launches visible attended GUIs and runs the Malwarebytes winget install; on install failure it checks the official endpoint, DNS/proxy/hosts evidence, and Techloq/other filter indicators, then writes a result artifact, alerts the technician, and returns exit 6; AdwCleaner/Defender remain removed; real exec unverified). After each completed scan, `Get-ScannerFindings.ps1` parses the scanner's own output for the report: KVRT plain-text reports under `C:\KVRT_Data\Reports` (launched with `-accepteula -dontencrypt -details`; `-silent`/`-processlevel` never passed), ESET's `%LOCALAPPDATA%\Temp\log.txt`, and Malwarebytes XML reports. |
+| 5b — Post-AV persistence | tasks, autoruns, startup files and contextual evidence; explicit selected cleanup | **testing prototype** (mandatory even with `-sa`; `-sr` collects without cleanup; details and coverage gaps in report) |
 | 6 — Uninstall installed AV | open each detected third-party AV uninstaller (attended GUI) + sweep leftovers into quarantine | **built** (Invoke-AVUninstaller; Windows Defender excluded; leftover sweep v1.7.5 moves remaining shortcuts/folders to av-uninstall-quarantine, never deletes; results in report) |
 | 7 — Procmon (targeted) | "something reinstalled it — what?" | **built** (v1.7.21: bounded live capture via `-procmon`, `.pml` to `logs\Procmon\`; boot-logging/PMF filters open) |
 | 8 — Snapshot (after) + diff | prove it is gone, catch resurrections | **built** (Linux-verified) |
 | 9 — Report | HTML + JSON + tech summary | **built** (XSS + empty-case verified; includes AV-uninstall section and per-scanner scan findings with a clean/not-parseable verdict when no findings are parseable) |
-| — Top-level runner | `sc-cleanup.ps1` ties all 10 stages together | **built** (Linux end-to-end, detect stubbed) |
+| — Top-level runner | `sc-cleanup.ps1` ties the primary stages and persistence substage together | **built** (fixture-tested; owner live acceptance pending) |
 
 Deliberate build order: **every non-destructive stage ships before any destructive one.**
 Removal comes last, on top of machinery already proven in the field.

@@ -30,6 +30,9 @@ param(
     [string]$ReportHtml = '',
     [string]$ResultsJson = '',
     [string]$DiffJson = '',
+    [string]$PersistenceInventory = '',
+    [string]$PersistenceRemoval = '',
+    [string]$PersistenceResult = '',
     [string]$MicroBinUrl = '',
     [string]$MicroBinUploaderPasswordFile = '',
     # Optional operator-recorded context for direct invocations. When absent,
@@ -79,6 +82,13 @@ function Get-ArrayValue {
     if ($null -eq $Value) { return @() }
     if ($Value -is [System.Array]) { return $Value }
     return @($Value)
+}
+
+function Get-AllowedValue {
+    param([object]$Value, [string[]]$Allowed)
+    $text = [string]$Value
+    if ($Allowed -ccontains $text) { return $text }
+    return 'Unknown'
 }
 
 function Convert-ReportPath {
@@ -337,6 +347,41 @@ function New-SafeReport {
         if ($null -ne $safeTarget -and @($safeTarget.Hits).Count -gt 0) { $otherTargets += ,$safeTarget }
     }
 
+    $persistence = [ordered]@{ Status = 'Missing or unavailable'; InventoryStatus = 'Missing or unavailable'; RemovalStatus = 'Missing or unavailable'; FindingsCount = 0; FindingsByKind = [ordered]@{}; OutcomeCounts = [ordered]@{} }
+    if ($PersistenceInventory -and (Test-Path -LiteralPath $PersistenceInventory -PathType Leaf)) {
+        try {
+            $inv = [IO.File]::ReadAllText($PersistenceInventory) | ConvertFrom-Json
+            $persistence.InventoryStatus = Get-AllowedValue (Get-Field $inv 'Status') @('Complete','Incomplete','Unsupported')
+            $persistence.Status = $persistence.InventoryStatus
+            $counts = [ordered]@{ ScheduledTask=0; RunKey=0; StartupFile=0; HiddenTask=0; Unknown=0 }
+            foreach ($finding in @(Get-ArrayValue (Get-Field $inv 'Findings'))) { $kind = Get-AllowedValue (Get-Field $finding 'Kind') @('ScheduledTask','RunKey','StartupFile','HiddenTask'); if ($kind -eq 'Unknown') { $counts.Unknown++ } else { $counts[$kind]++ } }
+            foreach ($kind in $counts.Keys) { if ($counts[$kind] -gt 0) { $persistence.FindingsByKind[$kind] = $counts[$kind]; $persistence.FindingsCount += $counts[$kind] } }
+            if (@(Get-ArrayValue (Get-Field $inv 'Errors')).Count -gt 0) { $persistence.InventoryStatus = 'Incomplete'; $persistence.Status = 'Incomplete' }
+            $sections = Get-Field $inv 'Sections'
+            if ($sections -is [System.Management.Automation.PSCustomObject]) {
+                foreach ($section in $sections.PSObject.Properties) { if ((Get-AllowedValue (Get-Field $section.Value 'Status') @('Complete','Incomplete','Unsupported')) -ne 'Complete' -or @(Get-ArrayValue (Get-Field $section.Value 'Errors')).Count -gt 0) { $persistence.InventoryStatus = 'Incomplete'; $persistence.Status = 'Incomplete' } }
+            } else { $persistence.InventoryStatus = 'Incomplete'; $persistence.Status = 'Incomplete' }
+        } catch { $persistence.InventoryStatus = 'Unreadable'; $persistence.Status = 'Incomplete' }
+    }
+    if ($PersistenceRemoval -and (Test-Path -LiteralPath $PersistenceRemoval -PathType Leaf)) {
+        try { $rem = [IO.File]::ReadAllText($PersistenceRemoval) | ConvertFrom-Json; $persistence.RemovalStatus = Get-AllowedValue (Get-Field $rem 'Status') @('NoCandidates','Skipped','Declined','Completed','Incomplete'); $outcomes = [ordered]@{ Removed=0; Failed=0; Unknown=0 }; foreach ($action in @(Get-ArrayValue (Get-Field $rem 'Actions'))) { $status = Get-AllowedValue (Get-Field $action 'Status') @('Removed','Failed'); if ($status -eq 'Unknown') { $outcomes.Unknown++ } else { $outcomes[$status]++ } }; foreach ($status in $outcomes.Keys) { if ($outcomes[$status] -gt 0) { $persistence.OutcomeCounts[$status] = $outcomes[$status] } }; if (@(Get-ArrayValue (Get-Field $rem 'Errors')).Count -gt 0 -or $outcomes.Failed -gt 0 -or $outcomes.Unknown -gt 0) { $persistence.RemovalStatus = 'Incomplete' } } catch { $persistence.RemovalStatus = 'Unreadable' }
+    }
+    if ($PersistenceResult -and (Test-Path -LiteralPath $PersistenceResult -PathType Leaf)) {
+        try {
+            $result = [IO.File]::ReadAllText($PersistenceResult) | ConvertFrom-Json
+            $persistence.Status = Get-AllowedValue (Get-Field $result 'Status') @('Complete','Incomplete')
+            $reportedInventoryStatus = Get-AllowedValue (Get-Field $result 'InventoryStatus') @('Complete','Incomplete','Unsupported')
+            if ($reportedInventoryStatus -ne 'Complete') { $persistence.InventoryStatus = 'Incomplete' }
+            $reportedRemovalStatus = Get-AllowedValue (Get-Field $result 'RemovalStatus') @('NoCandidates','Skipped','Declined','Completed','Incomplete')
+            if ($persistence.RemovalStatus -eq 'Missing or unavailable') {
+                if ($reportedRemovalStatus -eq 'Skipped') { $persistence.RemovalStatus = 'Skipped' }
+            } elseif ($reportedRemovalStatus -eq 'Incomplete' -or $reportedRemovalStatus -eq 'Unknown' -or $reportedRemovalStatus -ne $persistence.RemovalStatus) {
+                $persistence.RemovalStatus = 'Incomplete'
+            }
+            if ($persistence.Status -eq 'Complete' -and ($persistence.InventoryStatus -ne 'Complete' -or ($persistence.RemovalStatus -notin @('NoCandidates','Skipped','Declined','Completed')) -or @(Get-ArrayValue (Get-Field $result 'Errors')).Count -gt 0)) { $persistence.Status = 'Incomplete' }
+        } catch { $persistence.Status = 'Incomplete' }
+    } else { $persistence.Status = 'Incomplete' }
+
     return [ordered]@{
         SchemaVersion   = 2
         ReportType      = 'Potential malicious or fraudulent ScreenConnect activity'
@@ -357,6 +402,7 @@ function New-SafeReport {
             Historical  = @($historical)
         }
         OtherTargets    = @($otherTargets)
+        Persistence    = $persistence
         RawEvidenceIncluded = $false
     }
 }
@@ -797,6 +843,10 @@ try {
         $findingsFullPath = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $FindingsJson).Path)
         $workFullPath = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $WorkDir).Path)
     }
+    $persistenceDir = Join-Path $workFullPath 'persistence'
+    if ([string]::IsNullOrWhiteSpace($PersistenceInventory)) { $PersistenceInventory = Join-Path $persistenceDir 'inventory.json' }
+    if ([string]::IsNullOrWhiteSpace($PersistenceRemoval)) { $PersistenceRemoval = Join-Path $persistenceDir 'removal.json' }
+    if ([string]::IsNullOrWhiteSpace($PersistenceResult)) { $PersistenceResult = Join-Path $persistenceDir 'result.json' }
     $data = [System.IO.File]::ReadAllText($findingsFullPath) | ConvertFrom-Json
     if ($null -eq $data) { throw 'findings JSON was empty' }
     $report = New-SafeReport $data

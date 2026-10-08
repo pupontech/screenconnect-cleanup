@@ -3,6 +3,118 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.5] - 2026-10-08
+**TESTING ONLY - attended review windows for the technician.**
+- Guided Step 6e (after the persistence scan, before AV uninstall) offers to open
+  the review surface: Explorer at the evidence folder, exported task XML,
+  quarantine, the on-disk scheduled-task folder and every observed startup
+  folder, plus `services.msc` and `taskschd.msc`.
+- The step prints what the scan flagged, marking each entry REVIEW-ONLY (never
+  auto-removed) or a candidate requiring explicit selection, states where to look
+  for it, and lists the remote-access services seen so far for the Services
+  console.
+- Strictly read-only: it changes, stops and removes nothing, never approves
+  cleanup, and refuses to run without an inventory. It writes an audit record to
+  `persistence/review-opened.json`. Opt-in for the direct runner via
+  `-OpenReview`; skipped under `-WhatIf`.
+- Fixture proves the exact folder/console set, the read-only guarantee, the
+  WhatIf plan, and the refusal without an inventory, using an injected launcher so
+  no window, service console or task scheduler is started during tests.
+
+## [1.8.4] - 2026-10-08
+**TESTING ONLY - single UAC prompt per launch, and a property-safe inventory collector.**
+- Fixed the live persistence-collection failure in the inventory checker. The
+  collector filtered registry Uninstall entries with the simplified pipeline form
+  `Where-Object DisplayName -match ...`; any key without that value (orphaned
+  uninstall entries are common) raised `PSArgumentException` ("The input name
+  cannot be resolved to a property"), which under the worker's
+  `$ErrorActionPreference='Stop'` aborted collection. The same form was used for
+  the process list, and an unguarded `Where-Object SID | ExpandProperty SID`
+  pipeline sat outside any section try/catch. All are replaced with a
+  property-safe accessor that tolerates absent values.
+- Incomplete collection now prints the recorded errors and the non-Complete
+  section names on the console, so a partial inventory says why instead of only
+  reporting "incomplete".
+- Regression added with a negative control: the old form must throw on a missing
+  property and the production form must still match the real row, plus a static
+  contract that forbids the property-unresolved form returning to the collector.
+- Fixed repeated administrator prompts when opening the tool. The launcher
+  decided elevation with `fltmc.exe` and had no guard against asking again, so
+  a console that still reported "not elevated" after the UAC request relaunched
+  itself and prompted again, indefinitely, leaving several elevated windows
+  parked at the same step.
+- Elevation is now decided from the real administrator token, the relaunch
+  carries a one-shot `--elevation-attempted` marker, and a still-unelevated
+  window stops with clear "run as administrator" guidance instead of prompting
+  again. The dedicated-child wrapper forwards that marker.
+- `Run-DetectRemoteAccess.bat` uses the same bounded pattern and strips the
+  internal marker before forwarding its own arguments.
+- Added a fixture that replays the launcher's elevation region with a stub
+  `powershell.exe` and asserts: no request when already elevated, exactly one
+  request on the first unelevated run, and zero further requests once the
+  marker is present. Run under PowerShell 5.1 and 7, and against the extracted
+  ZIP. No real UAC prompt is shown by the fixture.
+- Third-party scanners (KVRT, ESET, Malwarebytes) still show their own Windows
+  elevation prompt when launched; that prompt belongs to the vendor binary and
+  cannot be suppressed by this tool.
+
+## [1.8.2] - 2026-10-08
+**TESTING ONLY - persistence collection progress and hard deadlines.**
+- Fixed the silent unbounded wait at guided Step 6d: read-only inventory now
+  runs in an isolated worker with a 60-second per-section deadline and a
+  300-second overall deadline. The exact provider that stalled the owner's
+  prior run is not established; new section/heartbeat output identifies it.
+- Added live section progress, periodic still-collecting messages and a local
+  `persistence/collection-progress.log`. A stalled worker is terminated;
+  persistence collection stops as Incomplete, removal is disabled, and the
+  normal report path can continue with a nonzero outcome and the last section.
+- Approval/removal remains in the visible attended parent, never the worker.
+  Deadlines do not approve cleanup, suppress gaps or create a clean verdict.
+- Added harmless blocked-provider, total-budget, success and worker-failure
+  fixtures; no live Windows collection, scanner or removal was run by agents.
+- Includes the v1.8.1 battery-check console visibility fix unchanged.
+
+## [1.8.1] - 2026-10-08
+**TESTING ONLY - attended console visibility fix. Owner live acceptance remains required.**
+- Removed `-WindowStyle Hidden` from the foreground battery-check invocation:
+  it shares the elevated runner console and could hide that whole window while
+  the run continued at an unseen approval prompt. The separately started
+  keep-awake helper remains hidden. Battery confirmation and cancel behavior
+  are otherwise unchanged.
+- Added a harmless native Windows console-visibility regression with the old
+  Hidden flag as a negative control, plus continue/cancel stub paths. CI runs
+  it under PowerShell 5.1 and 7 and repeats it against the extracted ZIP.
+- Do not resume old hidden cleanup sessions blindly. Before retrying, close
+  only the identified old ScreenConnect cleanup/stub runs, or reboot after
+  saving work. Do not terminate unrelated cmd.exe processes.
+- Post-AV persistence and its separate typed approval are unchanged. The
+  agents do not run the real cleanup; actual UAC consent and battery dialog
+  acceptance remain owner-live tests.
+
+## [1.8.0] - 2026-10-08
+**TESTING ONLY - post-AV persistence prototype. Owner live Windows acceptance is required.**
+- Added a mandatory persistence investigation after AV scans in both runners,
+  including when scanners are declined, unavailable or skipped with `-sa`.
+  The no-execution `-WhatIf` preview remains an explicit exception.
+- Added local evidence collection for tasks/task XML/hidden-task discrepancies,
+  registry autoruns, loaded user hives, startup folders, services, WMI, script
+  file hashes, process/network context, Defender, accounts and logon/RDP context.
+  Collection gaps and bounded/truncated evidence remain explicit and incomplete.
+- Added separate selection and typed `REMOVE` approval for suspicious scheduled
+  tasks, Run/RunOnce values and startup files, with rollback prerequisites,
+  per-item backup, fresh target revalidation and post-action verification.
+  `-sr` suppresses cleanup only; `-ExecuteRemoval` cannot approve this new scope.
+- Added persistence status, findings, coverage errors and removal outcomes to
+  the HTML report, plus aggregate-only sanitized share metadata. Raw evidence,
+  commands, paths, task XML, scripts and histories are not added to sharing.
+- Services/WMI/hidden-task artifacts/Winlogon remain review-only. Original
+  offline user hives, raw script samples and PowerShell history are not collected.
+- Added fixture/refusal/report/privacy/workflow tests to the Windows 2022/2025
+  PowerShell 5.1 and pwsh matrix; package parsing now includes PowerShell modules.
+- This is the existing guided cleanup tool, not a full-cleanup WPF GUI release.
+  No live detector, scanner, installation or destructive Windows cleanup was
+  performed by the agents; live selection, UAC and rollback acceptance are pending.
+
 ## [1.7.55] - 2026-10-07
 **TESTING ONLY - not production-validated. Owner live Windows testing is required before production use.**
 - After UAC and before the keep-awake helper or any cleanup setup, START-HERE
