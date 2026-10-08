@@ -281,14 +281,18 @@ jobs:
           }
           $digest = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           [IO.File]::WriteAllText(($zip + '.sha256'), ($digest + '  ' + [IO.Path]::GetFileName($zip) + "`n"), [Text.Encoding]::ASCII)
+          $uploadDirectory = Join-Path $env:RUNNER_TEMP 'scc-verified-package'
+          New-Item -ItemType Directory -Path $uploadDirectory -Force | Out-Null
+          Copy-Item -LiteralPath $zip -Destination $uploadDirectory
+          Copy-Item -LiteralPath ($zip + '.sha256') -Destination $uploadDirectory
 
       - name: Upload verified testing bundle
         uses: actions/upload-artifact@v4
         with:
           name: persistence-testing-bundle-${{ matrix.os }}
           path: |
-            ../screenconnect-cleanup-v*.zip
-            ../screenconnect-cleanup-v*.zip.sha256
+            ${{ runner.temp }}/scc-verified-package/screenconnect-cleanup-v*.zip
+            ${{ runner.temp }}/scc-verified-package/screenconnect-cleanup-v*.zip.sha256
           if-no-files-found: error
 
       - name: Relay and bulk-export unit tests
