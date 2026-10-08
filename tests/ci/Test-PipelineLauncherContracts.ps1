@@ -61,6 +61,18 @@ function Read-AsciiText {
 $cleanupPath = Join-Path $repoRoot 'sc-cleanup.ps1'
 $cleanup = Read-AsciiText $cleanupPath
 
+# Persistence scan is an unconditional post-AV stage, and the launcher passes
+# the expected evidence paths even when one or more files are missing.
+if ($cleanup -notmatch "StageId '5b'") { Add-Failure 'C15' 'Mandatory persistence Stage 5b is missing.' }
+if ($cleanup -notmatch "-PersistenceInventory'.*?-PersistenceRemoval'.*?-PersistenceResult'") { Add-Failure 'C15' 'Stage 9 does not pass all expected persistence artifact paths.' }
+$persistenceRunner = Read-AsciiText (Join-Path $repoRoot 'Invoke-PersistenceScan.ps1')
+if ($persistenceRunner -notmatch 'Get-SccPersistenceInventory' -or $persistenceRunner -notmatch 'AllowRemoval:') { Add-Failure 'C15' 'Persistence runner does not scan independently and gate removal.' }
+if ($cleanup -notmatch '\[string\]\$StageId') { Add-Failure 'C16' 'Invoke-Stage StageId cannot represent the required 5b label.' }
+if ($cleanup -notmatch 'registry_hives' -or $cleanup -notmatch 'HKLM_SOFTWARE\.reg' -or $cleanup -notmatch 'HKLM_SYSTEM\.reg' -or $cleanup -notmatch 'HKCU_SOFTWARE\.reg') { Add-Failure 'C16' 'Direct-run rollback readiness does not require the exact three nonempty registry exports.' }
+$guidedPersistence = Read-AsciiText (Join-Path $repoRoot 'START-HERE.bat')
+if ($guidedPersistence -notmatch '-PreflightRoot "!SCC_RUN_ROOT!"' -or $guidedPersistence -notmatch 'Invoke-PersistenceScan\.ps1" -WorkDir "!SCC_RUN_ROOT!"') { Add-Failure 'C16' 'Guided launcher does not quote and pass its preflight/run roots to persistence.' }
+if ($guidedPersistence -notmatch 'Submit-ConnectWiseReport\.ps1[^\r\n]*-PersistenceInventory[^\r\n]*-PersistenceRemoval[^\r\n]*-PersistenceResult') { Add-Failure 'C16' 'Guided sanitized uploader does not receive expected persistence artifact paths.' }
+
 if ($cleanup -match '(?m)All stages executed successfully\.') {
     # The success line may exist, but only acceptable if the script can
     # still report failure and return nonzero afterwards. Require both:

@@ -14,6 +14,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   windows-tests:
     strategy:
@@ -233,6 +236,60 @@ jobs:
       - name: Malwarebytes offline fallback regression (pwsh)
         shell: pwsh
         run: ./tests/test_malwarebytes_fallback.ps1
+
+      - name: Post-AV persistence fixture and refusal tests (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          foreach ($test in @('tests/test_persistence_inventory.ps1', 'tests/test_persistence_removal.ps1', 'tests/test_persistence_workflow.ps1', 'tests/test_persistence_report.ps1', 'tests/test_persistence_output_safety.ps1', 'tests/test_persistence_native_fileinfo.ps1', 'tests/ci/Test-PersistenceContracts.ps1')) {
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File $test
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Post-AV persistence fixture and refusal tests (pwsh)
+        shell: pwsh
+        run: |
+          foreach ($test in @('tests/test_persistence_inventory.ps1', 'tests/test_persistence_removal.ps1', 'tests/test_persistence_workflow.ps1', 'tests/test_persistence_report.ps1', 'tests/test_persistence_output_safety.ps1', 'tests/test_persistence_native_fileinfo.ps1', 'tests/ci/Test-PersistenceContracts.ps1')) {
+            pwsh -NoProfile -File $test
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Build allowlisted testing ZIP from the tested checkout
+        shell: bash
+        env:
+          PYTHON: python
+        run: bash ./make-deploy-bundle.sh
+
+      - name: Verify ZIP and execute packaged persistence fixture tests (5.1 and pwsh)
+        shell: pwsh
+        run: |
+          $version = (Get-Content -LiteralPath VERSION -Raw).Trim()
+          $zip = Join-Path (Split-Path -Parent $PWD.Path) "screenconnect-cleanup-v$version.zip"
+          $sha = (git rev-parse HEAD).Trim()
+          python ./tests/verify_deploy_zip.py $zip --version $version --commit $sha
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $extract = Join-Path $env:RUNNER_TEMP ('scc-package-' + [guid]::NewGuid().ToString('N'))
+          Expand-Archive -LiteralPath $zip -DestinationPath $extract
+          $package = Join-Path $extract 'screenconnect-cleanup'
+          New-Item -ItemType Directory -Path (Join-Path $package 'tests') | Out-Null
+          foreach ($test in @('test_persistence_inventory.ps1', 'test_persistence_removal.ps1', 'test_persistence_report.ps1', 'test_persistence_workflow.ps1', 'test_persistence_output_safety.ps1', 'test_persistence_native_fileinfo.ps1')) {
+            $copied = Join-Path (Join-Path $package 'tests') $test
+            Copy-Item -LiteralPath (Join-Path 'tests' $test) -Destination $copied
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File $copied
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            pwsh -NoProfile -File $copied
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          $digest = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText(($zip + '.sha256'), ($digest + '  ' + [IO.Path]::GetFileName($zip) + "`n"), [Text.Encoding]::ASCII)
+
+      - name: Upload verified testing bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: persistence-testing-bundle-${{ matrix.os }}
+          path: |
+            ../screenconnect-cleanup-v*.zip
+            ../screenconnect-cleanup-v*.zip.sha256
+          if-no-files-found: error
 
       - name: Relay and bulk-export unit tests
         shell: pwsh

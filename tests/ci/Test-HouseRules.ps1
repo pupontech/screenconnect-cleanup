@@ -18,7 +18,7 @@ $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 # Directories that hold third-party binaries / vendored tools - skip them.
 $excludeDirs = @('\.git\', '\tools\Autoruns\', '\tools\ProcessMonitor\', '\tools\Sigcheck\', '\tools\TCPView\')
-$extensions = @('.ps1', '.bat', '.cmd', '.json', '.md', '.yml', '.sh')
+$extensions = @('.ps1', '.psm1', '.psd1', '.bat', '.cmd', '.json', '.md', '.yml', '.sh')
 
 $files = Get-ChildItem -Path $repoRoot -Recurse -File | Where-Object {
     $ext = $_.Extension.ToLowerInvariant()
@@ -34,7 +34,7 @@ $violations = @()
 
 # ASCII is a hard rule for CODE files (.ps1/.bat/.cmd). Prose (.md/.yml)
 # may contain Unicode punctuation; they only get the BOM + JSON checks.
-$codeExtensions = @('.ps1', '.bat', '.cmd')
+$codeExtensions = @('.ps1', '.psm1', '.psd1', '.bat', '.cmd')
 
 foreach ($f in $files) {
     $bytes = [System.IO.File]::ReadAllBytes($f.FullName)

@@ -23,6 +23,9 @@ Submit-ConnectWiseReport.ps1    <- sanitized package + automatic MicroBin paste 
 microbin-url.txt                <- MicroBin server base URL used by the uploader (first nonblank line)
 Invoke-GUIScanner.ps1          <- launches KVRT/ESET GUI scanners; Malwarebytes tries winget and falls back to the official consumer offline installer (Stage 5)
 Get-MalwarebytesDownloadDiagnostics.ps1 <- read-only Malwarebytes filter/proxy failure diagnostics (Stage 5)
+Invoke-PersistenceScan.ps1     <- mandatory post-AV inventory and explicit cleanup review
+Persistence.Inventory.psm1     <- local persistence evidence collection
+Persistence.Removal.psm1       <- selected-target backup, cleanup and verification
 Invoke-AVUninstaller.ps1        <- opens installed-AV uninstallers, attended (Stage 6)
 tools\Get-ToolPack.ps1          <- downloader ONLY; do NOT copy tools\* exes
 tools\Get-AVTools.ps1           <- KVRT/ESET stager (Malwarebytes via winget since v1.7.3)

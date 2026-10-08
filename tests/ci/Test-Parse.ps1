@@ -15,7 +15,8 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
-$scripts = Get-ChildItem -Path $repoRoot -Recurse -Filter *.ps1 -File | Where-Object {
+$scripts = Get-ChildItem -Path $repoRoot -Recurse -File | Where-Object {
+    $_.Extension -in @('.ps1', '.psm1', '.psd1') -and
     $_.FullName -notmatch '\\tools\\(Autoruns|ProcessMonitor|Sigcheck|TCPView)\\'
 }
 
