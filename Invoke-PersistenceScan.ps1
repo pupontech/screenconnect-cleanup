@@ -174,7 +174,21 @@ if ($WhatIf) {
         $inventoryObject=Get-Content -LiteralPath $inventoryPath -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
         $inventoryStatus=[string]$inventoryObject.Status
         if ($inventoryStatus -notin @('Complete','Incomplete','Unsupported')) { throw 'Inventory status is invalid.' }
-        if ($inventoryStatus -ne 'Complete') { [void]$ErrorList.Add('Inventory collection status: '+$inventoryStatus); [void]$ErrorList.AddRange([object[]]@($inventoryObject.Errors)) }
+        if ($inventoryStatus -ne 'Complete') {
+            [void]$ErrorList.Add('Inventory collection status: '+$inventoryStatus)
+            [void]$ErrorList.AddRange([object[]]@($inventoryObject.Errors))
+            # Surface the reason on the console: a silent "incomplete" is what made
+            # the previous live failure hard to diagnose.
+            $shown=0
+            foreach($entry in @($inventoryObject.Errors)) {
+                if($shown -ge 12){Write-Host ('[Persistence] ... further collection notes are in inventory.json and collection-progress.log');break}
+                Write-Host ('[Persistence] '+[string]$entry);$shown++
+            }
+            foreach($sectionName in @($inventoryObject.Sections.PSObject.Properties.Name)) {
+                $sectionState=[string]$inventoryObject.Sections.$sectionName.Status
+                if($sectionState -and $sectionState -ne 'Complete'){Write-Host ('[Persistence] Section '+$sectionName+': '+$sectionState)}
+            }
+        }
     } catch {
         $inventoryStatus='Incomplete'; $overallStatus='Incomplete'
         [void]$ErrorList.Add('Inventory collection failed: '+$_.Exception.Message)

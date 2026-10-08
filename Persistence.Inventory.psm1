@@ -41,6 +41,18 @@ function New-SccSection {
     if(@($Errors).Count -gt 0 -and $Status -eq 'Complete'){$Status='Incomplete'}
     [pscustomobject]@{ Status=$Status; Items=@($Items); Errors=@($Errors); Limits=$Limits }
 }
+function Get-SccPropertyValue {
+    # Property-safe read. The simplified Where-Object form (Where-Object Name -match)
+    # raises PSArgumentException "The input name cannot be resolved to a property"
+    # as soon as ONE object in the pipeline lacks that value, and under the worker's
+    # $ErrorActionPreference='Stop' that aborts collection. Registry Uninstall keys
+    # with no DisplayName are the common real-world case.
+    param($InputObject,[string]$Name)
+    if($null -eq $InputObject -or -not $Name){return $null}
+    $property=$InputObject.PSObject.Properties[$Name]
+    if($property){return $property.Value}
+    return $null
+}
 function Get-SccTaskCommand {
     param($Task)
     $commands=foreach($action in $Task.Actions) {
@@ -301,7 +313,14 @@ function Get-SccPersistenceInventory {
     $registry=Get-SccRegistryEvidence
     Write-Host 'SCC_PERSISTENCE_DONE|RunKeys'
     $sections.RunKeys=New-SccSection -Items $registry.Items -Errors $registry.Errors
-    $sections.ProfileCoverage=New-SccSection -Status $(if($registry.ProfileErrors.Count){'Incomplete'}else{'Complete'}) -Items @($registry.Items | Where-Object SID | Select-Object -ExpandProperty SID -Unique) -Errors $registry.ProfileErrors
+    # Build the SID list explicitly: a pipeline property read here sits outside any
+    # section try/catch and would abort the whole inventory collection.
+    $coveredSids=New-Object System.Collections.ArrayList
+    foreach($row in @($registry.Items)) {
+        $sid=[string](Get-SccPropertyValue $row 'SID')
+        if($sid -and -not $coveredSids.Contains($sid)){[void]$coveredSids.Add($sid)}
+    }
+    $sections.ProfileCoverage=New-SccSection -Status $(if($registry.ProfileErrors.Count){'Incomplete'}else{'Complete'}) -Items @($coveredSids.ToArray()) -Errors $registry.ProfileErrors
     foreach($f in $registry.Findings){[void]$findings.Add($f)};foreach($e in $registry.Errors){[void]$errors.Add($e)};foreach($e in $registry.ProfileErrors){[void]$errors.Add($e)}
     Write-Host 'SCC_PERSISTENCE_SECTION|StartupFiles'
     $startup=Get-SccStartupEvidence -Profiles $((Get-SccProfileRoots).Profiles)
@@ -322,7 +341,7 @@ function Get-SccPersistenceInventory {
       TaskRegistrationEvents={Get-SccEventRecords -Filter @{LogName='Microsoft-Windows-TaskScheduler/Operational';Id=106,140,141} -Maximum 400 | Select-Object TimeCreated,Id,Message}
       Services={Get-CimInstance Win32_Service -ErrorAction Stop | Select-Object Name,DisplayName,State,StartMode,StartName,PathName}
       WmiSubscriptions={foreach($class in @('__EventConsumer','__EventFilter','__FilterToConsumerBinding')){Get-CimInstance -Namespace root\subscription -ClassName $class -ErrorAction Stop | Select-Object __CLASS,Name,Filter,Consumer,Query,CommandLineTemplate}}
-      Processes={Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object Name -match '(?i)wscript|cscript|mshta|powershell|pwsh|rundll32|regsvr32|bitsadmin|certutil|msbuild|installutil|regasm|msiexec' | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine}
+      Processes={Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {(Get-SccPropertyValue $_ 'Name') -match '(?i)wscript|cscript|mshta|powershell|pwsh|rundll32|regsvr32|bitsadmin|certutil|msbuild|installutil|regasm|msiexec'} | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine}
       Connections={Get-NetTCPConnection -ErrorAction Stop | Select-Object OwningProcess,LocalAddress,LocalPort,RemoteAddress,RemotePort,State}
       Defender={ $threats=@{};foreach($threat in @(Get-MpThreat -ErrorAction Stop)){$threats[[string]$threat.ThreatID]=$threat.ThreatName};Get-MpThreatDetection -ErrorAction Stop | ForEach-Object {$d=$_;[pscustomobject]@{InitialDetectionTime=$d.InitialDetectionTime;ThreatID=$d.ThreatID;ThreatName=$threats[[string]$d.ThreatID];ProcessName=$d.ProcessName;Resources=$d.Resources;ActionSuccess=$d.ActionSuccess;DomainUser=$d.DomainUser}} }
       DefenderConfig={Get-MpPreference -ErrorAction Stop | Select-Object ExclusionPath,ExclusionProcess,ExclusionExtension,DisableRealtimeMonitoring}
@@ -331,8 +350,8 @@ function Get-SccPersistenceInventory {
       RdpEvents={foreach($spec in @(@('Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational',1149),@('Microsoft-Windows-TerminalServices-LocalSessionManager/Operational',21,22,24,25))){Get-SccEventRecords -Filter @{LogName=$spec[0];Id=@($spec|Select-Object -Skip 1);StartTime=(Get-Date).AddDays(-14)} -Maximum 400 | Select-Object TimeCreated,Id,Message}}
       Accounts={Get-LocalUser -ErrorAction Stop | Select-Object Name,Enabled,LastLogon,PasswordLastSet,Description}
       LocalAdministrators={Get-LocalGroupMember -Group 'Administrators' -ErrorAction Stop | Select-Object Name,ObjectClass,PrincipalSource}
-      RemoteTools={Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction Stop | Where-Object DisplayName -match '(?i)AnyDesk|TeamViewer|Splashtop|ScreenConnect|ConnectWise|RustDesk|UltraVNC|TightVNC|RealVNC|LogMeIn|Ammyy|Supremo|Chrome Remote|Atera|NetSupport|RemotePC|Radmin|DWService|MeshAgent|Zoho.?Assist|Action1|Level\.io|Datto|Kaseya|N-able|Syncro|Pulseway' | Select-Object DisplayName,DisplayVersion,InstallDate,Publisher}
-      RemoteToolServices={Get-Service -ErrorAction Stop | Where-Object {$_.Name -match '(?i)AnyDesk|TeamViewer|ScreenConnect|ConnectWise|RustDesk|VNC|Splashtop|Atera|Kaseya|MeshAgent' -or $_.DisplayName -match '(?i)AnyDesk|TeamViewer|ScreenConnect|ConnectWise|RustDesk|VNC|Splashtop|Atera|Kaseya|MeshAgent'} | Select-Object Name,DisplayName,Status,StartType}
+      RemoteTools={Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction Stop | Where-Object {(Get-SccPropertyValue $_ 'DisplayName') -match '(?i)AnyDesk|TeamViewer|Splashtop|ScreenConnect|ConnectWise|RustDesk|UltraVNC|TightVNC|RealVNC|LogMeIn|Ammyy|Supremo|Chrome Remote|Atera|NetSupport|RemotePC|Radmin|DWService|MeshAgent|Zoho.?Assist|Action1|Level\.io|Datto|Kaseya|N-able|Syncro|Pulseway'} | Select-Object DisplayName,DisplayVersion,InstallDate,Publisher}
+      RemoteToolServices={Get-Service -ErrorAction Stop | Where-Object { $serviceName=(Get-SccPropertyValue $_ 'Name'); $serviceDisplay=(Get-SccPropertyValue $_ 'DisplayName'); $remotePattern='(?i)AnyDesk|TeamViewer|ScreenConnect|ConnectWise|RustDesk|VNC|Splashtop|Atera|Kaseya|MeshAgent'; ([string]$serviceName -match $remotePattern) -or ([string]$serviceDisplay -match $remotePattern) } | Select-Object Name,DisplayName,Status,StartType}
       Hosts={Get-Content (Join-Path $env:SystemRoot 'System32\drivers\etc\hosts') -ErrorAction Stop | Where-Object {$_ -and $_ -notmatch '^\s*#'}}
     }
     foreach($name in $collectors.Keys){

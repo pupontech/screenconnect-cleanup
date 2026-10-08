@@ -3,8 +3,23 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
-## [1.8.3] - 2026-10-08
-**TESTING ONLY - single UAC prompt per launch.**
+## [1.8.4] - 2026-10-08
+**TESTING ONLY - single UAC prompt per launch, and a property-safe inventory collector.**
+- Fixed the live persistence-collection failure in the inventory checker. The
+  collector filtered registry Uninstall entries with the simplified pipeline form
+  `Where-Object DisplayName -match ...`; any key without that value (orphaned
+  uninstall entries are common) raised `PSArgumentException` ("The input name
+  cannot be resolved to a property"), which under the worker's
+  `$ErrorActionPreference='Stop'` aborted collection. The same form was used for
+  the process list, and an unguarded `Where-Object SID | ExpandProperty SID`
+  pipeline sat outside any section try/catch. All are replaced with a
+  property-safe accessor that tolerates absent values.
+- Incomplete collection now prints the recorded errors and the non-Complete
+  section names on the console, so a partial inventory says why instead of only
+  reporting "incomplete".
+- Regression added with a negative control: the old form must throw on a missing
+  property and the production form must still match the real row, plus a static
+  contract that forbids the property-unresolved form returning to the collector.
 - Fixed repeated administrator prompts when opening the tool. The launcher
   decided elevation with `fltmc.exe` and had no guard against asking again, so
   a console that still reported "not elevated" after the UAC request relaunched
