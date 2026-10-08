@@ -1,4 +1,4 @@
-# v1.8.0 post-AV persistence prototype - testing guide
+# Post-AV persistence prototype - testing guide
 
 **TESTING ONLY.** This extends `START-HERE.bat` and `sc-cleanup.ps1`, not the
 separate DetectOnly WPF GUI. Hosted Windows fixture tests do not establish live
@@ -56,6 +56,27 @@ Task XML already written remains local evidence; unfinished in-memory section
 results cannot be recovered and are not presented as complete. The actual
 provider that blocked the previous owner run is unknown; the new output/log
 is intended to identify it on a retry. Use a fresh run directory.
+
+## Hand review of the findings (guided Step 6e, v1.8.5)
+
+After the scan, the guided runner offers to open the review surface for the
+technician. It opens Explorer at the run's `persistence` evidence folder, the
+exported `task_xml`, the quarantine folder, the on-disk scheduled-task folder
+(`%SystemRoot%\System32\Tasks`) and every startup folder the scan observed, plus
+`services.msc` and `taskschd.msc`.
+
+It also prints what was flagged: target, command, reason, where to look, and
+whether the entry is `REVIEW-ONLY` (never auto-removed: services, WMI,
+hidden-task artifacts, Microsoft-folder tasks, Winlogon) or a candidate that
+still requires explicit selection and a typed `REMOVE`. Remote-access services
+seen by the scan are listed for the Services console. An audit record is written
+to `persistence/review-opened.json`.
+
+Opening review windows changes nothing: no service, task, Run value or file is
+modified, and the step never approves or performs cleanup. It refuses to run
+without an inventory, and `-WhatIf` only prints the plan. The direct runner
+exposes the same step as the opt-in `-OpenReview` switch. Declining is safe and
+skips the step.
 
 ## What cleanup can do
 
@@ -123,6 +144,9 @@ installation. Read `DEPLOY.md` and verify the published SHA-256 sidecar.
 
 - [ ] Launch `START-HERE.bat`; verify the prior UAC/battery behavior is preserved.
 - [ ] Decline all AV scanners; verify Step 6d still collects persistence.
+- [ ] Accept Step 6e and verify it opens the evidence/startup/task folders plus
+      Services and Task Scheduler; decline it on a later run and verify it is
+      skipped. Neither choice may change any service, task or file.
 - [ ] Verify inventory, removal and result JSON belong to this fresh run.
 - [ ] Check `report.html` contains status, coverage gaps and candidate reasons.
 - [ ] On a disposable machine, create only harmless lab persistence entries.

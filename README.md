@@ -1,11 +1,17 @@
 # ScreenConnect Cleanup Tool
 
-## v1.8.0 post-AV persistence prototype - TESTING ONLY
+## Post-AV persistence prototype - TESTING ONLY
 
 The guided runner now includes a mandatory persistence investigation immediately
 after its attended antivirus stage (Step 6d). The direct pipeline does the same
 after Stage 5, even when `-sa` skips antivirus scanners. Declining an AV scanner
 does not skip this investigation. `-WhatIf` remains a no-execution preview.
+
+Step 6e then offers to open the review surface for a technician: the evidence,
+task-XML, quarantine, on-disk task and observed startup folders, plus Services
+and Task Scheduler, together with a printed list of what was flagged and where
+to look for it. That step only opens windows - it changes nothing and never
+approves cleanup.
 
 Findings and collection gaps appear in the local HTML report. Selected suspicious
 scheduled tasks, Run/RunOnce values and startup-folder files can be removed only
@@ -20,7 +26,8 @@ are not mounted for this prototype. Raw script samples and PowerShell histories
 are not copied. The existing sanitized share contains only persistence status and
 aggregate counts, not commands, file paths, task XML or raw evidence.
 
-Download the explicitly marked **v1.8.0 testing release**, extract the whole ZIP,
+Download the release marked **TESTING ONLY** (the newest `v1.8.x` prerelease),
+extract the whole ZIP,
 and read [the persistence testing guide](docs/12-post-av-persistence.md) before
 running `START-HERE.bat`. This extends the existing guided cleanup runner, not
 the separate DetectOnly WPF GUI. Owner live Windows acceptance remains required.
