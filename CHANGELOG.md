@@ -3,6 +3,30 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.0] - 2026-10-08
+**TESTING ONLY - post-AV persistence prototype. Owner live Windows acceptance is required.**
+- Added a mandatory persistence investigation after AV scans in both runners,
+  including when scanners are declined, unavailable or skipped with `-sa`.
+  The no-execution `-WhatIf` preview remains an explicit exception.
+- Added local evidence collection for tasks/task XML/hidden-task discrepancies,
+  registry autoruns, loaded user hives, startup folders, services, WMI, script
+  file hashes, process/network context, Defender, accounts and logon/RDP context.
+  Collection gaps and bounded/truncated evidence remain explicit and incomplete.
+- Added separate selection and typed `REMOVE` approval for suspicious scheduled
+  tasks, Run/RunOnce values and startup files, with rollback prerequisites,
+  per-item backup, fresh target revalidation and post-action verification.
+  `-sr` suppresses cleanup only; `-ExecuteRemoval` cannot approve this new scope.
+- Added persistence status, findings, coverage errors and removal outcomes to
+  the HTML report, plus aggregate-only sanitized share metadata. Raw evidence,
+  commands, paths, task XML, scripts and histories are not added to sharing.
+- Services/WMI/hidden-task artifacts/Winlogon remain review-only. Original
+  offline user hives, raw script samples and PowerShell history are not collected.
+- Added fixture/refusal/report/privacy/workflow tests to the Windows 2022/2025
+  PowerShell 5.1 and pwsh matrix; package parsing now includes PowerShell modules.
+- This is the existing guided cleanup tool, not a full-cleanup WPF GUI release.
+  No live detector, scanner, installation or destructive Windows cleanup was
+  performed by the agents; live selection, UAC and rollback acceptance are pending.
+
 ## [1.7.55] - 2026-10-07
 **TESTING ONLY - not production-validated. Owner live Windows testing is required before production use.**
 - After UAC and before the keep-awake helper or any cleanup setup, START-HERE

@@ -181,6 +181,16 @@ echo        Malwarebytes session ended - continuing.
 :skip_6c
 set GO=
 
+rem ---- Step 6d: mandatory persistence scan/review after AV scanners -----------
+echo.
+echo  STEP 6d/9: Persistence inventory and review
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-PersistenceScan.ps1" -WorkDir "!SCC_RUN_ROOT!" -PreflightRoot "!SCC_RUN_ROOT!"
+set "PERSIST_RC=!errorlevel!"
+if not "!PERSIST_RC!"=="0" (
+    echo     [WARN] Persistence scan/review incomplete (exit !PERSIST_RC!); evidence will still be reported.
+    if "!PIPE_RC!"=="0" set "PIPE_RC=!PERSIST_RC!"
+)
+
 rem ---- Step 7: Uninstall installed AV (attended) -------------------------------
 echo.
 echo  STEP 7/9: Uninstall third-party AV (attended)
@@ -228,9 +238,9 @@ if not defined FINDINGS_JSON (
 ) else (
     if exist "!FINDINGS_JSON!" (
     if exist "!SCC_RUN_ROOT!/removal-manifest.json" (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -RemovalManifest "!SCC_RUN_ROOT!/removal-manifest.json" -OutputPath "!SCC_RUN_ROOT!/report.html"
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -RemovalManifest "!SCC_RUN_ROOT!/removal-manifest.json" -PersistenceInventory "!SCC_RUN_ROOT!\persistence\inventory.json" -PersistenceRemoval "!SCC_RUN_ROOT!\persistence\removal.json" -PersistenceResult "!SCC_RUN_ROOT!\persistence\result.json" -OutputPath "!SCC_RUN_ROOT!/report.html"
     ) else (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -OutputPath "!SCC_RUN_ROOT!/report.html"
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -PersistenceInventory "!SCC_RUN_ROOT!\persistence\inventory.json" -PersistenceRemoval "!SCC_RUN_ROOT!\persistence\removal.json" -PersistenceResult "!SCC_RUN_ROOT!\persistence\result.json" -OutputPath "!SCC_RUN_ROOT!/report.html"
     )
         set "REPORT_RC=!errorlevel!"
         if not "!REPORT_RC!"=="0" (
@@ -242,7 +252,7 @@ if not defined FINDINGS_JSON (
             if exist "%~dp0Submit-ConnectWiseReport.ps1" (
                 rem MicroBin share is automatic (no relay): the uploader reads the
                 rem server base URL from microbin-url.txt beside the tool.
-                powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Submit-ConnectWiseReport.ps1" -FindingsJson "!FINDINGS_JSON!" -WorkDir "!SCC_RUN_ROOT!" -ReportHtml "!SCC_RUN_ROOT!/report.html"
+                powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Submit-ConnectWiseReport.ps1" -FindingsJson "!FINDINGS_JSON!" -WorkDir "!SCC_RUN_ROOT!" -ReportHtml "!SCC_RUN_ROOT!/report.html" -PersistenceInventory "!SCC_RUN_ROOT!\persistence\inventory.json" -PersistenceRemoval "!SCC_RUN_ROOT!\persistence\removal.json" -PersistenceResult "!SCC_RUN_ROOT!\persistence\result.json"
                 set "UPLOAD_RC=!errorlevel!"
                 if not "!UPLOAD_RC!"=="0" (
                     echo     [WARN] Report share failed with errorlevel !UPLOAD_RC! - local evidence remains available.
