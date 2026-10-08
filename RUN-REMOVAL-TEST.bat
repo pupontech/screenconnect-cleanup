@@ -15,15 +15,26 @@ rem ============================================================================
 setlocal EnableDelayedExpansion
 title ScreenConnect Cleanup Tool - REMOVAL TEST
 
-rem ---- Self-elevate: relaunch as admin automatically if not already --------
+rem ---- Self-elevate: at most ONE UAC prompt, decided by the real admin token --
 rem The script path travels via the SCC_SELF environment variable so that
 rem apostrophes (and other quotes) in the path cannot break the PowerShell
 rem command line. A failed/cancelled UAC prompt must be visible, never silent.
+rem The relaunch passes --elevation-attempted; if that flag is present and this
+rem window is STILL not elevated, stop instead of prompting again, so a probe
+rem that misreports elevation can never loop UAC.
 set "SCC_SELF=%~f0"
-fltmc.exe >nul 2>&1
-if %errorlevel% neq 0 (
+powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "if(([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){exit 0}else{exit 1}"
+if errorlevel 1 (
+    if /i "%~1"=="--elevation-attempted" (
+        echo.
+        echo  [ERROR] This window is still not elevated after the UAC request, so
+        echo          the tool will not ask again. Right-click RUN-REMOVAL-TEST.bat
+        echo          and choose "Run as administrator".
+        pause
+        exit /b 1
+    )
     echo  Requesting administrator privileges...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath $env:SCC_SELF -Verb RunAs"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath $env:SCC_SELF -ArgumentList '--elevation-attempted' -Verb RunAs"
     if errorlevel 1 (
         echo.
         echo  [ERROR] Elevation could not be launched or was cancelled.

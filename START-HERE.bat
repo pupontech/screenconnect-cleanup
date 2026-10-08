@@ -13,21 +13,38 @@ setlocal EnableDelayedExpansion
 rem ---- Use a dedicated cmd.exe so the keep-awake helper has a bounded lifetime ----
 if not defined SCC_RUNNER_CHILD (
     set "SCC_RUNNER_CHILD=1"
-    start "" /b /wait cmd.exe /d /s /c ""%~f0""
+    if "%~1"=="" (
+        start "" /b /wait cmd.exe /d /s /c ""%~f0""
+    ) else (
+        start "" /b /wait cmd.exe /d /s /c ""%~f0" %*"
+    )
     set "SCC_RUNNER_RC=!errorlevel!"
     exit /b !SCC_RUNNER_RC!
 )
 title ScreenConnect Cleanup Tool
 
-rem ---- Self-elevate: relaunch as admin automatically if not already --------
+rem ---- Self-elevate: at most ONE UAC prompt, decided by the real admin token ---
 rem The script path travels via the SCC_SELF environment variable so that
 rem apostrophes (and other quotes) in the path cannot break the PowerShell
 rem command line. A failed/cancelled UAC prompt must be visible, never silent.
+rem The relaunch passes --elevation-attempted. If that flag is present and this
+rem window is STILL not elevated, the runner stops instead of prompting again:
+rem a probe that misreports elevation must never loop UAC at the technician.
 set "SCC_SELF=%~f0"
-fltmc.exe >nul 2>&1
-if %errorlevel% neq 0 (
+powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "if(([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){exit 0}else{exit 1}"
+if errorlevel 1 (
+    if /i "%~1"=="--elevation-attempted" (
+        echo.
+        echo  [ERROR] This window is still not elevated after the UAC request, so
+        echo          the tool will not ask again. Right-click START-HERE.bat and
+        echo          choose "Run as administrator", or open an elevated Command
+        echo          Prompt in this folder and run START-HERE.bat there.
+        pause
+        exit /b 1
+    )
     echo  Requesting administrator privileges...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath $env:SCC_SELF -Verb RunAs"
+    rem This is the ONLY elevation request the tool makes.
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath $env:SCC_SELF -ArgumentList '--elevation-attempted' -Verb RunAs"
     if errorlevel 1 (
         echo.
         echo  [ERROR] Elevation could not be launched or was cancelled.
