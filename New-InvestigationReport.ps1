@@ -267,7 +267,7 @@ $persistenceLoadErrors = New-Object System.Collections.ArrayList
 foreach ($pf in $persistenceFiles) {
     if (-not $pf.Path) { continue }
     if (-not (Test-Path -LiteralPath $pf.Path -PathType Leaf)) { [void]$persistenceLoadErrors.Add(($pf.Label + ': file not found.')); continue }
-    try { $persistenceData[$pf.Label] = (Get-Content -LiteralPath $pf.Path -Raw) | ConvertFrom-Json }
+    try { $persistenceData[$pf.Label] = (Get-Content -LiteralPath $pf.Path -Raw -Encoding UTF8) | ConvertFrom-Json }
     catch { [void]$persistenceLoadErrors.Add(($pf.Label + ': could not parse JSON.')) }
 }
 $persistenceSectionHtml = ''

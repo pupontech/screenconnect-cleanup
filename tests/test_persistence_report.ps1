@@ -34,6 +34,12 @@ try {
     & $reportScript -FindingsJson $findings -OutputPath $declinedPath -PersistenceInventory $inv -PersistenceRemoval $rem -PersistenceResult $res
     $declinedHtml = [IO.File]::ReadAllText($declinedPath)
     if ($declinedHtml -notmatch 'Current-run persistence status: Complete' -or $declinedHtml -notmatch 'Removal status: Declined' -or $declinedHtml -notmatch 'This is not a malware verdict') { throw 'coherent declined/complete collection status missing or misleading' }
+    $unicodeTarget='C:\Lab\caf'+[char]0x00E9+'.ps1'
+    $unicodeInventory=[pscustomobject]@{SchemaVersion=1;Status='Complete';Errors=@();Sections=[pscustomobject]@{Tasks=[pscustomobject]@{Status='Complete';Errors=@()}};Findings=@([pscustomobject]@{Kind='StartupFile';Target=$unicodeTarget;Command=$unicodeTarget;Reason='UTF-8 fixture';ReviewOnly=$true})}
+    [IO.File]::WriteAllText($inv,($unicodeInventory | ConvertTo-Json -Depth 10),(New-Object Text.UTF8Encoding($false)))
+    $unicodePath=Join-Path $tmp 'unicode.html'
+    & $reportScript -FindingsJson $findings -OutputPath $unicodePath -PersistenceInventory $inv -PersistenceRemoval $rem -PersistenceResult $res
+    if(-not [IO.File]::ReadAllText($unicodePath).Contains($unicodeTarget)){throw 'UTF-8 without BOM persistence identity was corrupted in the local report'}
 
     Remove-Item -LiteralPath $rem
     [IO.File]::WriteAllText($res, '{"Status":"Complete","InventoryStatus":"Complete","RemovalStatus":"Skipped","Errors":[]}')
