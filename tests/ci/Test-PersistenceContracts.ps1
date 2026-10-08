@@ -49,7 +49,7 @@ $batch=[IO.File]::ReadAllText((Join-Path $repo 'START-HERE.bat'))
 Check ($batch.IndexOf(':skip_6c') -lt $batch.IndexOf('STEP 6d/9') -and $batch.IndexOf('STEP 6d/9') -lt $batch.IndexOf('STEP 8/9')) 'guided persistence runs after all scanner choices and before after-snapshot'
 Check ($batch -match 'Invoke-PersistenceScan\.ps1" -WorkDir "!SCC_RUN_ROOT!" -PreflightRoot "!SCC_RUN_ROOT!"') 'guided current-run paths are explicitly quoted'
 $build=[IO.File]::ReadAllText((Join-Path $repo 'make-deploy-bundle.sh'))
-foreach($name in @('Invoke-PersistenceScan.ps1','Persistence.Inventory.psm1','Persistence.Removal.psm1')){Check ($build.Contains($name)) ('allowlisted bundle requires '+$name)}
+foreach($name in @('Invoke-PersistenceScan.ps1','Invoke-PersistenceInventoryWorker.ps1','Persistence.Inventory.psm1','Persistence.Removal.psm1')){Check ($build.Contains($name)) ('allowlisted bundle requires '+$name)}
 $commands=@($inventory.FindAll({param($node)$node -is [Management.Automation.Language.CommandAst]},$true)|ForEach-Object {$_.GetCommandName()})
 Check (@($commands | Where-Object {$_ -in @('Unregister-ScheduledTask','Remove-ItemProperty','Remove-CimInstance','Start-Process','Invoke-Expression','Stop-Process')}).Count -eq 0) 'inventory has no system mutation or payload execution commands'
 Write-Host "Persistence static AST checks: passed=$passed failed=$failed (not live runtime proof)"

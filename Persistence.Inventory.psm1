@@ -291,18 +291,26 @@ function Get-SccPersistenceInventory {
     $null=New-Item -ItemType Directory -Force -Path $OutDir
     $started=[Diagnostics.Stopwatch]::StartNew();$errors=New-Object System.Collections.ArrayList;$sections=[ordered]@{};$findings=New-Object System.Collections.ArrayList
     $xmlDir=Join-Path $OutDir 'task_xml';Assert-SccInventoryPath $xmlDir;$null=New-Item -ItemType Directory -Force -Path $xmlDir
+    Write-Host 'SCC_PERSISTENCE_SECTION|ScheduledTasks'
     $task=Get-SccTaskEvidence -XmlDirectory $xmlDir
+    Write-Host 'SCC_PERSISTENCE_DONE|ScheduledTasks'
     $sections.ScheduledTasks=New-SccSection -Items $task.Items -Errors $task.Errors
     $sections.TaskXml=New-SccSection -Items @($task.Findings | ForEach-Object {$_.Details}) -Errors $task.Errors
     foreach($f in $task.Findings){[void]$findings.Add($f)};foreach($e in $task.Errors){[void]$errors.Add($e)}
+    Write-Host 'SCC_PERSISTENCE_SECTION|RunKeys'
     $registry=Get-SccRegistryEvidence
+    Write-Host 'SCC_PERSISTENCE_DONE|RunKeys'
     $sections.RunKeys=New-SccSection -Items $registry.Items -Errors $registry.Errors
     $sections.ProfileCoverage=New-SccSection -Status $(if($registry.ProfileErrors.Count){'Incomplete'}else{'Complete'}) -Items @($registry.Items | Where-Object SID | Select-Object -ExpandProperty SID -Unique) -Errors $registry.ProfileErrors
     foreach($f in $registry.Findings){[void]$findings.Add($f)};foreach($e in $registry.Errors){[void]$errors.Add($e)};foreach($e in $registry.ProfileErrors){[void]$errors.Add($e)}
+    Write-Host 'SCC_PERSISTENCE_SECTION|StartupFiles'
     $startup=Get-SccStartupEvidence -Profiles $((Get-SccProfileRoots).Profiles)
+    Write-Host 'SCC_PERSISTENCE_DONE|StartupFiles'
     $sections.StartupFiles=New-SccSection -Items $startup.Items -Errors $startup.Errors
     foreach($f in $startup.Findings){[void]$findings.Add($f)};foreach($e in $startup.Errors){[void]$errors.Add($e)}
+    Write-Host 'SCC_PERSISTENCE_SECTION|HiddenTasks'
     $hidden=Get-SccHiddenTaskEvidence -Tasks $task.Items
+    Write-Host 'SCC_PERSISTENCE_DONE|HiddenTasks'
     $sections.HiddenTasks=New-SccSection -Items $hidden.Items -Errors $hidden.Errors
     foreach($e in $hidden.Errors){[void]$errors.Add($e)}
     foreach($item in $hidden.Items) {
@@ -327,12 +335,20 @@ function Get-SccPersistenceInventory {
       RemoteToolServices={Get-Service -ErrorAction Stop | Where-Object {$_.Name -match '(?i)AnyDesk|TeamViewer|ScreenConnect|ConnectWise|RustDesk|VNC|Splashtop|Atera|Kaseya|MeshAgent' -or $_.DisplayName -match '(?i)AnyDesk|TeamViewer|ScreenConnect|ConnectWise|RustDesk|VNC|Splashtop|Atera|Kaseya|MeshAgent'} | Select-Object Name,DisplayName,Status,StartType}
       Hosts={Get-Content (Join-Path $env:SystemRoot 'System32\drivers\etc\hosts') -ErrorAction Stop | Where-Object {$_ -and $_ -notmatch '^\s*#'}}
     }
-    foreach($name in $collectors.Keys){$evidence=Get-SccGenericEvidence -Name $name -Collector $collectors[$name];$sections[$name]=New-SccSection -Items $evidence.Items -Errors $evidence.Errors;foreach($e in $evidence.Errors){[void]$errors.Add($e)}}
+    foreach($name in $collectors.Keys){
+        Write-Host ('SCC_PERSISTENCE_SECTION|'+$name)
+        $evidence=Get-SccGenericEvidence -Name $name -Collector $collectors[$name]
+        $sections[$name]=New-SccSection -Items $evidence.Items -Errors $evidence.Errors
+        foreach($e in $evidence.Errors){[void]$errors.Add($e)}
+        Write-Host ('SCC_PERSISTENCE_DONE|'+$name)
+    }
     $roots=@($env:ProgramData,$env:ProgramFiles,${env:ProgramFiles(x86)})
     if($env:SystemDrive){$roots+=(Join-Path $env:SystemDrive 'Users')}
     if($env:SystemRoot){$roots+=(Join-Path $env:SystemRoot 'Temp')}
     $roots=@($roots | Where-Object {$_ -and (Test-Path -LiteralPath $_)})
+    Write-Host 'SCC_PERSISTENCE_SECTION|ScriptFiles'
     $scripts=Get-SccBoundedScriptFiles -Roots $roots -MaxFiles $script:InventoryMaxFiles -MaxSeconds $script:InventoryMaxSeconds
+    Write-Host 'SCC_PERSISTENCE_DONE|ScriptFiles'
     $sections.ScriptFiles=New-SccSection -Status $(if($scripts.Truncated -or $scripts.Errors.Count){'Incomplete'}else{'Complete'}) -Items $scripts.Items -Errors $scripts.Errors -Limits $scripts.Limits
     foreach($e in $scripts.Errors){[void]$errors.Add($e)};if($scripts.Truncated){[void]$errors.Add('ScriptFiles: bounded file/time cap reached; scan truncated')}
     $sections.PrivacyOmissions=New-SccSection -Items @('No raw script samples collected.','PowerShell shell/history content omitted for privacy.','Offline user registry hives are not mounted; unloaded profiles are explicit coverage gaps.')
@@ -340,8 +356,10 @@ function Get-SccPersistenceInventory {
     $status=if($errors.Count){'Incomplete'}else{'Complete'}
     $runId=Split-Path (Split-Path $OutDir -Parent) -Leaf
     $result=[pscustomobject]@{SchemaVersion=1;RunId=$runId;ComputerName=$env:COMPUTERNAME;GeneratedUtc=[DateTime]::UtcNow.ToString('o');Status=$status;Errors=@($errors.ToArray());Sections=[pscustomobject]$sections;Findings=@($findings.ToArray());Counts=[pscustomobject]@{Findings=$findings.Count;ScriptFiles=$scripts.Items.Count}}
+    Write-Host 'SCC_PERSISTENCE_SECTION|WriteInventory'
     $json=ConvertTo-Json -InputObject $result -Depth 12
     Write-SccInventoryFile -Path $inventoryFile -Text $json
+    Write-Host 'SCC_PERSISTENCE_DONE|WriteInventory'
     return $result
 }
 Export-ModuleMember -Function Get-SccPersistenceInventory

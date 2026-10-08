@@ -40,6 +40,23 @@ proof of malware**. Absence of findings is not proof a PC is safe.
   as unknown/incomplete, not clean. Persistence-stage failures should preserve
   later report generation and a nonzero final outcome.
 
+## Collection progress and deadlines (v1.8.2)
+
+Step 6d prints the current source category and a still-collecting heartbeat.
+Local `persistence/collection-progress.log` records the section and failure.
+Read-only collection runs in its own worker process; the visible attended
+parent alone owns removal review. The default hard limits are 60 seconds for
+one section and 300 seconds for the entire collection (including startup).
+
+If a provider stalls, the worker is stopped, the persistence inventory/result
+are recorded as Incomplete, and no persistence cleanup is attempted. The runner
+continues toward its report with a nonzero outcome. This aborts the remaining
+persistence collection rather than claiming those sources were inspected.
+Task XML already written remains local evidence; unfinished in-memory section
+results cannot be recovered and are not presented as complete. The actual
+provider that blocked the previous owner run is unknown; the new output/log
+is intended to identify it on a retry. Use a fresh run directory.
+
 ## What cleanup can do
 
 The tool displays candidate identity, command and reason. Select exact candidate

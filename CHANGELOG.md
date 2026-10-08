@@ -3,6 +3,22 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.2] - 2026-10-08
+**TESTING ONLY - persistence collection progress and hard deadlines.**
+- Fixed the silent unbounded wait at guided Step 6d: read-only inventory now
+  runs in an isolated worker with a 60-second per-section deadline and a
+  300-second overall deadline. The exact provider that stalled the owner's
+  prior run is not established; new section/heartbeat output identifies it.
+- Added live section progress, periodic still-collecting messages and a local
+  `persistence/collection-progress.log`. A stalled worker is terminated;
+  persistence collection stops as Incomplete, removal is disabled, and the
+  normal report path can continue with a nonzero outcome and the last section.
+- Approval/removal remains in the visible attended parent, never the worker.
+  Deadlines do not approve cleanup, suppress gaps or create a clean verdict.
+- Added harmless blocked-provider, total-budget, success and worker-failure
+  fixtures; no live Windows collection, scanner or removal was run by agents.
+- Includes the v1.8.1 battery-check console visibility fix unchanged.
+
 ## [1.8.1] - 2026-10-08
 **TESTING ONLY - attended console visibility fix. Owner live acceptance remains required.**
 - Removed `-WindowStyle Hidden` from the foreground battery-check invocation:

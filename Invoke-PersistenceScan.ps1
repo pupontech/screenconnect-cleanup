@@ -5,7 +5,9 @@ param(
     [switch]$RollbackReady,
     [switch]$NoPrompt,
     [switch]$WhatIf,
-    [string]$PreflightRoot
+    [string]$PreflightRoot,
+    [ValidateRange(1,300)][int]$InventorySectionTimeoutSeconds=60,
+    [ValidateRange(1,600)][int]$InventoryTotalTimeoutSeconds=300
 )
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
@@ -52,6 +54,75 @@ function Write-RemovalRecord {
     $record=[pscustomobject]@{SchemaVersion=1;Status=$Status;Actions=@();Errors=@($Errors)}
     try { Write-JsonArtifact -Path $removalPath -Object $record } catch { [void]$ErrorList.Add(('Could not write removal.json: '+$_.Exception.Message)) }
 }
+function Invoke-SccInventoryWorker {
+    param([string]$OutDir,[int]$SectionTimeoutSeconds,[int]$TotalTimeoutSeconds)
+    $worker=Join-Path $PSScriptRoot 'Invoke-PersistenceInventoryWorker.ps1'
+    if(-not(Test-Path -LiteralPath $worker -PathType Leaf)){throw 'Inventory worker script is missing.'}
+    Assert-ArtifactPath $OutDir
+    $null=New-Item -ItemType Directory -Path $OutDir -Force -ErrorAction Stop
+    $logPath=Join-Path $OutDir 'collection-progress.log'
+    Assert-ArtifactPath $logPath
+    $logStream=New-Object IO.FileStream($logPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+    $log=New-Object IO.StreamWriter($logStream,(New-Object Text.UTF8Encoding($false)))
+    $log.AutoFlush=$true
+    $process=$null
+    try {
+        $hostExe=(Get-Process -Id $PID -ErrorAction Stop).Path
+        $psi=New-Object Diagnostics.ProcessStartInfo
+        $psi.FileName=$hostExe
+        # Paths travel through the inherited environment, not interpolated PS source.
+        $psi.Arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "& $env:SCC_INVENTORY_WORKER -OutDir $env:SCC_INVENTORY_OUTDIR; exit $LASTEXITCODE"'
+        $psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
+        $psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
+        $psi.EnvironmentVariables['SCC_INVENTORY_WORKER']=$worker
+        $psi.EnvironmentVariables['SCC_INVENTORY_OUTDIR']=$OutDir
+        $process=[Diagnostics.Process]::Start($psi)
+        if(-not $process){throw 'Inventory worker did not start.'}
+        $stdout=$process.StandardOutput.ReadLineAsync();$stderr=$process.StandardError.ReadLineAsync()
+        $outEnded=$false;$errEnded=$false;$section='WorkerStartup'
+        $clock=[Diagnostics.Stopwatch]::StartNew();$sectionClock=[Diagnostics.Stopwatch]::StartNew()
+        $lastHeartbeat=0.0;$heartbeat=[Math]::Min(5,[Math]::Max(1,$SectionTimeoutSeconds/2))
+        $logChars=0;$logLimit=1MB
+        Write-Host ('[Persistence] Starting collection. Section limit: '+$SectionTimeoutSeconds+'s; total limit: '+$TotalTimeoutSeconds+'s.')
+        while(-not $process.HasExited -or -not $outEnded -or -not $errEnded) {
+            foreach($stream in @('out','err')) {
+                $task=if($stream -eq 'out'){$stdout}else{$stderr}
+                $ended=if($stream -eq 'out'){$outEnded}else{$errEnded}
+                if(-not $ended -and $task.IsCompleted) {
+                    $line=$task.GetAwaiter().GetResult()
+                    if($null -eq $line){if($stream -eq 'out'){$outEnded=$true}else{$errEnded=$true};continue}
+                    if($line.Length -gt 4096){$line=$line.Substring(0,4096)+' [truncated]'}
+                    if($logChars -lt $logLimit){$log.WriteLine($line);$logChars+=$line.Length}
+                    if($stream -eq 'out' -and $line -match '^SCC_PERSISTENCE_SECTION\|([A-Za-z0-9]+)$') {
+                        $section=$Matches[1];$sectionClock.Restart();$lastHeartbeat=$clock.Elapsed.TotalSeconds
+                        Write-Host ('[Persistence] Collecting '+$section+' ...')
+                    } elseif($line -match '^SCC_PERSISTENCE_DONE\|([A-Za-z0-9]+)$') {
+                        Write-Host ('[Persistence] Finished '+$Matches[1]+'.')
+                    } elseif($stream -eq 'err') { Write-Host ('[Persistence] Worker: '+$line) }
+                    if($stream -eq 'out'){$stdout=$process.StandardOutput.ReadLineAsync()}else{$stderr=$process.StandardError.ReadLineAsync()}
+                }
+            }
+            if($clock.Elapsed.TotalSeconds -ge $TotalTimeoutSeconds -or $sectionClock.Elapsed.TotalSeconds -ge $SectionTimeoutSeconds) {
+                $message='Inventory timed out while collecting '+$section+'; collection is incomplete, removal disabled. Progress log: '+$logPath
+                $log.WriteLine($message);Write-Host ('[Persistence] '+$message)
+                if(-not $process.HasExited){$process.Kill();if(-not $process.WaitForExit(5000)){throw 'Inventory worker did not terminate; removal is disabled.'}}
+                throw $message
+            }
+            if(-not $process.HasExited -and ($clock.Elapsed.TotalSeconds-$lastHeartbeat) -ge $heartbeat) {
+                $message='[Persistence] '+$section+' still collecting ('+[int]$sectionClock.Elapsed.TotalSeconds+'s).'
+                Write-Host $message
+                if($logChars -lt $logLimit){$log.WriteLine($message);$logChars+=$message.Length}
+                $lastHeartbeat=$clock.Elapsed.TotalSeconds
+            }
+            Start-Sleep -Milliseconds 50
+        }
+        $process.WaitForExit()
+        if($process.ExitCode -ne 0){throw ('Inventory worker exited '+$process.ExitCode+' while collecting '+$section+'. Progress log: '+$logPath)}
+    } finally {
+        if($process){if(-not $process.HasExited){$process.Kill();$null=$process.WaitForExit(5000)};$process.Dispose()}
+        $log.Dispose()
+    }
+}
 function Test-GuidedRollbackReadiness {
     param([string]$Root)
     if (-not $Root -or -not (Test-Path -LiteralPath $Root -PathType Container)) { return $false }
@@ -89,8 +160,7 @@ if ($WhatIf) {
 } else {
     $inventoryObject=$null
     try {
-        Import-Module (Join-Path $PSScriptRoot 'Persistence.Inventory.psm1') -Force -ErrorAction Stop
-        $null=Get-SccPersistenceInventory -OutDir $persistDir
+        Invoke-SccInventoryWorker -OutDir $persistDir -SectionTimeoutSeconds $InventorySectionTimeoutSeconds -TotalTimeoutSeconds $InventoryTotalTimeoutSeconds
         if (-not (Test-Path -LiteralPath $inventoryPath -PathType Leaf)) { throw 'Inventory module did not write inventory.json.' }
         $inventoryObject=Get-Content -LiteralPath $inventoryPath -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
         $inventoryStatus=[string]$inventoryObject.Status
@@ -99,6 +169,7 @@ if ($WhatIf) {
     } catch {
         $inventoryStatus='Incomplete'; $overallStatus='Incomplete'
         [void]$ErrorList.Add('Inventory collection failed: '+$_.Exception.Message)
+        Write-Host ('[Persistence] Collection failed: '+$_.Exception.Message)
         try { Write-JsonArtifact -Path $inventoryPath -Object ([pscustomobject]@{SchemaVersion=1;Status='Incomplete';Errors=@($ErrorList);Findings=@();Sections=[pscustomobject]@{}}) }
         catch { [void]$ErrorList.Add('Could not persist inventory failure record: '+$_.Exception.Message) }
     }
