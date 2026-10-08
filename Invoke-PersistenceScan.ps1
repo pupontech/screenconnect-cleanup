@@ -35,7 +35,10 @@ function Assert-ArtifactPath {
 }
 try {
     Assert-ArtifactPath $persistDir
-    foreach($file in @($inventoryPath,$removalPath,$resultPath)) {
+    # collection-progress.log is included so a rerun into a directory from a
+    # crashed attempt reports the fresh-run requirement instead of a raw
+    # exclusive-create failure from the worker log.
+    foreach($file in @($inventoryPath,$removalPath,$resultPath,(Join-Path $persistDir 'collection-progress.log'))) {
         Assert-ArtifactPath $file
         if(Test-Path -LiteralPath $file){throw 'Existing persistence artifacts are not overwritten; use a fresh run directory.'}
     }
@@ -71,7 +74,10 @@ function Invoke-SccInventoryWorker {
         $psi=New-Object Diagnostics.ProcessStartInfo
         $psi.FileName=$hostExe
         # Paths travel through the inherited environment, not interpolated PS source.
-        $psi.Arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "& $env:SCC_INVENTORY_WORKER -OutDir $env:SCC_INVENTORY_OUTDIR; exit $LASTEXITCODE"'
+        # A worker whose script cannot be resolved at all never runs a native
+        # command, so $LASTEXITCODE stays null and a bare "exit $LASTEXITCODE"
+        # would report success. Refuse explicitly instead.
+        $psi.Arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "& $env:SCC_INVENTORY_WORKER -OutDir $env:SCC_INVENTORY_OUTDIR; if ($null -eq $LASTEXITCODE) { exit 1 } else { exit $LASTEXITCODE }"'
         $psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
         $psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
         $psi.EnvironmentVariables['SCC_INVENTORY_WORKER']=$worker
@@ -82,7 +88,7 @@ function Invoke-SccInventoryWorker {
         $outEnded=$false;$errEnded=$false;$section='WorkerStartup'
         $clock=[Diagnostics.Stopwatch]::StartNew();$sectionClock=[Diagnostics.Stopwatch]::StartNew()
         $lastHeartbeat=0.0;$heartbeat=[Math]::Min(5,[Math]::Max(1,$SectionTimeoutSeconds/2))
-        $logChars=0;$logLimit=1MB
+        $logChars=0;$logLimit=1MB;$logCapped=$false
         Write-Host ('[Persistence] Starting collection. Section limit: '+$SectionTimeoutSeconds+'s; total limit: '+$TotalTimeoutSeconds+'s.')
         while(-not $process.HasExited -or -not $outEnded -or -not $errEnded) {
             foreach($stream in @('out','err')) {
@@ -93,6 +99,7 @@ function Invoke-SccInventoryWorker {
                     if($null -eq $line){if($stream -eq 'out'){$outEnded=$true}else{$errEnded=$true};continue}
                     if($line.Length -gt 4096){$line=$line.Substring(0,4096)+' [truncated]'}
                     if($logChars -lt $logLimit){$log.WriteLine($line);$logChars+=$line.Length}
+                    elseif(-not $logCapped){$log.WriteLine('[Persistence] Progress log truncated at the 1 MB limit.');$logCapped=$true}
                     if($stream -eq 'out' -and $line -match '^SCC_PERSISTENCE_SECTION\|([A-Za-z0-9]+)$') {
                         $section=$Matches[1];$sectionClock.Restart();$lastHeartbeat=$clock.Elapsed.TotalSeconds
                         Write-Host ('[Persistence] Collecting '+$section+' ...')
