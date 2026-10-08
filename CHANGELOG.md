@@ -3,6 +3,24 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.5] - 2026-10-08
+**TESTING ONLY - attended review windows for the technician.**
+- Guided Step 6e (after the persistence scan, before AV uninstall) offers to open
+  the review surface: Explorer at the evidence folder, exported task XML,
+  quarantine, the on-disk scheduled-task folder and every observed startup
+  folder, plus `services.msc` and `taskschd.msc`.
+- The step prints what the scan flagged, marking each entry REVIEW-ONLY (never
+  auto-removed) or a candidate requiring explicit selection, states where to look
+  for it, and lists the remote-access services seen so far for the Services
+  console.
+- Strictly read-only: it changes, stops and removes nothing, never approves
+  cleanup, and refuses to run without an inventory. It writes an audit record to
+  `persistence/review-opened.json`. Opt-in for the direct runner via
+  `-OpenReview`; skipped under `-WhatIf`.
+- Fixture proves the exact folder/console set, the read-only guarantee, the
+  WhatIf plan, and the refusal without an inventory, using an injected launcher so
+  no window, service console or task scheduler is started during tests.
+
 ## [1.8.4] - 2026-10-08
 **TESTING ONLY - single UAC prompt per launch, and a property-safe inventory collector.**
 - Fixed the live persistence-collection failure in the inventory checker. The

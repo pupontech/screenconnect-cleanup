@@ -49,7 +49,10 @@ $batch=[IO.File]::ReadAllText((Join-Path $repo 'START-HERE.bat'))
 Check ($batch.IndexOf(':skip_6c') -lt $batch.IndexOf('STEP 6d/9') -and $batch.IndexOf('STEP 6d/9') -lt $batch.IndexOf('STEP 8/9')) 'guided persistence runs after all scanner choices and before after-snapshot'
 Check ($batch -match 'Invoke-PersistenceScan\.ps1" -WorkDir "!SCC_RUN_ROOT!" -PreflightRoot "!SCC_RUN_ROOT!"') 'guided current-run paths are explicitly quoted'
 $build=[IO.File]::ReadAllText((Join-Path $repo 'make-deploy-bundle.sh'))
-foreach($name in @('Invoke-PersistenceScan.ps1','Invoke-PersistenceInventoryWorker.ps1','Persistence.Inventory.psm1','Persistence.Removal.psm1')){Check ($build.Contains($name)) ('allowlisted bundle requires '+$name)}
+foreach($name in @('Invoke-PersistenceScan.ps1','Invoke-PersistenceInventoryWorker.ps1','Show-PersistenceReview.ps1','Persistence.Inventory.psm1','Persistence.Removal.psm1')){Check ($build.Contains($name)) ('allowlisted bundle requires '+$name)}
+$batchText=[IO.File]::ReadAllText((Join-Path $repo 'START-HERE.bat'))
+Check ($batchText -match 'Show-PersistenceReview\.ps1" -WorkDir "!SCC_RUN_ROOT!"') 'guided runner opens the attended review windows with the quoted current run'
+Check ($batchText.IndexOf('STEP 6d/9') -lt $batchText.IndexOf('STEP 6e/9') -and $batchText.IndexOf('STEP 6e/9') -lt $batchText.IndexOf('STEP 7/9')) 'review step runs after the scan and before AV uninstall'
 $commands=@($inventory.FindAll({param($node)$node -is [Management.Automation.Language.CommandAst]},$true)|ForEach-Object {$_.GetCommandName()})
 Check (@($commands | Where-Object {$_ -in @('Unregister-ScheduledTask','Remove-ItemProperty','Remove-CimInstance','Start-Process','Invoke-Expression','Stop-Process')}).Count -eq 0) 'inventory has no system mutation or payload execution commands'
 # Simplified Where-Object over external provider objects throws PSArgumentException
