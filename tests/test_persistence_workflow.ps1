@@ -117,7 +117,11 @@ echo ReplayRC=!PIPE_RC!`r`nexit /b !PIPE_RC!`r`n"
         if(-not $proc.WaitForExit(20000)){$proc.Kill();throw 'Step 6e replay exceeded its bounded wait.'}
         $rc=$proc.ExitCode
         $text=$outTask.Result+' '+$errTask.Result
-        $calls=if(Test-Path -LiteralPath $logPath){@(Get-Content -LiteralPath $logPath)}else{@()}
+        # Two steps on purpose: `$x = if(...){@(a)}else{@()}` leaves $x without a
+        # .Count under StrictMode 2.0 (the empty-array branch yields no output),
+        # which is fatal here because this fixture runs under StrictMode.
+        $calls=@()
+        if(Test-Path -LiteralPath $logPath){$calls=@(Get-Content -LiteralPath $logPath)}
         $proc.Dispose()
         return [pscustomobject]@{ExitCode=$rc;Text=$text;Calls=$calls}
     }
