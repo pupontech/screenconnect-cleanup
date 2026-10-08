@@ -53,8 +53,17 @@ if($batText -notmatch '(?m)^powershell .*Invoke-PersistenceScan\.ps1" -WorkDir "
 $batBytes=[IO.File]::ReadAllBytes((Join-Path $root 'START-HERE.bat'))
 for($i=0;$i -lt $batBytes.Length;$i++){if($batBytes[$i] -eq 10 -and ($i -eq 0 -or $batBytes[$i-1] -ne 13)){throw 'START-HERE.bat contains a non-CRLF line ending.'}}
 if($env:OS -eq 'Windows_NT' -and (Get-Command cmd.exe -ErrorAction SilentlyContinue)) {
-    $step6d=[regex]::Match($batText,'(?ms)^rem ---- Step 6d:.*?(?=^rem ---- Step 7:)').Value
+    # Replay ONLY the Step 6d block: the following markers now include the
+    # attended review step (6e), which must not be part of this fixture.
+    $step6d=[regex]::Match($batText,'(?ms)^rem ---- Step 6d:.*?(?=^rem ---- Step (?:6e|7):)').Value
     if(-not $step6d){throw 'Could not extract the actual guided Step 6d command block.'}
+    if($step6d -match 'Show-PersistenceReview'){throw 'The Step 6d replay block leaked the attended review step.'}
+    # --- Step 6e: the attended review step is prompted, quoted, and skippable ---
+    $step6e=[regex]::Match($batText,'(?ms)^rem ---- Step 6e:.*?(?=^rem ---- Step 7:)').Value
+    if(-not $step6e){throw 'Could not extract the actual guided Step 6e review block.'}
+    if($step6e -notmatch 'Show-PersistenceReview\.ps1" -WorkDir "!SCC_RUN_ROOT!"'){throw 'Step 6e does not pass the quoted current run root.'}
+    $reviewBat=Join-Path $work 'replay Step6e.bat'
+    [IO.File]::WriteAllText($reviewBat,("@echo off`r`nsetlocal EnableDelayedExpansion`r`nset `"SCC_RUN_ROOT=$work`"`r`nset `"PIPE_RC=0`"`r`n$step6e`r`necho ReachedEnd`r`nexit /b 0`r`n"),[Text.Encoding]::ASCII)
     $shimDir=Join-Path $work 'cmd shim'; $null=New-Item -ItemType Directory -Path $shimDir -Force
     $logPath=Join-Path $work 'powershell args.txt'
     # Framework csc creates an executable usable from cmd.exe in both host
@@ -90,6 +99,33 @@ echo ReplayRC=!PIPE_RC!`r`nexit /b !PIPE_RC!`r`n"
     $failedOut=$failedReplay.StandardOutput.ReadToEndAsync();$failedErr=$failedReplay.StandardError.ReadToEndAsync()
     if(-not $failedReplay.WaitForExit(20000)){$failedReplay.Kill();throw 'cmd failure-path fixture exceeded its bounded wait.'}
     if($failedReplay.ExitCode -ne 3 -or $failedOut.Result -notmatch 'ReplayRC=3' -or $failedOut.Result -notmatch 'evidence will still be reported') {throw ('cmd failed persistence step did not continue truthfully: '+$failedOut.Result+' | '+$failedErr.Result)}
+    # --- Step 6e replay: answering y opens the review; answering n skips it ---
+    function Invoke-ReviewReplay([string]$Answer) {
+        if(Test-Path -LiteralPath $logPath){Remove-Item -LiteralPath $logPath -Force}
+        $info=New-Object Diagnostics.ProcessStartInfo
+        $info.FileName=$cmd
+        $info.Arguments='/d /s /c ""'+$reviewBat+'"'
+        $info.UseShellExecute=$false;$info.CreateNoWindow=$true
+        $info.RedirectStandardInput=$true;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
+        $proc=[Diagnostics.Process]::Start($info)
+        $proc.StandardInput.WriteLine($Answer);$proc.StandardInput.Close()
+        $outTask=$proc.StandardOutput.ReadToEndAsync();$errTask=$proc.StandardError.ReadToEndAsync()
+        if(-not $proc.WaitForExit(20000)){$proc.Kill();throw 'Step 6e replay exceeded its bounded wait.'}
+        $rc=$proc.ExitCode
+        $text=$outTask.Result+' '+$errTask.Result
+        $calls=if(Test-Path -LiteralPath $logPath){@(Get-Content -LiteralPath $logPath)}else{@()}
+        $proc.Dispose()
+        return [pscustomobject]@{ExitCode=$rc;Text=$text;Calls=$calls}
+    }
+    $reviewYes=Invoke-ReviewReplay 'y'
+    # The stub logs each argv element, so the script path is the full path.
+    if(-not (@($reviewYes.Calls | Where-Object { $_ -like '*Show-PersistenceReview.ps1' }).Count -ge 1)){throw ('Step 6e did not open the review script: '+($reviewYes.Calls -join '|'))}
+    if($reviewYes.Calls -notcontains '-WorkDir' -or $reviewYes.Calls -notcontains $work){throw ('Step 6e did not pass the quoted run root: '+($reviewYes.Calls -join '|'))}
+    if($reviewYes.Text -notmatch 'STEP 6e/9'){throw 'Step 6e did not announce itself.'}
+    if($reviewYes.Text -notmatch 'ReachedEnd'){throw 'Step 6e did not continue to the next step after the review.'}
+    $reviewNo=Invoke-ReviewReplay 'n'
+    if($reviewNo.Calls.Count -ne 0){throw ('Declining the review still launched it: '+($reviewNo.Calls -join '|'))}
+    if($reviewNo.Text -notmatch 'ReachedEnd'){throw 'Declining the review aborted the run instead of skipping the step.'}
     Remove-Item Env:SCC_STUB_RC -ErrorAction SilentlyContinue
     Remove-Item Env:SCC_STUB_LOG -ErrorAction SilentlyContinue
 }
