@@ -23,7 +23,7 @@ for f in sc-cleanup.ps1 preflight.ps1 collect-snapshot.ps1 diff-snapshots.ps1 \
          detect-remote-access.ps1 remove-screenconnect.ps1 install-latest.ps1 \
          Invoke-ReviewAndRemove.ps1 Invoke-GUIScanner.ps1 Get-ScannerFindings.ps1 Get-MalwarebytesDownloadDiagnostics.ps1 Invoke-AVUninstaller.ps1 Run-DetectRemoteAccess.bat START-HERE.bat \
          targets.json New-InvestigationReport.ps1 Submit-ConnectWiseReport.ps1 \
-         Invoke-PersistenceScan.ps1 Invoke-PersistenceInventoryWorker.ps1 Persistence.Inventory.psm1 Persistence.Removal.psm1 \
+         Invoke-PersistenceScan.ps1 Invoke-PersistenceInventoryWorker.ps1 Show-PersistenceReview.ps1 Persistence.Inventory.psm1 Persistence.Removal.psm1 \
          microbin-url.txt DEPLOY.md; do
   cp "$SRC/$f" "$D/"
 done

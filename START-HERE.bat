@@ -210,6 +210,18 @@ if not "!PERSIST_RC!"=="0" (
     if "!PIPE_RC!"=="0" set "PIPE_RC=!PERSIST_RC!"
 )
 
+rem ---- Step 6e: open the review windows for the technician ----------------------
+echo.
+echo  STEP 6e/9: Open review windows (no changes made)
+echo    Opens the evidence + startup folders, Services and Task Scheduler so you
+echo    can inspect what the persistence scan flagged. Nothing is changed here.
+set /p OPENREVIEW="    Open the review windows now? [Y/n] "
+if /i "%OPENREVIEW%"=="n" goto :skip_6e
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Show-PersistenceReview.ps1" -WorkDir "!SCC_RUN_ROOT!"
+if errorlevel 1 echo     [WARN] Some review windows could not be opened - see the messages above.
+:skip_6e
+set OPENREVIEW=
+
 rem ---- Step 7: Uninstall installed AV (attended) -------------------------------
 echo.
 echo  STEP 7/9: Uninstall third-party AV (attended)

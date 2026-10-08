@@ -256,7 +256,7 @@ jobs:
       - name: Post-AV persistence fixture and refusal tests (Windows PowerShell 5.1)
         shell: powershell
         run: |
-          foreach ($test in @('tests/test_persistence_inventory.ps1', 'tests/test_persistence_removal.ps1', 'tests/test_persistence_workflow.ps1', 'tests/test_persistence_report.ps1', 'tests/test_persistence_output_safety.ps1', 'tests/test_persistence_native_fileinfo.ps1', 'tests/test_persistence_watchdog.ps1', 'tests/ci/Test-PersistenceContracts.ps1')) {
+          foreach ($test in @('tests/test_persistence_inventory.ps1', 'tests/test_persistence_removal.ps1', 'tests/test_persistence_workflow.ps1', 'tests/test_persistence_report.ps1', 'tests/test_persistence_output_safety.ps1', 'tests/test_persistence_native_fileinfo.ps1', 'tests/test_persistence_watchdog.ps1', 'tests/test_persistence_review.ps1', 'tests/ci/Test-PersistenceContracts.ps1')) {
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File $test
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
@@ -264,7 +264,7 @@ jobs:
       - name: Post-AV persistence fixture and refusal tests (pwsh)
         shell: pwsh
         run: |
-          foreach ($test in @('tests/test_persistence_inventory.ps1', 'tests/test_persistence_removal.ps1', 'tests/test_persistence_workflow.ps1', 'tests/test_persistence_report.ps1', 'tests/test_persistence_output_safety.ps1', 'tests/test_persistence_native_fileinfo.ps1', 'tests/test_persistence_watchdog.ps1', 'tests/ci/Test-PersistenceContracts.ps1')) {
+          foreach ($test in @('tests/test_persistence_inventory.ps1', 'tests/test_persistence_removal.ps1', 'tests/test_persistence_workflow.ps1', 'tests/test_persistence_report.ps1', 'tests/test_persistence_output_safety.ps1', 'tests/test_persistence_native_fileinfo.ps1', 'tests/test_persistence_watchdog.ps1', 'tests/test_persistence_review.ps1', 'tests/ci/Test-PersistenceContracts.ps1')) {
             pwsh -NoProfile -File $test
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
@@ -287,7 +287,7 @@ jobs:
           Expand-Archive -LiteralPath $zip -DestinationPath $extract
           $package = Join-Path $extract 'screenconnect-cleanup'
           New-Item -ItemType Directory -Path (Join-Path $package 'tests') | Out-Null
-          foreach ($test in @('test_persistence_inventory.ps1', 'test_persistence_removal.ps1', 'test_persistence_report.ps1', 'test_persistence_workflow.ps1', 'test_persistence_output_safety.ps1', 'test_persistence_native_fileinfo.ps1', 'test_persistence_watchdog.ps1')) {
+          foreach ($test in @('test_persistence_inventory.ps1', 'test_persistence_removal.ps1', 'test_persistence_report.ps1', 'test_persistence_workflow.ps1', 'test_persistence_output_safety.ps1', 'test_persistence_native_fileinfo.ps1', 'test_persistence_watchdog.ps1', 'test_persistence_review.ps1')) {
             $copied = Join-Path (Join-Path $package 'tests') $test
             Copy-Item -LiteralPath (Join-Path 'tests' $test) -Destination $copied
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File $copied

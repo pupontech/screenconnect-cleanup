@@ -5,6 +5,7 @@ param(
     [switch]$RollbackReady,
     [switch]$NoPrompt,
     [switch]$WhatIf,
+    [switch]$OpenReview,
     [string]$PreflightRoot,
     [ValidateRange(1,300)][int]$InventorySectionTimeoutSeconds=60,
     [ValidateRange(1,600)][int]$InventoryTotalTimeoutSeconds=300
@@ -220,5 +221,16 @@ if ($WhatIf) {
 $result=[pscustomobject]@{SchemaVersion=1;Status=$overallStatus;InventoryPath=$inventoryPath;RemovalPath=$removalPath;InventoryStatus=$inventoryStatus;RemovalStatus=$removalStatus;RollbackReady=$rollbackOk;Errors=@($ErrorList.ToArray())}
 try { Write-JsonArtifact -Path $resultPath -Object $result }
 catch { Write-Error ('Could not write persistence result: '+$_.Exception.Message); exit 1 }
+if ($OpenReview -and -not $WhatIf) {
+    # Attended, read-only: opens the folders, Services and Task Scheduler for the
+    # technician. Never approves or performs cleanup.
+    $reviewScript=Join-Path $PSScriptRoot 'Show-PersistenceReview.ps1'
+    if (Test-Path -LiteralPath $reviewScript -PathType Leaf) {
+        try { & $reviewScript -WorkDir $WorkDir } catch { Write-Host ('[Persistence] Review windows failed: '+$_.Exception.Message) }
+    } else {
+        [void]$ErrorList.Add('Show-PersistenceReview.ps1 is missing; review windows were not opened.')
+        Write-Host '[Persistence] Show-PersistenceReview.ps1 is missing; review windows were not opened.'
+    }
+}
 if ($overallStatus -ne 'Complete') { exit 1 }
 exit 0
