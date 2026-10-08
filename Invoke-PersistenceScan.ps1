@@ -228,7 +228,8 @@ if ($OpenReview -and -not $WhatIf) {
     if (Test-Path -LiteralPath $reviewScript -PathType Leaf) {
         try { & $reviewScript -WorkDir $WorkDir } catch { Write-Host ('[Persistence] Review windows failed: '+$_.Exception.Message) }
     } else {
-        [void]$ErrorList.Add('Show-PersistenceReview.ps1 is missing; review windows were not opened.')
+        # Console warning only: result.json is already written, so appending here
+        # would be recorded nowhere and make the artifact disagree with the run.
         Write-Host '[Persistence] Show-PersistenceReview.ps1 is missing; review windows were not opened.'
     }
 }
