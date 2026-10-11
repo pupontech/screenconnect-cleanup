@@ -9,14 +9,25 @@ rem  Requires explicit confirmation before starting when AC power is disconnecte
 rem  Pure ASCII, no BOM.
 rem ============================================================================
 
+rem ---- Capture our own path/args BEFORE enabling delayed expansion --------
+rem A folder name such as "screenconnect-cleanup-v1.8.8 (1)" (what Explorer
+rem creates when you extract a ZIP a second time) breaks cmd: %~dp0 / %~f0
+rem expand at PARSE time, so the ( ) inside a ( ... ) block terminate the
+rem block early and the batch aborts with no message and no UAC prompt.
+rem Delayed expansion (!VAR!) is substituted at RUN time, after parsing, so
+rem it is safe for such paths. These are the only %~dp0/%~f0/%* expansions.
+set "SCC_DP0=%~dp0"
+set "SCC_F0=%~f0"
+set "SCC_ARG1=%~1"
+set "SCC_ARGS=%*"
 setlocal EnableDelayedExpansion
 rem ---- Use a dedicated cmd.exe so the keep-awake helper has a bounded lifetime ----
 if not defined SCC_RUNNER_CHILD (
     set "SCC_RUNNER_CHILD=1"
-    if "%~1"=="" (
-        start "" /b /wait cmd.exe /d /s /c ""%~f0""
+    if "!SCC_ARG1!"=="" (
+        start "" /b /wait cmd.exe /d /s /c ""!SCC_F0!""
     ) else (
-        start "" /b /wait cmd.exe /d /s /c ""%~f0" %*"
+        start "" /b /wait cmd.exe /d /s /c ""!SCC_F0!" !SCC_ARGS!"
     )
     set "SCC_RUNNER_RC=!errorlevel!"
     exit /b !SCC_RUNNER_RC!
@@ -30,10 +41,10 @@ rem command line. A failed/cancelled UAC prompt must be visible, never silent.
 rem The relaunch passes --elevation-attempted. If that flag is present and this
 rem window is STILL not elevated, the runner stops instead of prompting again:
 rem a probe that misreports elevation must never loop UAC at the technician.
-set "SCC_SELF=%~f0"
+set "SCC_SELF=!SCC_F0!"
 powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "if(([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){exit 0}else{exit 1}"
 if errorlevel 1 (
-    if /i "%~1"=="--elevation-attempted" (
+    if /i "!SCC_ARG1!"=="--elevation-attempted" (
         echo.
         echo  [ERROR] This window is still not elevated after the UAC request, so
         echo          the tool will not ask again. Right-click START-HERE.bat and
@@ -59,14 +70,14 @@ set "SCC_SELF="
 rem ---- Confirm battery power before starting any cleanup work ----------------
 rem This foreground child shares the runner console; Hidden would hide the whole run.
 rem Only the separately started keep-awake helper below should use WindowStyle Hidden.
-powershell.exe -NoLogo -NoProfile -STA -ExecutionPolicy Bypass -File "%~dp0tools\Confirm-OnBattery.ps1"
+powershell.exe -NoLogo -NoProfile -STA -ExecutionPolicy Bypass -File "!SCC_DP0!tools\Confirm-OnBattery.ps1"
 if errorlevel 1 goto :battery_not_confirmed
 
 rem ---- Keep the system and display awake for this runner only ----------------
-start "" powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0tools\Keep-Awake.ps1"
+start "" powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "!SCC_DP0!tools\Keep-Awake.ps1"
 if errorlevel 1 echo     [WARN] Keep-awake helper could not start; this computer may sleep during the run.
 
-cd /d "%~dp0"
+cd /d "!SCC_DP0!"
 
 rem ---- Bind every artifact to a fresh run root -------------------------------
 for /f "delims=" %%R in ('powershell -NoProfile -Command "$p=Join-Path 'C:\RIT-SCC' ($env:COMPUTERNAME + '-' + [guid]::NewGuid().ToString('N')); New-Item -ItemType Directory -Path $p -Force ^| Out-Null; $p"') do set "SCC_RUN_ROOT=%%R"
@@ -88,14 +99,14 @@ echo.
 
 rem ---- Step 1: tool pack (always runs) --------------------------------------
 echo  STEP 1/9: Tool pack + KVRT/ESET staging (Malwarebytes fallback at Step 6)
-if exist "%~dp0tools\Get-ToolPack.ps1" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\Get-ToolPack.ps1" -Quiet
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\Get-ToolPack.ps1" -Verify
+if exist "!SCC_DP0!tools\Get-ToolPack.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!tools\Get-ToolPack.ps1" -Quiet
+    powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!tools\Get-ToolPack.ps1" -Verify
 ) else (
     echo     [WARN] tools\Get-ToolPack.ps1 missing - skipping pack.
 )
-if exist "%~dp0tools\Get-AVTools.ps1" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\Get-AVTools.ps1" -ToolDir "%~dp0tools\AV"
+if exist "!SCC_DP0!tools\Get-AVTools.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!tools\Get-AVTools.ps1" -ToolDir "!SCC_DP0!tools\AV"
 ) else (
     echo     [WARN] tools\Get-AVTools.ps1 missing - skipping AV scanner staging.
 )
@@ -103,13 +114,13 @@ if exist "%~dp0tools\Get-AVTools.ps1" (
 rem ---- Step 2: preflight (ALWAYS runs - owner directive 2026-08-28) ---------
 echo.
 echo  STEP 2/9: Preflight
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0preflight.ps1" -WorkingRoot "!SCC_RUN_ROOT!"
+powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!preflight.ps1" -WorkingRoot "!SCC_RUN_ROOT!"
 if errorlevel 1 goto :preflight_failed
 
 rem ---- Step 3: BEFORE snapshot -----------------------------------------------
 echo.
 echo  STEP 3/9: Before snapshot
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect-snapshot.ps1" -Label before -OutFile "!SCC_RUN_ROOT!\snapshot_before.json" -Quiet
+powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!collect-snapshot.ps1" -Label before -OutFile "!SCC_RUN_ROOT!\snapshot_before.json" -Quiet
 if errorlevel 1 goto :before_snapshot_failed
 if exist "!SCC_RUN_ROOT!\snapshot_before.json" (
     echo     [i] Baseline saved.
@@ -120,7 +131,7 @@ if exist "!SCC_RUN_ROOT!\snapshot_before.json" (
 rem ---- Step 4: detection -----------------------------------------------------
 echo.
 echo  STEP 4/9: Remote-access detection
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0detect-remote-access.ps1" -All -NoPause -NoZip -NoReportShare -OutRoot "!SCC_RUN_ROOT!\detect" -TranscriptCopyDir "!SCC_RUN_ROOT!"
+powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!detect-remote-access.ps1" -All -NoPause -NoZip -NoReportShare -OutRoot "!SCC_RUN_ROOT!\detect" -TranscriptCopyDir "!SCC_RUN_ROOT!"
 if errorlevel 1 goto :detection_failed
 set "FINDINGS_JSON="
 rem Only search the directory created for THIS run; historical findings are never
@@ -141,9 +152,9 @@ echo.
 echo  STEP 5/9: Review/remove ScreenConnect
 echo    One typed confirmation removes ALL detected ScreenConnect instances.
 echo    Files are quarantined, never deleted.
-if exist "%~dp0Invoke-ReviewAndRemove.ps1" (
+if exist "!SCC_DP0!Invoke-ReviewAndRemove.ps1" (
     if defined FINDINGS_JSON (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-ReviewAndRemove.ps1" -FindingsJson "!FINDINGS_JSON!" -WorkDir "!SCC_RUN_ROOT!"
+        powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!Invoke-ReviewAndRemove.ps1" -FindingsJson "!FINDINGS_JSON!" -WorkDir "!SCC_RUN_ROOT!"
         set "REMOVE_RC=!errorlevel!"
         if not "!REMOVE_RC!"=="0" (
             echo     [WARN] Removal reported exit !REMOVE_RC! - continuing to collect after-evidence and report.
@@ -166,8 +177,8 @@ echo.
 echo    -- 6a: KVRT --
 set /p GO="    Launch KVRT? [Y/n] "
 if /i not "%GO%"=="n" (
-    if exist "%~dp0tools\AV\KVRT.exe" (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-GUIScanner.ps1" -Scanner KVRT
+    if exist "!SCC_DP0!tools\AV\KVRT.exe" (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!Invoke-GUIScanner.ps1" -Scanner KVRT
         if errorlevel 1 echo        [WARN] KVRT launch failed with errorlevel !errorlevel! - see the message above
     ) else (
         echo        [WARN] tools\AV\KVRT.exe not staged - run step 1 first.
@@ -179,8 +190,8 @@ echo.
 echo    -- 6b: ESET Online Scanner --
 set /p GO="    Launch ESET Online Scanner? [Y/n] "
 if /i not "%GO%"=="n" (
-    if exist "%~dp0tools\AV\esetonlinescanner.exe" (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-GUIScanner.ps1" -Scanner ESET
+    if exist "!SCC_DP0!tools\AV\esetonlinescanner.exe" (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!Invoke-GUIScanner.ps1" -Scanner ESET
         if errorlevel 1 echo        [WARN] ESET launch failed with errorlevel !errorlevel! - see the message above
     ) else (
         echo        [WARN] tools\AV\esetonlinescanner.exe not staged - run step 1 first.
@@ -194,7 +205,7 @@ echo    -- 6c: Malwarebytes --
 set /p GO="    Install and launch Malwarebytes now? [Y/n] "
 if /i "%GO%"=="n" goto :skip_6c
 if not exist "!SCC_RUN_ROOT!\logs" mkdir "!SCC_RUN_ROOT!\logs"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-GUIScanner.ps1" -Scanner Malwarebytes -ResultPath "!SCC_RUN_ROOT!\logs\scanner-Malwarebytes-result.json"
+powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!Invoke-GUIScanner.ps1" -Scanner Malwarebytes -ResultPath "!SCC_RUN_ROOT!\logs\scanner-Malwarebytes-result.json"
 if errorlevel 1 echo        [WARN] Malwarebytes wrapper exited with errorlevel !errorlevel! - see the result JSON and message above
 echo        Malwarebytes session ended - continuing.
 :skip_6c
@@ -203,7 +214,7 @@ set GO=
 rem ---- Step 6d: mandatory persistence scan/review after AV scanners -----------
 echo.
 echo  STEP 6d/9: Persistence inventory and review
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-PersistenceScan.ps1" -WorkDir "!SCC_RUN_ROOT!" -PreflightRoot "!SCC_RUN_ROOT!"
+powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!Invoke-PersistenceScan.ps1" -WorkDir "!SCC_RUN_ROOT!" -PreflightRoot "!SCC_RUN_ROOT!"
 set "PERSIST_RC=!errorlevel!"
 if not "!PERSIST_RC!"=="0" (
     echo     [WARN] Persistence scan/review incomplete - exit !PERSIST_RC!; evidence will still be reported.
@@ -217,7 +228,7 @@ echo    Opens the evidence + startup folders, Services and Task Scheduler so you
 echo    can inspect what the persistence scan flagged. Nothing is changed here.
 set /p OPENREVIEW="    Open the review windows now? [Y/n] "
 if /i "%OPENREVIEW%"=="n" goto :skip_6e
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Show-PersistenceReview.ps1" -WorkDir "!SCC_RUN_ROOT!"
+powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!Show-PersistenceReview.ps1" -WorkDir "!SCC_RUN_ROOT!"
 if errorlevel 1 echo     [WARN] Some review windows could not be opened - see the messages above.
 :skip_6e
 set OPENREVIEW=
@@ -230,7 +241,7 @@ echo    Never silent-uninstalls - uninstallers open for you to drive.
 echo    Defender is excluded. Enter skips.
 set /p GO="    Run installed-AV uninstall now? [y/N] "
 if /i "%GO%"=="y" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Invoke-AVUninstaller.ps1" -LogDir "!SCC_RUN_ROOT!\logs"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!Invoke-AVUninstaller.ps1" -LogDir "!SCC_RUN_ROOT!\logs"
 ) else (
     echo     Skipped.
 )
@@ -239,7 +250,7 @@ set GO=
 rem ---- Step 8: AFTER snapshot + diff ------------------------------------------
 echo.
 echo  STEP 8/9: After snapshot + diff
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect-snapshot.ps1" -Label after -OutFile "!SCC_RUN_ROOT!\snapshot_after.json" -Quiet
+powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!collect-snapshot.ps1" -Label after -OutFile "!SCC_RUN_ROOT!\snapshot_after.json" -Quiet
 if errorlevel 1 echo     [WARN] After-snapshot exited with errorlevel %errorlevel%
 rem Only diff when the baseline from this run actually exists.
 if not exist "!SCC_RUN_ROOT!\snapshot_before.json" (
@@ -249,7 +260,7 @@ if not exist "!SCC_RUN_ROOT!\snapshot_before.json" (
     if not exist "!SCC_RUN_ROOT!\snapshot_after.json" (
         echo     [WARN] After-snapshot was not written - skipping the diff.
     ) else (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0diff-snapshots.ps1" -BeforeFile "!SCC_RUN_ROOT!\snapshot_before.json" -AfterFile "!SCC_RUN_ROOT!\snapshot_after.json" -OutFile "!SCC_RUN_ROOT!\snapshot_diff.json"
+        powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!diff-snapshots.ps1" -BeforeFile "!SCC_RUN_ROOT!\snapshot_before.json" -AfterFile "!SCC_RUN_ROOT!\snapshot_after.json" -OutFile "!SCC_RUN_ROOT!\snapshot_diff.json"
         rem exit 1 from diff = RESURRECTION detected, a finding not a failure
         if errorlevel 2 (
             echo     [WARN] Diff failed to run.
@@ -269,9 +280,9 @@ if not defined FINDINGS_JSON (
 ) else (
     if exist "!FINDINGS_JSON!" (
     if exist "!SCC_RUN_ROOT!/removal-manifest.json" (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -RemovalManifest "!SCC_RUN_ROOT!/removal-manifest.json" -PersistenceInventory "!SCC_RUN_ROOT!\persistence\inventory.json" -PersistenceRemoval "!SCC_RUN_ROOT!\persistence\removal.json" -PersistenceResult "!SCC_RUN_ROOT!\persistence\result.json" -OutputPath "!SCC_RUN_ROOT!/report.html"
+        powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -RemovalManifest "!SCC_RUN_ROOT!/removal-manifest.json" -PersistenceInventory "!SCC_RUN_ROOT!\persistence\inventory.json" -PersistenceRemoval "!SCC_RUN_ROOT!\persistence\removal.json" -PersistenceResult "!SCC_RUN_ROOT!\persistence\result.json" -OutputPath "!SCC_RUN_ROOT!/report.html"
     ) else (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -PersistenceInventory "!SCC_RUN_ROOT!\persistence\inventory.json" -PersistenceRemoval "!SCC_RUN_ROOT!\persistence\removal.json" -PersistenceResult "!SCC_RUN_ROOT!\persistence\result.json" -OutputPath "!SCC_RUN_ROOT!/report.html"
+        powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -PersistenceInventory "!SCC_RUN_ROOT!\persistence\inventory.json" -PersistenceRemoval "!SCC_RUN_ROOT!\persistence\removal.json" -PersistenceResult "!SCC_RUN_ROOT!\persistence\result.json" -OutputPath "!SCC_RUN_ROOT!/report.html"
     )
         set "REPORT_RC=!errorlevel!"
         if not "!REPORT_RC!"=="0" (
@@ -280,10 +291,10 @@ if not defined FINDINGS_JSON (
         )
         if exist "!SCC_RUN_ROOT!/report.html" (
             echo     [i] Report written to !SCC_RUN_ROOT!/report.html
-            if exist "%~dp0Submit-ConnectWiseReport.ps1" (
+            if exist "!SCC_DP0!Submit-ConnectWiseReport.ps1" (
                 rem MicroBin share is automatic (no relay): the uploader reads the
                 rem server base URL from microbin-url.txt beside the tool.
-                powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Submit-ConnectWiseReport.ps1" -FindingsJson "!FINDINGS_JSON!" -WorkDir "!SCC_RUN_ROOT!" -ReportHtml "!SCC_RUN_ROOT!/report.html" -PersistenceInventory "!SCC_RUN_ROOT!\persistence\inventory.json" -PersistenceRemoval "!SCC_RUN_ROOT!\persistence\removal.json" -PersistenceResult "!SCC_RUN_ROOT!\persistence\result.json"
+                powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!Submit-ConnectWiseReport.ps1" -FindingsJson "!FINDINGS_JSON!" -WorkDir "!SCC_RUN_ROOT!" -ReportHtml "!SCC_RUN_ROOT!/report.html" -PersistenceInventory "!SCC_RUN_ROOT!\persistence\inventory.json" -PersistenceRemoval "!SCC_RUN_ROOT!\persistence\removal.json" -PersistenceResult "!SCC_RUN_ROOT!\persistence\result.json"
                 set "UPLOAD_RC=!errorlevel!"
                 if not "!UPLOAD_RC!"=="0" (
                     echo     [WARN] Report share failed with errorlevel !UPLOAD_RC! - local evidence remains available.
