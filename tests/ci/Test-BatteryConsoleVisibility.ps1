@@ -10,6 +10,17 @@ $batteryLine = $batteryLines[0]
 if ($batteryLine -match '(?i)-WindowStyle\s+Hidden') { throw 'Foreground battery check hides the attached runner console.' }
 if ($batch -notmatch '(?m)^start "" powershell\.exe .*?-WindowStyle Hidden .*Keep-Awake\.ps1') { throw 'Separate keep-awake child must retain its hidden window.' }
 Write-Host 'PASS: foreground battery invocation does not hide its console; separate keep-awake remains hidden.'
+
+# The launcher no longer writes %~dp0 inline (a path containing ( ) ends a
+# ( ... ) block early at parse time), so its path/args live in variables it
+# captures before enabling delayed expansion. The fixture below must run the
+# invocation line in the same context, so it borrows the launcher's own capture
+# lines instead of re-declaring them.
+$captureLines = @($batch -split '\r?\n' | Where-Object { $_ -match '^set "SCC_(DP0|F0|ARG1|ARGS)=' })
+if ($batteryLine -match '!SCC_') {
+    if ($captureLines.Count -eq 0) { throw 'Battery line uses !SCC_*! but START-HERE.bat declares no captures.' }
+    if ($batteryLine -match '!SCC_DP0!' -and -not ($captureLines -match '^set "SCC_DP0=%~dp0"')) { throw 'Battery line uses !SCC_DP0! but no matching capture exists.' }
+}
 if ($env:OS -ne 'Windows_NT') { Write-Host 'SKIP: native window visibility requires Windows.'; exit 0 }
 
 $root = Join-Path ([IO.Path]::GetTempPath()) ('scc-visible-' + [guid]::NewGuid().ToString('N'))
@@ -73,7 +84,7 @@ try {
         $marker = Join-Path $root ($scenario + '.continued')
         $fixture = Join-Path $root ($scenario + '.bat')
         $report = Join-Path $root ($scenario + '.report')
-        $lines = @('@echo off', $line, 'if errorlevel 1 exit /b 1', ('echo continued>"' + $marker + '"'), 'exit /b 0')
+        $lines = @('@echo off', 'setlocal EnableDelayedExpansion') + $captureLines + @($line, 'if errorlevel 1 exit /b 1', ('echo continued>"' + $marker + '"'), 'exit /b 0')
         [IO.File]::WriteAllText($fixture, (($lines -join "`r`n") + "`r`n"), [Text.Encoding]::ASCII)
         $process = Start-Process -FilePath $exe -ArgumentList ('"' + $fixture + '" "' + $report + '"') -WindowStyle Normal -PassThru
         try {
