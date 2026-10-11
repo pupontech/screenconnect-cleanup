@@ -14,9 +14,10 @@
   then stops it before Step 1 starts downloading tools.
 #>
 [CmdletBinding()]
-param([string]$RepositoryRoot = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)))
+param([string]$RepositoryRoot = '')
 
 $ErrorActionPreference = 'Stop'
+if (-not $RepositoryRoot) { $RepositoryRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot) }
 if ($env:OS -ne 'Windows_NT') { Write-Host 'skip: Windows-only batch launcher'; exit 0 }
 
 $batPath = Join-Path $RepositoryRoot 'START-HERE.bat'
