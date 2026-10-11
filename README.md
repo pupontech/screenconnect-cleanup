@@ -82,9 +82,10 @@ What it does:
 > **Security note.** `irm | iex` downloads and runs code. Review
 > [`install-latest.ps1`](install-latest.ps1) first — it only downloads the
 > release zip from this repo, extracts it, and launches the same
-> `START-HERE.bat` you would double-click after a manual download. The zip
-> itself is not hash-verified; compare the sha256 in the release notes if you
-> want certainty. Manual alternative: grab the zip from
+> `START-HERE.bat` you would double-click after a manual download. When
+> GitHub publishes a sha256 digest for the release asset, the zip is checked
+> against it and a mismatch aborts; otherwise compare the sha256 in the
+> release notes yourself. Manual alternative: grab the zip from
 > [Releases](https://github.com/pupontech/screenconnect-cleanup/releases) and
 > run `START-HERE.bat` from the extracted folder.
 

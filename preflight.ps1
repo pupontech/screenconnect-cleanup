@@ -486,17 +486,23 @@ if ($PSBoundParameters.ContainsKey('Debug') -and [bool]$PSBoundParameters['Debug
         Write-Stage ("DEBUG LOGGER ACTIVE - transcript: " + $debugLogPath)
         Write-Stage ("preflight.ps1 flags: np=" + $np + " Force=" + $Force + " MinFreeGB=" + $MinFreeGB + " WorkingRoot=" + $WorkingRoot)
     } catch {
-        Write-StageWarn ("Could not start debug transcript: " + $_.Exception.Message)
+        Write-StageWarn ("Could not start debug transcript: {0}" -f $_.Exception.Message)
         $debugLogPath = $null
     }
-    trap {
-        Write-StageFail ("UNHANDLED ERROR: " + $_.Exception.Message + " | " + $_.InvocationInfo.PositionMessage)
-        if ($debugLogPath) {
-            try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch { }
-            Write-Host ("Debug log: " + $debugLogPath) -ForegroundColor Yellow
-        }
-        exit 1
+    # Signal the script-level trap (below) that -Debug was actually requested;
+    # preflight is [CmdletBinding()] and has no usable $Debug variable.
+    $script:DebugTrapEnabled = $true
+}
+# A trap only covers the statement block it is written in, so it must sit at
+# script level to see failures from the steps below.
+trap {
+    if (-not (Get-Variable -Name DebugTrapEnabled -Scope Script -ValueOnly -ErrorAction SilentlyContinue)) { break }
+    Write-StageFail ("UNHANDLED ERROR: " + $_.Exception.Message + " | " + $_.InvocationInfo.PositionMessage)
+    if ($script:debugLogPath) {
+        try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch { }
+        Write-Host ("Debug log: " + $script:debugLogPath) -ForegroundColor Yellow
     }
+    exit 1
 }
 
 # --- 6. Restore point + hive export (optional) ---
