@@ -3,6 +3,22 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.9] - 2026-10-11
+**TESTING CANDIDATE - launcher fix for paths containing parentheses.**
+- `START-HERE.bat` now survives a folder name containing `(` or `)` - e.g.
+  `screenconnect-cleanup-v1.8.8 (1)`, which is what Windows Explorer creates
+  when the same ZIP is extracted twice. cmd expands `%~dp0`/`%~f0` at PARSE
+  time, so the `( )` inside a `( ... )` block ended the block early and the
+  batch aborted with no message and no UAC prompt: the window opened and closed
+  instantly. Every path/argument expansion now happens once, before delayed
+  expansion is enabled, and is referenced afterwards as `!SCC_DP0!` / `!SCC_F0!`
+  / `!SCC_ARG1!` / `!SCC_ARGS!`, which cmd substitutes at run time (after
+  parsing) and therefore cannot be broken by brackets in the path.
+- New regression `tests/ci/Test-LauncherPathWithParens.ps1`: runs the real
+  launcher from a paren-named directory and requires it to create its run root,
+  with a negative control proving the old construct does abort from such a path.
+  Wired into both CI editions.
+
 ## [1.8.8] - 2026-10-11
 **TESTING CANDIDATE - review follow-up on v1.8.7.**
 - `relay/app.py`: bound the early-rejection body drain with a total monotonic
