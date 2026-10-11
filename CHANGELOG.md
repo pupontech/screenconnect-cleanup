@@ -3,6 +3,22 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.8] - 2026-10-11
+**TESTING CANDIDATE - review follow-up on v1.8.7.**
+- `relay/app.py`: bound the early-rejection body drain with a total monotonic
+  deadline instead of a per-read socket timeout. The per-read form let a client
+  that trickled one byte per interval keep an unauthenticated handler thread
+  (`ThreadingHTTPServer` spawns one per connection) alive indefinitely - a
+  slowloris on the 401/404/415/411/413/400 paths. A handler now retires at the
+  drain deadline regardless of how slowly the body arrives.
+- Add `tests/test_resume_materials_trust.ps1`: the v1.8.7 resume-location ACL
+  change had no automated coverage. It asserts a user-writable location is
+  refused and a protected `System32\\drivers` location is accepted (the
+  pre-merge check rejected that path), and it is wired into both CI editions.
+- Relay regression `test_reject_drain_is_bounded_against_a_trickling_client`
+  reproduces the slowloris (handler thread alive 13.5 s) and passes at ~5.5 s
+  with the deadline in place.
+
 ## [1.8.7] - 2026-10-11
 **TESTING CANDIDATE - audit fixes folded into v1.8.6.**
 - Move the `-Debug` unhandled-error `trap` to script level in `sc-cleanup.ps1`
