@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -41,7 +42,22 @@ class BundleProvenanceTests(unittest.TestCase):
         return subprocess.check_output(["git", "-C", str(self.repo), *args], text=True)
 
     def build(self):
-        return subprocess.run(["bash", str(self.repo / "make-deploy-bundle.sh")], cwd=self.repo,
+        # Never resolve Windows' System32 WSL alias as the build shell.
+        if os.name == 'nt':
+            git_command = shutil.which('git')
+            if not git_command:
+                raise RuntimeError('Git is required for the bundle fixture.')
+            git_path = Path(git_command)
+            bash_candidates = [parent / 'bin' / 'bash.exe' for parent in git_path.parents]
+            bash = next((str(path) for path in bash_candidates if path.is_file()), None)
+            if not bash:
+                raise RuntimeError('Git Bash is required for the Windows bundle fixture.')
+        else:
+            bash = shutil.which('bash')
+        if not bash:
+            raise RuntimeError('Bash is required for the bundle fixture.')
+        return subprocess.run([bash, str(self.repo / "make-deploy-bundle.sh")], cwd=self.repo,
+                              env={**os.environ, 'PYTHON': Path(sys.executable).as_posix()},
                               capture_output=True, text=True, timeout=60)
 
     def test_dirty_tree_is_refused_without_replacing_existing_artifact(self):
