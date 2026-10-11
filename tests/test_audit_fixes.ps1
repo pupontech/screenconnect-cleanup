@@ -95,10 +95,17 @@ $instText = Get-Content -LiteralPath $instPath -Raw
 Assert-True ($instText -match '(?m)^&\s*\{') 'install-latest.ps1 wraps its body in a scriptblock so preferences stay caller-local'
 
 # --- 4. relay drains early rejections ---------------------------------------
-$relayText = Get-Content -LiteralPath (Join-Path $RepoRoot 'relay/app.py') -Raw
-Assert-True ($relayText -match 'def _reject\(') 'relay/_reject exists'
-Assert-True (@([regex]::Matches($relayText, 'self\._reject\(')).Count -ge 6) 'all six early POST rejections call _reject'
-Assert-True (@([regex]::Matches($relayText, 'close_connection = True')).Count -eq 1) 'close_connection is set only inside _reject (no early rejection aborts before responding)'
+# relay/ is a server-side component and is not part of the technician deploy
+# bundle, so this check is skipped (not failed) when the file is absent.
+$relayPath = Join-Path $RepoRoot 'relay/app.py'
+if (Test-Path -LiteralPath $relayPath) {
+    $relayText = Get-Content -LiteralPath $relayPath -Raw
+    Assert-True ($relayText -match 'def _reject\(') 'relay/_reject exists'
+    Assert-True (@([regex]::Matches($relayText, 'self\._reject\(')).Count -ge 6) 'all six early POST rejections call _reject'
+    Assert-True (@([regex]::Matches($relayText, 'close_connection = True')).Count -eq 1) 'close_connection is set only inside _reject (no early rejection aborts before responding)'
+} else {
+    Write-Host 'skip: relay/app.py not present (server-only; not shipped in the deploy bundle)'
+}
 
 if ($failures.Count -gt 0) { Write-Host ("`n" + $failures.Count + ' failure(s)') -ForegroundColor Red; exit 1 }
 Write-Host "`nPASS: audit-fix regressions"
