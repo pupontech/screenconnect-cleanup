@@ -59,7 +59,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Constants & script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.8.5'
+$ScriptVersion = '1.8.6'
 $ScriptName = 'sc-cleanup.ps1'
 $PipelineStages = @(
     @{ Id = 0; Name = 'Preflight';            SkipFlag = '' },
@@ -1117,6 +1117,7 @@ $stage7Result = Invoke-Stage -StageId 7 -StageName 'Procmon' -SkipFlag '' -Stage
 # -----------------------------------------------------------------------------
 # Stage 8: Snapshot (AFTER) + Diff
 # -----------------------------------------------------------------------------
+try {
 $stage8Result = Invoke-Stage -StageId 8 -StageName 'Snapshot (After)+Diff' -SkipFlag '' -StageBlock {
     $collectSnapshot = Join-Path $ScriptRoot 'collect-snapshot.ps1'
     if (-not (Test-Path $collectSnapshot)) {
@@ -1235,6 +1236,45 @@ $stage8Result = Invoke-Stage -StageId 8 -StageName 'Snapshot (After)+Diff' -Skip
         DiffIncomplete = ($diffVerdict -eq 'INCOMPLETE')
         RemovalManifest = $removalManifest
         RemovalManifestData = $manifest
+    }
+}
+} catch {
+    # Post-removal evidence failure must not prevent the technician's report.
+    # Record an unknown/incomplete comparison, not synthetic clean diff rows.
+    $stage8Error=$_.Exception.Message
+    Write-StageLog ('After-snapshot/diff failed; continuing to report: '+$stage8Error) 'Error'
+    $afterPath=Join-Path $WorkDir 'snapshot_after.json'
+    $beforePath=$stage1Result.Result.SnapshotPath
+    $failedDiffPath=Join-Path $WorkDir ('snapshot_diff.failure.'+[guid]::NewGuid().ToString('N')+'.json')
+    $failedDiff=[ordered]@{
+        SchemaVersion=1
+        DiffUtc=(Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        BeforeFile=(Split-Path -Leaf $beforePath)
+        AfterFile=(Split-Path -Leaf $afterPath)
+        BeforeCollectionComplete=$null
+        BeforeCollectionErrors=@()
+        BeforeCollectionWarnings=@()
+        AfterCollectionComplete=$false
+        AfterCollectionErrors=@([pscustomobject]@{Section='SnapshotAfterDiff';Error=$stage8Error})
+        AfterCollectionWarnings=@()
+        ResurrectionsAdded=$null
+        Verdict='INCOMPLETE'
+        Sections=@()
+    }
+    try {
+        $failureBytes=(New-Object Text.UTF8Encoding($false)).GetBytes(($failedDiff | ConvertTo-Json -Depth 8))
+        $failureStream=New-Object IO.FileStream($failedDiffPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        try {$failureStream.Write($failureBytes,0,$failureBytes.Length);$failureStream.Flush()}
+        finally {$failureStream.Dispose()}
+    }
+    catch {Write-StageLog ('Could not write incomplete diff evidence: '+$_.Exception.Message) 'Error'}
+    $stage8Result=@{
+        Skipped=$false;Error=$stage8Error
+        Result=@{
+            AfterSnapshot=$afterPath;BeforeSnapshot=$beforePath;DiffPath=$failedDiffPath
+            Resurrected=$false;DiffResult=$failedDiff;DiffVerdict='INCOMPLETE';DiffIncomplete=$true
+            RemovalManifest=(Join-Path $WorkDir 'removal-manifest.json');RemovalManifestData=$null
+        }
     }
 }
 

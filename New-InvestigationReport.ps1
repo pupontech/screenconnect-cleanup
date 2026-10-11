@@ -669,7 +669,7 @@ if ($AVUninstall) {
     $qRoot = Get-Prop $avData 'QuarantineRoot'
     $qNote = ''
     if ($qRoot) { $qNote = " <span class='muted'>Leftover shortcuts/folders were moved (not deleted) to <code>$(Fmt $qRoot)</code>.</span>" }
-    $avNote = if ($avError) { "<p class='warn-line'>$avError</p>" } else { "<p class='muted'>Uninstallers were opened for the technician to drive (attended). Source: $(Fmt $AVUninstall)</p>$qNote" }
+    $avNote = if ($avError) { "<p class='warn-line'>$(Fmt $avError)</p>" } else { "<p class='muted'>Uninstallers were opened for the technician to drive (attended). Source: $(Fmt $AVUninstall)</p>$qNote" }
     $avUninstallSectionHtml = @"
 <section id="av-uninstall">
   <h2>Installed antivirus / security products uninstalled</h2>
