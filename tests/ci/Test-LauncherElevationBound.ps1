@@ -19,10 +19,11 @@ Check ($bat -match "--elevation-attempted") 'launcher passes a one-shot elevatio
 Check (([regex]::Matches($bat, '-Verb\s+RunAs')).Count -eq 1) 'exactly one elevation request exists in the launcher'
 # The launcher captures %~dp0/%~f0/%~1/%* before enabling delayed expansion
 # (a path containing ( ) would otherwise break cmd's parse-time block matching).
-# The replay fixture must provide the same values, so borrow the launcher's own
-# capture lines rather than restating them.
+# The replay fixture is a plain batch with the marker in SCC_RUNNER_CHILD, so the
+# captured tokens are resolved back to their expansions - keeping the fixture's
+# shape and the replayed argument semantics identical to before the change.
 $captureLines = @($bat -split '\r?\n' | Where-Object { $_ -match '^set "SCC_(DP0|F0|ARG1|ARGS)=' })
-$captures = ($captureLines -join "`r`n")
+if ($bat -match '!SCC_' -and $captureLines.Count -eq 0) { throw 'Launcher uses !SCC_*! but declares no captures.' }
 
 $root = Join-Path ([IO.Path]::GetTempPath()) ('scc elev fixture ' + [guid]::NewGuid().ToString('N'))
 $shim = Join-Path $root 'shim'
@@ -49,10 +50,11 @@ try {
     # token probe) so the fixture never runs cleanup stages.
     $block = [regex]::Match($bat, '(?ms)^if not defined SCC_RUNNER_CHILD \(.*?^set "SCC_SELF="\r?$').Value
     if (-not $block) { throw 'Could not extract the launcher elevation block.' }
+    $block = $block.Replace('!SCC_F0!', '%~f0').Replace('!SCC_DP0!', '%~dp0').Replace('!SCC_ARG1!', '%~1').Replace('!SCC_ARGS!', '%*')
     $marker = Join-Path $case 'continues.txt'
     $log = Join-Path $case 'calls.log'
     $fixture = Join-Path $case 'replay.bat'
-    $text = "@echo off`r`nsetlocal EnableDelayedExpansion`r`n$captures`r`nset `"SCC_RUNNER_CHILD=1`"`r`n$block`r`necho continued>`"$marker`"`r`nexit /b 0`r`n"
+    $text = "@echo off`r`nsetlocal EnableDelayedExpansion`r`nset `"SCC_RUNNER_CHILD=1`"`r`n$block`r`necho continued>`"$marker`"`r`nexit /b 0`r`n"
     [IO.File]::WriteAllText($fixture, $text, [Text.Encoding]::ASCII)
     $env:SCC_STUB_LOG = $log
     $env:PATH = $shim + ';' + $env:PATH

@@ -44,10 +44,6 @@ if ($offenders.Count -gt 0) {
 }
 Write-Host 'ok:   no parse-time path expansions remain in the launcher body'
 
-$runRootParent = Join-Path $env:SystemDrive 'RIT-SCC'
-$before = @()
-if (Test-Path -LiteralPath $runRootParent) { $before = @(Get-ChildItem -LiteralPath $runRootParent -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) }
-
 $work = Join-Path $env:TEMP ('scc paren (1) ' + [guid]::NewGuid().ToString('N'))
 $out = Join-Path $work 'run.out.txt'
 $null = New-Item -ItemType Directory -Path $work -Force
@@ -81,35 +77,31 @@ try {
     Write-Host 'ok:   negative control confirms a paren path breaks the old %~f0-in-block form'
 
     $proc = Start-Process -FilePath $env:ComSpec -ArgumentList @('/d', '/c', 'START-HERE.bat') -WorkingDirectory $work -RedirectStandardOutput $out -RedirectStandardError ($out + '.err') -PassThru -WindowStyle Hidden
-    $deadline = (Get-Date).AddSeconds(150)
-    $newRoot = $null
-    $sawBanner = $false
-    while ((Get-Date) -lt $deadline) {
-        Start-Sleep -Seconds 1
-        if (Test-Path -LiteralPath $out) {
-            $text = Get-Content -LiteralPath $out -Raw -ErrorAction SilentlyContinue
-            if ($text -and $text -match 'SCREENCONNECT CLEANUP - guided run') { $sawBanner = $true }
-            if ($text -and $text -match 'unexpected at this time|syntax of the command is incorrect') {
-                Write-Host ('FAIL: cmd parse error from the paren path:' + [Environment]::NewLine + $text) -ForegroundColor Red
-                exit 1
-            }
-        }
-        if (Test-Path -LiteralPath $runRootParent) {
-            $now = @(Get-ChildItem -LiteralPath $runRootParent -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
-            $newRoot = $now | Where-Object { $before -notcontains $_ } | Select-Object -First 1
-        }
-        if ($newRoot -and $sawBanner) { break }
-        if ($proc.HasExited -and -not $newRoot) { break }
+    # On a runner with no battery the launcher reaches its banner, creates a run
+    # root, tries Step 1 (a 403 on the CI network is fine) and stops at preflight
+    # (Windows Server). Bounded wait, then judge by what it printed: the banner
+    # and a "Run: <path>" line are only reachable AFTER the self-relaunch wrapper
+    # - the exact code that used to die on a ( ) path.
+    $waited = $proc.WaitForExit(180000)
+    if (-not $waited) { & taskkill.exe /PID $proc.Id /T /F 2>&1 | Out-Null }
+    $text = if (Test-Path -LiteralPath $out) { Get-Content -LiteralPath $out -Raw -ErrorAction SilentlyContinue } else { '' }
+    if (-not $waited) { $text += [Environment]::NewLine + (Get-Content -LiteralPath ($out + '.err') -Raw -ErrorAction SilentlyContinue) }
+
+    if ($text -match 'unexpected at this time|syntax of the command is incorrect') {
+        Write-Host ('FAIL: cmd parse error from the paren path:' + [Environment]::NewLine + $text) -ForegroundColor Red
+        exit 1
     }
-    if ($newRoot) {
-        Write-Host ('ok:   launcher ran from "' + (Split-Path -Leaf $work) + '" and created a run root: ' + $newRoot)
-        # Stop it now - Step 1 would download the Sysinternals pack.
-        if (-not $proc.HasExited) { & taskkill.exe /PID $proc.Id /T /F 2>&1 | Out-Null }
-        Write-Host 'PASS: START-HERE.bat survives a path containing ( )'
-        exit 0
+    if ($text -notmatch 'SCREENCONNECT CLEANUP - guided run') {
+        Write-Host ('FAIL: launcher never reached its banner from "' + (Split-Path -Leaf $work) + '"' + [Environment]::NewLine + '--- captured output ---' + [Environment]::NewLine + $text) -ForegroundColor Red
+        exit 1
     }
-    Write-Host ('FAIL: launcher never created a run root from a paren path' + [Environment]::NewLine + '--- captured output ---' + [Environment]::NewLine + (Get-Content -LiteralPath $out -Raw -ErrorAction SilentlyContinue)) -ForegroundColor Red
-    exit 1
+    if ($text -notmatch '(?m)^\s+Run: .+') {
+        Write-Host ('FAIL: launcher reached the banner but created no run root:' + [Environment]::NewLine + $text) -ForegroundColor Red
+        exit 1
+    }
+    Write-Host ('ok:   launcher self-relaunched from "' + (Split-Path -Leaf $work) + '", created its run root and reached the banner')
+    Write-Host 'PASS: START-HERE.bat survives a path containing ( )'
+    exit 0
 } finally {
     if ($proc -and -not $proc.HasExited) { try { & taskkill.exe /PID $proc.Id /T /F 2>&1 | Out-Null } catch { } }
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
