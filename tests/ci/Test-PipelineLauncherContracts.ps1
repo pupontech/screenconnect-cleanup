@@ -139,14 +139,43 @@ foreach ($name in $launchers) {
     }
     $bat = Read-AsciiText $path
 
+    # C3b: cmd expands %~dp0 / %~f0 / %~1 / %* at PARSE time. If such a token is
+    # written inside an if/for ( ... ) block, a ( or ) in the expanded value ends
+    # the block early and the batch aborts with no message and no UAC prompt
+    # (observed with the folder Windows creates on a second extract:
+    # "screenconnect-cleanup-v1.8.8 (1)"). Any line that needs the launcher's own
+    # path must therefore reference a value captured BEFORE delayed expansion is
+    # enabled (set "SCC_DP0=%~dp0" / SCC_F0 / SCC_ARG1 / SCC_ARGS) as !VAR!.
+    $batLines = $bat -split "\r?\n"
+    $captureIdx = -1
+    for ($i = 0; $i -lt $batLines.Count; $i++) {
+        if ($batLines[$i].Trim() -eq 'setlocal EnableDelayedExpansion') { $captureIdx = $i; break }
+    }
+    if ($captureIdx -ge 0) {
+        for ($i = $captureIdx; $i -lt $batLines.Count; $i++) {
+            $line = $batLines[$i]
+            if ($line.TrimStart().StartsWith('rem')) { continue }
+            if (($line.Contains('%~dp0')) -or ($line.Contains('%~f0')) -or ($line.Contains('%~1')) -or ($line.Contains('%*'))) {
+                Add-Failure 'C3b' ("{0}:L{1}: parse-time expansion inside the delayed-expansion body - a path containing ( ) aborts the launcher. Use the captured !SCC_*! form." -f $name, ($i + 1))
+            }
+        }
+    }
+
     if ($bat -match "-FilePath '%~f0'") {
         Add-Failure 'C3' ("{0}: elevated relaunch uses single-quoted '%~f0' literal - breaks on paths containing apostrophes." -f $name)
     }
     if ($bat -notmatch '\$env:SCC_SELF') {
         Add-Failure 'C3' ("{0}: elevated relaunch does not pass the script path through the SCC_SELF environment variable (apostrophe-safe)." -f $name)
     }
-    if ($bat -notmatch 'set "?SCC_SELF=?=%~f0"?') {
-        Add-Failure 'C3' ("{0}: SCC_SELF is never populated from %%~f0." -f $name)
+    # The script path must be captured once and then used for SCC_SELF. It may be
+    # taken directly from %~f0, or captured first (set "SCC_F0=%~f0") and
+    # referenced through delayed expansion so a path containing ( ) cannot break
+    # cmd's parse-time block matching.
+    if (($bat -notmatch 'set "?SCC_F0=?=%~f0"?') -and ($bat -notmatch 'set "?SCC_SELF=?=%~f0"?')) {
+        Add-Failure 'C3' ("{0}: %%~f0 is never captured for the elevated relaunch." -f $name)
+    }
+    if ($bat -notmatch 'set "?SCC_SELF=?=(?:%~f0|!SCC_F0!)"?') {
+        Add-Failure 'C3' ("{0}: SCC_SELF is never populated from %%~f0 (directly or via the captured SCC_F0)." -f $name)
     }
     # Elevation must be decided by the real admin token (no external probe) and
     # must be bounded to ONE UAC request, so a wrong answer cannot loop prompts.
