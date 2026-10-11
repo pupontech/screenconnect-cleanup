@@ -137,6 +137,14 @@ jobs:
         shell: pwsh
         run: ./tests/ci/Test-LauncherElevationBound.ps1
 
+      - name: Launcher survives a path containing parentheses (Windows PowerShell 5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/ci/Test-LauncherPathWithParens.ps1
+
+      - name: Launcher survives a path containing parentheses (pwsh)
+        shell: pwsh
+        run: ./tests/ci/Test-LauncherPathWithParens.ps1
+
       - name: Scanner process contracts (powershell 5.1)
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/ci/Test-ScannerProcessContracts.ps1
