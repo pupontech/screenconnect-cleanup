@@ -226,6 +226,56 @@ class ReportRelayTests(unittest.TestCase):
             build_bulk_archive(self.storage, Path("/unused/identity"), output, decryptor=lambda source, destination, identity: None)
         self.assertFalse(output.exists())
 
+    def test_reject_drain_is_bounded_against_a_trickling_client(self):
+        # An early rejection (401 here) drains the unread body before closing.
+        # The drain must end at a TOTAL deadline, not a per-read timeout: the
+        # server half-closes its write side immediately, so a client that keeps
+        # trickling bytes must not be able to pin the handler thread. Detect the
+        # live handler thread instead of socket EOF (which is signalled early by
+        # shutdown(SHUT_WR)): ThreadingHTTPServer retires the thread when the
+        # handler returns.
+        import socket
+        import time
+
+        from relay.app import REJECT_DRAIN_TIMEOUT_SECONDS
+
+        baseline_threads = len(threading.enumerate())
+        connection = socket.create_connection(("127.0.0.1", self.server.server_address[1]), timeout=5)
+        try:
+            connection.sendall(
+                (
+                    "POST /v1/uploads HTTP/1.1\r\n"
+                    "Host: 127.0.0.1\r\n"
+                    "Authorization: Bearer wrong-token\r\n"
+                    "Content-Type: application/zip\r\n"
+                    "Content-Length: 1048576\r\n"
+                    "\r\n"
+                ).encode("ascii")
+            )
+            started = time.monotonic()
+            saw_handler = False
+            retired_at = None
+            while time.monotonic() - started < REJECT_DRAIN_TIMEOUT_SECONDS + 8:
+                try:
+                    connection.sendall(b"\x00")
+                except OSError:
+                    break
+                live = len(threading.enumerate())
+                if live > baseline_threads:
+                    saw_handler = True
+                elif saw_handler:
+                    # The handler thread we observed serving this request is gone.
+                    retired_at = time.monotonic() - started
+                    break
+                time.sleep(0.1)
+        finally:
+            connection.close()
+
+        self.assertTrue(saw_handler, "the request was never observed being handled; the test cannot judge the drain")
+        self.assertIsNotNone(retired_at, "reject drain kept the handler thread alive while the client trickled bytes")
+        if retired_at is not None:
+            self.assertLess(retired_at, float(REJECT_DRAIN_TIMEOUT_SECONDS + 6), "drain exceeded its deadline: %.1fs" % retired_at)
+
 
 if __name__ == "__main__":
     unittest.main()
