@@ -18,6 +18,8 @@
     - The zip is NOT hash-verified: you are trusting the release assets at
       github.com/pupontech/screenconnect-cleanup/releases. To verify, compare
       the sha256 published in the release notes against the downloaded zip.
+      When GitHub exposes an asset digest (newer releases), it is checked
+      automatically and a mismatch aborts the install.
 
   Parameters (useful when running the script directly, not via iex):
     -Destination <path>   install base folder (default: Desktop\ScreenConnect-Cleanup)
@@ -35,8 +37,12 @@ param(
     [switch]$Force
 )
 
+& {
 $ErrorActionPreference = 'Stop'
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$ProgressPreference = 'SilentlyContinue'
+# Add TLS 1.2 without dropping protocols the caller's session already allows
+# (e.g. TLS 1.3), which assigning a static value would silently remove.
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 $Repo = 'pupontech/screenconnect-cleanup'
 
@@ -81,7 +87,7 @@ if (-not $Force -and (Test-Path -LiteralPath $runDir)) {
             Start-Process -FilePath $existingBat -WorkingDirectory $runDir
         }
         Write-Host "== done ==" -ForegroundColor Cyan
-        exit 0
+        return
     }
     Write-Host ("  existing folder at " + $runDir + " is incomplete or does not match " + $release.tag_name + " - re-installing.") -ForegroundColor Yellow
     Remove-Item -LiteralPath $runDir -Recurse -Force -ErrorAction Stop
@@ -91,6 +97,23 @@ if (-not $Force -and (Test-Path -LiteralPath $runDir)) {
 $zip = Join-Path $env:TEMP $asset.name
 Write-Host ("  downloading " + $asset.name + " ...")
 Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing -ErrorAction Stop
+
+# GitHub publishes a server-computed 'digest' (sha256:<hex>) for release
+# assets. Verify it when present; older assets without one fall back to the
+# manual release-notes comparison described above.
+$assetDigest = $null
+if ($asset.PSObject.Properties['digest']) { $assetDigest = [string]$asset.digest }
+if ($assetDigest -match '^sha256:([0-9a-fA-F]{64})$') {
+    $expectedHash = $Matches[1]
+    $actualHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
+    if ($actualHash -ne $expectedHash) {
+        Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
+        throw ("Downloaded zip SHA-256 " + $actualHash + " does not match the release digest " + $expectedHash + ". Aborting.")
+    }
+    Write-Host ("  sha256 verified: " + $actualHash.ToLowerInvariant()) -ForegroundColor Green
+} else {
+    Write-Host "  (release asset has no published digest - sha256 not verified)" -ForegroundColor DarkGray
+}
 
 # 4. Extract into the versioned subfolder.
 if (Test-Path -LiteralPath $runDir) {
@@ -127,3 +150,4 @@ if ($NoLaunch) {
     Start-Process -FilePath $bat -WorkingDirectory $runDir
 }
 Write-Host "== done ==" -ForegroundColor Cyan
+}

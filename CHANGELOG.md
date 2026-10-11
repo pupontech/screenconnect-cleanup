@@ -3,6 +3,33 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.7] - 2026-10-11
+**TESTING CANDIDATE - audit fixes folded into v1.8.6.**
+- Move the `-Debug` unhandled-error `trap` to script level in `sc-cleanup.ps1`
+  and `preflight.ps1`. A trap only covers the statement block it is written in,
+  so the previous in-`if` trap caught nothing from the pipeline stages. Non-debug
+  runs keep their original behavior (the trap rethrows; `break`).
+- Quote `Invoke-ChildScript` arguments with Windows argv rules
+  (`ConvertTo-ProcessArgument`): a value ending in a backslash is no longer read
+  as an escaped closing quote, and empty-string arguments survive. The
+  attended `-Interactive` child mode is unchanged.
+- `install-latest.ps1`: keep the caller's PowerShell session intact under
+  `irm | iex` (body wrapped in a scriptblock, no top-level `exit`), OR TLS 1.2
+  into the existing protocols instead of replacing them (preserving TLS 1.3),
+  and verify the GitHub release asset `digest` (sha256) when present.
+- `relay/app.py`: answer early POST rejections through a draining `_reject()`
+  (half-close + bounded body drain) so clients and the reverse proxy see the
+  real 401/413 instead of a connection reset or 502; ignore
+  `ConnectionResetError` on response writes.
+- `remove-screenconnect.ps1` `Test-ResumeMaterialsTrusted`: skip inherit-only
+  ACEs, trust TrustedInstaller, and hold ancestors to a rename/replace mask so a
+  genuinely protected resume location can be recognised. Fail-closed default
+  behavior and the reboot-resume design (protected staging paths) are unchanged;
+  that remains an owner decision.
+- New regressions `tests/test_audit_fixes.ps1` and
+  `tests/test_bootstrap_session.ps1`, wired into both Windows PowerShell 5.1 and
+  pwsh CI including the extracted-ZIP package run.
+
 ## [1.8.6] - 2026-10-11
 **TESTING CANDIDATE - reviewed performance and evidence-safety fixes.**
 - Drain buffered persistence-worker progress immediately instead of sleeping

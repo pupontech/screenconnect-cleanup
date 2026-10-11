@@ -15,6 +15,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import subprocess
 import sys
 import threading
@@ -35,6 +36,11 @@ DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 DEFAULT_MAX_UNCOMPRESSED_BYTES = 250 * 1024 * 1024
 DEFAULT_MAX_ZIP_ENTRIES = 1024
 DEFAULT_RETENTION_SECONDS = 30 * 24 * 60 * 60
+# Early POST rejections answer before the body is read; without draining, the
+# kernel sends RST and the client/proxy loses the real status (401/413 -> reset
+# or 502). Bound the drain so a slow/trickling sender cannot pin a thread.
+REJECT_DRAIN_TIMEOUT_SECONDS = 5
+REJECT_DRAIN_SLACK_BYTES = 8 * 1024 * 1024
 
 
 Encryptor = Callable[[Path, Path, str], None]
@@ -246,7 +252,34 @@ class RelayHandler(BaseHTTPRequestHandler):
             return
         try:
             self.wfile.write(body)
-        except BrokenPipeError:
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def _reject(self, status: int, payload: object) -> None:
+        """Answer a POST before its body is read, without resetting the client.
+
+        Closing a socket with unread request bytes makes the kernel send RST,
+        which discards the response: clients (and a reverse proxy in front of
+        the relay) then see a reset or 502 instead of 401/413. Send the
+        response, half-close, and discard a bounded amount of the body.
+        """
+        self.close_connection = True
+        self._respond(status, payload)
+        try:
+            self.connection.shutdown(socket.SHUT_WR)
+            self.connection.settimeout(REJECT_DRAIN_TIMEOUT_SECONDS)
+            try:
+                declared = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                declared = -1
+            ceiling = self.config.max_upload_bytes + REJECT_DRAIN_SLACK_BYTES
+            remaining = min(declared, ceiling) if declared >= 0 else ceiling
+            while remaining > 0:
+                chunk = self.rfile.read1(min(64 * 1024, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+        except OSError:
             pass
 
     def _authorized(self) -> bool:
@@ -276,18 +309,15 @@ class RelayHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         path = urlsplit(self.path).path
         if path != "/v1/uploads":
-            self.close_connection = True
-            self._respond(HTTPStatus.NOT_FOUND, {"error": "not found"})
+            self._reject(HTTPStatus.NOT_FOUND, {"error": "not found"})
             return
         if not self._authorized():
-            self.close_connection = True
-            self._respond(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+            self._reject(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
             return
 
         content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
         if content_type not in ("application/zip", "application/octet-stream"):
-            self.close_connection = True
-            self._respond(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, {"error": "ZIP content required"})
+            self._reject(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, {"error": "ZIP content required"})
             return
         raw_length = self.headers.get("Content-Length")
         try:
@@ -295,18 +325,15 @@ class RelayHandler(BaseHTTPRequestHandler):
         except ValueError:
             content_length = -1
         if content_length < 0:
-            self.close_connection = True
-            self._respond(HTTPStatus.LENGTH_REQUIRED, {"error": "Content-Length required"})
+            self._reject(HTTPStatus.LENGTH_REQUIRED, {"error": "Content-Length required"})
             return
         if content_length > self.config.max_upload_bytes:
-            self.close_connection = True
-            self._respond(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "upload is too large"})
+            self._reject(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "upload is too large"})
             return
 
         expected_digest = self.headers.get("X-Report-SHA256", "").strip().lower()
         if expected_digest and not TOKEN_PATTERN.fullmatch(expected_digest):
-            self.close_connection = True
-            self._respond(HTTPStatus.BAD_REQUEST, {"error": "X-Report-SHA256 must be a SHA-256 hex digest"})
+            self._reject(HTTPStatus.BAD_REQUEST, {"error": "X-Report-SHA256 must be a SHA-256 hex digest"})
             return
 
         receipt_id = secrets.token_hex(16)

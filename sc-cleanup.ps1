@@ -59,7 +59,7 @@ $ErrorActionPreference = 'Stop'
 # -----------------------------------------------------------------------------
 # Constants & script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.8.6'
+$ScriptVersion = '1.8.7'
 $ScriptName = 'sc-cleanup.ps1'
 $PipelineStages = @(
     @{ Id = 0; Name = 'Preflight';            SkipFlag = '' },
@@ -203,6 +203,19 @@ function Get-PropertyValue {
     return $property.Value
 }
 
+# Quotes one argument for a Windows command line (CommandLineToArgvW rules):
+# empty strings survive as "", embedded quotes are escaped, and backslashes
+# are doubled only where they precede a quote or end a quoted value - so a
+# path such as 'D:\Out Dir\' is not turned into an escaped closing quote.
+function ConvertTo-ProcessArgument {
+    param([AllowNull()][AllowEmptyString()][string]$Value)
+    if ($null -eq $Value) { $Value = '' }
+    if ($Value -and $Value -notmatch '[\s"&|<>^]') { return $Value }
+    $escaped = [regex]::Replace($Value, '(\\*)"', '$1$1\"')
+    $escaped = [regex]::Replace($escaped, '(\\+)$', '$1$1')
+    return '"' + $escaped + '"'
+}
+
 # Runs a child script in its OWN process so it cannot inherit the runner's
 # variable table (PowerShell scope-bleed otherwise corrupts child scripts that
 # use Get-Prop/Get-Items-style helpers). Fault containment + clean separation,
@@ -246,13 +259,7 @@ function Invoke-ChildScript {
     $psi.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $ScriptPath + '"'
     if(-not $Interactive){$psi.Arguments='-NonInteractive '+$psi.Arguments}
     foreach ($a in $ArgumentList) {
-        if ($null -eq $a) { $a = '' }
-        # Quote arguments that contain spaces or special chars.
-        if ($a -match '[\s"&|<>]') {
-            $psi.Arguments += ' "' + ($a -replace '"', '\"') + '"'
-        } else {
-            $psi.Arguments += ' ' + $a
-        }
+        $psi.Arguments += ' ' + (ConvertTo-ProcessArgument $a)
     }
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
@@ -434,16 +441,19 @@ if ($Debug) {
         Write-StageLog ("Could not start debug transcript: " + $_.Exception.Message) 'Warn'
         $DebugLogPath = $null
     }
-    trap {
-        # Unhandled terminating error: name it with source location, close the
-        # transcript and exit truthfully instead of dying silently.
-        Write-StageLog ("UNHANDLED ERROR: " + $_.Exception.Message + " | " + $_.InvocationInfo.PositionMessage) 'Error'
-        if ($DebugLogPath) {
-            try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch { }
-            Write-Host ("Debug log: " + $DebugLogPath) -ForegroundColor Yellow
-        }
-        exit 1
+}
+# A trap only covers the statement block it is written in, so it must sit at
+# script level to see failures from the stages below; declared inside the
+# `if ($Debug)` block above it only ever caught errors from starting the
+# transcript. In non-debug runs it rethrows (break), preserving old behavior.
+trap {
+    if (-not $Debug) { break }
+    Write-StageLog ("UNHANDLED ERROR: " + $_.Exception.Message + " | " + $_.InvocationInfo.PositionMessage) 'Error'
+    if ((Test-Path variable:DebugLogPath) -and $DebugLogPath) {
+        try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch { }
+        Write-Host ("Debug log: " + $DebugLogPath) -ForegroundColor Yellow
     }
+    exit 1
 }
 
 # Resolve tool directory
