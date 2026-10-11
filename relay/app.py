@@ -267,14 +267,21 @@ class RelayHandler(BaseHTTPRequestHandler):
         self._respond(status, payload)
         try:
             self.connection.shutdown(socket.SHUT_WR)
-            self.connection.settimeout(REJECT_DRAIN_TIMEOUT_SECONDS)
             try:
                 declared = int(self.headers.get("Content-Length", ""))
             except ValueError:
                 declared = -1
             ceiling = self.config.max_upload_bytes + REJECT_DRAIN_SLACK_BYTES
             remaining = min(declared, ceiling) if declared >= 0 else ceiling
+            # Bound the whole drain, not each read: a per-read timeout would let
+            # a client that trickles one byte per interval keep this unauthenticated
+            # handler thread (and its ThreadingHTTPServer thread) alive indefinitely.
+            deadline = time.monotonic() + REJECT_DRAIN_TIMEOUT_SECONDS
             while remaining > 0:
+                budget = deadline - time.monotonic()
+                if budget <= 0:
+                    break
+                self.connection.settimeout(budget)
                 chunk = self.rfile.read1(min(64 * 1024, remaining))
                 if not chunk:
                     break
