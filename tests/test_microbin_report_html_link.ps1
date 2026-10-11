@@ -434,6 +434,14 @@ try {
         $stageEnd = $startSource.IndexOf('set GO=', $stageStart)
         if ($stageStart -lt 0 -or $stageEnd -le $stageStart) { throw 'Guided report stage markers missing' }
         $stage = $startSource.Substring($stageStart, $stageEnd - $stageStart)
+        # The launcher captures its own path before enabling delayed expansion (so a
+        # folder containing ( ) cannot break cmd's block parsing); the tokens it
+        # references must be resolved for this replay. Without this the stage fell
+        # back to the current directory and picked up the REPO's real
+        # microbin-url.txt - i.e. it would upload the fixture report to the live
+        # relay instead of the local stub.
+        $stage = $stage.Replace('!SCC_DP0!', ($guidedDir.TrimEnd('\') + '\'))
+        if ($stage -match '!SCC_(F0|ARG1|ARGS)!') { throw 'Guided stage uses a captured token this fixture does not resolve.' }
         $stage = $stage.Replace("[Environment]::GetFolderPath('Desktop')", '$env:SCC_TEST_DESKTOP')
         $stage = $stage.Replace('explorer /select,"!SCC_RUN_ROOT!/report.html"', 'rem Explorer suppressed in fixture')
         $openProbe = 'powershell -NoProfile -Command "if (-not ([IO.File]::ReadAllText($env:SCC_RUN_ROOT + ''/report.html'').Contains(''Sanitized paste (MicroBin)''))) { exit 9 }; [IO.File]::WriteAllText($env:SCC_RUN_ROOT + ''/opened.marker'', ''ok'')"'
