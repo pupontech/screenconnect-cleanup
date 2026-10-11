@@ -31,9 +31,28 @@ function Get-List {
     if($null -eq $value){return @()}
     return @($value)
 }
+function Assert-ReviewPath {
+    param([string]$Path)
+    $current=[IO.Path]::GetFullPath($Path)
+    while($current) {
+        if(Test-Path -LiteralPath $current -ErrorAction Stop) {
+            $item=Get-Item -LiteralPath $current -Force -ErrorAction Stop
+            if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'Redirected review evidence paths are refused.'}
+        }
+        $parent=Split-Path -Parent $current
+        if(-not $parent -or $parent -eq $current){break}
+        $current=$parent
+    }
+}
 
 $persistDir=Join-Path $WorkDir 'persistence'
 $inventoryPath=Join-Path $persistDir 'inventory.json'
+$reviewPath=Join-Path $persistDir 'review-opened.json'
+try {
+    Assert-ReviewPath $inventoryPath
+    Assert-ReviewPath $reviewPath
+    if(-not $WhatIf -and (Test-Path -LiteralPath $reviewPath)){throw 'A review record already exists; preserve it and use a fresh run directory.'}
+} catch {Write-Host ('[Review] '+$_.Exception.Message);exit 1}
 if(-not (Test-Path -LiteralPath $inventoryPath -PathType Leaf)) {
     Write-Host ('[Review] No persistence inventory at ' + $inventoryPath)
     Write-Host '[Review] Run the persistence scan (guided Step 6d) first.'
@@ -189,14 +208,18 @@ $record=[pscustomobject]@{
     Failures      = @($failures.ToArray())
 }
 try {
-    $target=Join-Path $persistDir 'review-opened.json'
+    $target=$reviewPath
     if(-not $WhatIf) {
+        Assert-ReviewPath $target
         $bytes=(New-Object Text.UTF8Encoding($false)).GetBytes((ConvertTo-Json -InputObject $record -Depth 8))
-        $stream=New-Object IO.FileStream($target,[IO.FileMode]::Create,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        $stream=New-Object IO.FileStream($target,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
         try{$stream.Write($bytes,0,$bytes.Length);$stream.Flush()}finally{$stream.Dispose()}
         Write-Host ('[Review] Wrote ' + $target)
     } else { Write-Host ('[Review] plan only: would write ' + $target) }
-} catch { Write-Host ('[Review] Could not write the review record: ' + $_.Exception.Message) }
+} catch {
+    [void]$failures.Add('Review audit record')
+    Write-Host ('[Review] Could not write the review record: ' + $_.Exception.Message)
+}
 
 Write-Host ''
 Write-Host ' Review only. Nothing was changed, stopped or removed by this step.'

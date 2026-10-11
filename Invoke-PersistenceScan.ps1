@@ -94,10 +94,12 @@ function Invoke-SccInventoryWorker {
         $logChars=0;$logLimit=1MB;$logCapped=$false
         Write-Host ('[Persistence] Starting collection. Section limit: '+$SectionTimeoutSeconds+'s; total limit: '+$TotalTimeoutSeconds+'s.')
         while(-not $process.HasExited -or -not $outEnded -or -not $errEnded) {
+            $readProgress=$false
             foreach($stream in @('out','err')) {
                 $task=if($stream -eq 'out'){$stdout}else{$stderr}
                 $ended=if($stream -eq 'out'){$outEnded}else{$errEnded}
                 if(-not $ended -and $task.IsCompleted) {
+                    $readProgress=$true
                     $line=$task.GetAwaiter().GetResult()
                     if($null -eq $line){if($stream -eq 'out'){$outEnded=$true}else{$errEnded=$true};continue}
                     if($line.Length -gt 4096){$line=$line.Substring(0,4096)+' [truncated]'}
@@ -124,7 +126,11 @@ function Invoke-SccInventoryWorker {
                 if($logChars -lt $logLimit){$log.WriteLine($message);$logChars+=$message.Length}
                 $lastHeartbeat=$clock.Elapsed.TotalSeconds
             }
-            Start-Sleep -Milliseconds 50
+            # Drain ready output immediately. Sleeping after each buffered line
+            # throttles the stream to 20 lines/s and can falsely time out an
+            # already completed provider. Keep deadline checks on EVERY pass;
+            # back off only when neither stream made progress.
+            if(-not $readProgress){Start-Sleep -Milliseconds 50}
         }
         $process.WaitForExit()
         if($process.ExitCode -ne 0){throw ('Inventory worker exited '+$process.ExitCode+' while collecting '+$section+'. Progress log: '+$logPath)}

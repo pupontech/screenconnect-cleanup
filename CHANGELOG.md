@@ -3,6 +3,28 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.6] - 2026-10-11
+**TESTING CANDIDATE - reviewed performance and evidence-safety fixes.**
+- Drain buffered persistence-worker progress immediately instead of sleeping
+  50 ms after every line. Idle waits, heartbeats and both deadlines remain.
+  A 600-line fixture previously falsely timed out after its provider completed;
+  it now drains successfully without discarding the last line or done marker.
+- Avoid repeated directory enumeration and file hashing when script-inventory
+  roots overlap. The fixture's directory reads drop from 5 to 2 and hashes from
+  8 to 3; inventory contains one record per file, not duplicates.
+- Refuse redirected or pre-existing technician-review audit output before opening
+  windows. Create audit records exclusively; never truncate a hard-linked file.
+  Audit-write failures return nonzero instead of being reported as success.
+- Preserve report generation when the direct runner's after-snapshot/diff fails:
+  record an INCOMPLETE comparison with the failure reason, then continue to the
+  HTML report and retain a nonzero final pipeline outcome.
+- HTML-escape AV-uninstall exception text in the warning paragraph as well as the
+  error table. Normalize single-section snapshot JSON to arrays for zero, one or
+  many rows while preserving object-valued SRUM evidence.
+- Regression fixtures run with synthetic providers/files only. No removal-policy
+  expansion, live scanners/installers/removal, or GUI changes. See
+  `docs/13-legacy-code-review.md` for scope, evidence and deferred findings.
+
 ## [1.8.5] - 2026-10-08
 **TESTING ONLY - attended review windows for the technician.**
 - Guided Step 6e (after the persistence scan, before AV uninstall) offers to open
