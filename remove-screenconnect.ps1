@@ -292,25 +292,42 @@ function Protect-QuarantinePathAcl {
 function Test-ResumeMaterialsTrusted {
     param([Parameter(Mandatory = $true)][string[]]$Paths)
     if ($env:OS -ne 'Windows_NT') { return $true }
+    # Rights that let an identity take over an ACL are as dangerous as write.
+    $takeoverMask = [System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+        [System.Security.AccessControl.FileSystemRights]::TakeOwnership
+    # The resume file itself must not be modifiable at all.
     $writeMask = [int]([System.Security.AccessControl.FileSystemRights]::Write -bor
         [System.Security.AccessControl.FileSystemRights]::Delete -bor
-        [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles)
+        [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+        $takeoverMask)
+    # An ancestor directory only matters if an identity can rename/replace the
+    # entries beneath it; merely creating new siblings (e.g. the AppendData
+    # that Authenticated Users hold on C:\) cannot redirect the resume path.
+    $ancestorMask = [int]([System.Security.AccessControl.FileSystemRights]::Delete -bor
+        [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+        $takeoverMask)
+    $trustedInstallerSid = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
     foreach ($path in $Paths) {
         if ([string]::IsNullOrWhiteSpace($path)) { return $false }
         try {
             $current = [System.IO.Path]::GetFullPath($path)
+            $mask = $writeMask
             while ($current) {
                 if (Test-Path -LiteralPath $current) {
                     $acl = Get-Acl -LiteralPath $current -ErrorAction Stop
                     foreach ($rule in @($acl.Access)) {
                         if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
-                        if (([int]$rule.FileSystemRights -band $writeMask) -eq 0) { continue }
+                        # Inherit-only ACEs (e.g. CREATOR OWNER) grant nothing on this object.
+                        if (($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
+                        if (([int]$rule.FileSystemRights -band $mask) -eq 0) { continue }
                         try { $sid = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]) } catch { return $false }
                         $trusted = $sid.IsWellKnown([System.Security.Principal.WellKnownSidType]::LocalSystemSid) -or
-                            $sid.IsWellKnown([System.Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid)
+                            $sid.IsWellKnown([System.Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid) -or
+                            ($sid.Value -eq $trustedInstallerSid)
                         if (-not $trusted) { return $false }
                     }
                 }
+                $mask = $ancestorMask
                 $parent = [System.IO.Directory]::GetParent($current)
                 if ($null -eq $parent) { break }
                 if ($parent.FullName -eq $current) { break }
