@@ -1404,8 +1404,10 @@ function Get-SectionDataByName {
 }
 
 if ($Section) {
-    $out = Get-SectionDataByName -Name $Section
-    $data = if ($Section -eq 'Srum') { $out } else { @($out) }
+    # Normalize at the capture boundary, not through an if statement's output:
+    # that output unrolls empty/singleton arrays into null/scalars on PS 5.1.
+    if ($Section -eq 'Srum') { $data = Get-SectionDataByName -Name $Section }
+    else { $data = @(Get-SectionDataByName -Name $Section) }
     $errs = New-Object System.Collections.ArrayList
     foreach ($e in $script:CollectionErrors) { [void]$errs.Add($e.Error) }
     $warns = New-Object System.Collections.ArrayList

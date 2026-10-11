@@ -238,14 +238,23 @@ function Get-SccHiddenTaskEvidence {
 function Get-SccBoundedScriptFiles {
     param([string[]]$Roots,[int]$MaxFiles=2500,[int]$MaxSeconds=30,[scriptblock]$DirectoryReader=$null)
     $clock=[Diagnostics.Stopwatch]::StartNew();$items=New-Object System.Collections.ArrayList;$errors=New-Object System.Collections.ArrayList;$truncated=$false
+    $pathComparer=if($env:OS -eq 'Windows_NT'){[StringComparer]::OrdinalIgnoreCase}else{[StringComparer]::Ordinal}
+    $visited=New-Object 'System.Collections.Generic.HashSet[string]' ($pathComparer)
     $extensions=@('.vbs','.vbe','.vb','.ps1','.js','.jse','.wsf','.hta','.bat','.cmd')
     $noise='(?i)\\(node_modules|\.git|Python\d+|site-packages|WindowsApps|Packages|npm-cache|chocolatey|Package Cache|Extensions|Edge\\User Data|Chrome\\Application|Windows Defender|Microsoft Office|dotnet|Windows Kits|Malwarebytes|Splashtop|Adobe|Intel|Realtek)($|\\)'
     foreach($root in $Roots) {
+        $rootKey=[IO.Path]::GetFullPath($root).TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)
+        if($visited.Contains($rootKey)){continue}
         if($clock.Elapsed.TotalSeconds -ge $MaxSeconds -or $items.Count -ge $MaxFiles){$truncated=$true;break}
         $stack=New-Object System.Collections.Stack;$stack.Push($root)
         while($stack.Count -gt 0) {
             if($clock.Elapsed.TotalSeconds -ge $MaxSeconds -or $items.Count -ge $MaxFiles){$truncated=$true;break}
             $directory=[string]$stack.Pop()
+            $directoryKey=[IO.Path]::GetFullPath($directory).TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)
+            # Root lists can overlap (including ProgramFiles(x86) on 32-bit
+            # hosts). Enumerate/hash each lexical directory only once, keeping
+            # output order and existing file/time/reparse limits unchanged.
+            if(-not $visited.Add($directoryKey)){continue}
             try {$children=if($DirectoryReader){@(& $DirectoryReader $directory)}else{@(Get-ChildItem -LiteralPath $directory -Force -ErrorAction Stop)}} catch {[void]$errors.Add(('Directory access {0}: {1}' -f $directory,$_.Exception.Message));continue}
             foreach($entry in $children) {
                 if($clock.Elapsed.TotalSeconds -ge $MaxSeconds -or $items.Count -ge $MaxFiles){$truncated=$true;break}
