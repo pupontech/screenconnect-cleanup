@@ -120,7 +120,7 @@ if ($mainLoopIdx -ge 0) {
 Write-Host "--- Test 6: 3010 skips persistence cleanup and sets non-Completed status ---"
 if ($mainLoopIdx -ge 0) {
     Assert-True ($mainLoopSection -match '\$rebootRequired') "Tracks rebootRequired flag"
-    Assert-True ($scriptContent -match 'if \(\$installDir -and -not \$rebootRequired\)') "Clean-Persistence gated on -not rebootRequired"
+    Assert-True ($scriptContent -match 'if \(\$installDir -and -not \$rebootRequired -and -not \$containmentFailed\)') "Clean-Persistence gated on -not rebootRequired"
     Assert-True ($scriptContent -match 'RebootPending') "Sets RebootPending status for 3010"
     Assert-True ($scriptContent -match "'RebootPending'") "RebootPending status literal is present"
     Assert-True ($scriptContent -match 'Set-RunOnceResume -InstanceId \$instanceId') "3010 path schedules a post-reboot RunOnce resume"

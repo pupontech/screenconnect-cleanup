@@ -26,8 +26,10 @@ are not mounted for this prototype. Raw script samples and PowerShell histories
 are not copied. The existing sanitized share contains only persistence status and
 aggregate counts, not commands, file paths, task XML or raw evidence.
 
-Download the release marked **TESTING ONLY** (the newest `v1.8.x` prerelease),
-extract the whole ZIP,
+For changes under evaluation, download the explicitly labelled **TESTING ONLY**
+prerelease; stable downloads are listed separately as Latest. Read the
+[ZIP review fix notes](docs/14-zip-review-fixes.md) for the current candidate.
+Extract the whole ZIP,
 and read [the persistence testing guide](docs/12-post-av-persistence.md) before
 running `START-HERE.bat`. This extends the existing guided cleanup runner, not
 the separate DetectOnly WPF GUI. Owner live Windows acceptance remains required.
