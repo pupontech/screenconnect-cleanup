@@ -3,6 +3,24 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.10] - 2026-10-11
+**TESTING CANDIDATE - published ZIP review fixes; stable v1.8.9 is unchanged.**
+- Quarantine returns explicit immediate/deferred/failed outcomes. Deferred or
+  failed containment cannot authorize service, uninstall-key or persistence
+  surgery. Verified deferred resume performs the deferred metadata cleanup.
+- Both guided report branches receive the current-run snapshot diff. Failed or
+  missing after-evidence propagates a nonzero pipeline status while reporting
+  continues; resurrection remains a reported finding.
+- The deploy builder refuses dirty/untracked inputs and packages only bytes
+  exported from its exact Git commit, excluding ignored local documents.
+- Report generation supports a bare relative output filename, rejects missing
+  or invalid comparison completeness metadata, and normalizes empty-object
+  scanner threat collections without fabricating a threat.
+- New regression fixtures run under Windows PowerShell 5.1 and pwsh against
+  source and extracted packages. Native locked-file/reboot behavior remains
+  owner-gated; no live removal/scanner/installer acceptance is claimed.
+- See `docs/14-zip-review-fixes.md` for scope and validation limits.
+
 ## [1.8.9] - 2026-10-11
 **TESTING CANDIDATE - launcher fix for paths containing parentheses.**
 - `START-HERE.bat` now survives a folder name containing `(` or `)` - e.g.

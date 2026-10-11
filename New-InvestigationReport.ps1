@@ -185,6 +185,8 @@ if (-not $OutputPath) {
     if (-not $parent) { $parent = "." }
     $OutputPath = Join-Path $parent "report.html"
 }
+# Resolve relative and bare filenames in the caller's PowerShell location.
+$OutputPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
 
 # ---------------------------------------------------------------------------
 # Top-level fields
@@ -220,7 +222,27 @@ $diffData = $null
 $diffError = $null
 if ($DiffPath) {
     if (Test-Path -LiteralPath $DiffPath) {
-        try { $diffData = (Get-Content -LiteralPath $DiffPath -Raw) | ConvertFrom-Json }
+        try {
+            $diffData = (Get-Content -LiteralPath $DiffPath -Raw) | ConvertFrom-Json
+            $beforeFlag = Get-Prop $diffData 'BeforeCollectionComplete'
+            $afterFlag = Get-Prop $diffData 'AfterCollectionComplete'
+            $verdict = [string](Get-Prop $diffData 'Verdict')
+            $beforeFlagValid = $beforeFlag -is [bool] -or ($verdict -ceq 'INCOMPLETE' -and $null -eq $beforeFlag)
+            $afterFlagValid = $afterFlag -is [bool] -or ($verdict -ceq 'INCOMPLETE' -and $null -eq $afterFlag)
+            if (-not $beforeFlagValid -or -not $afterFlagValid -or
+                $verdict -cnotin @('CLEAN','RESURRECTION','INCOMPLETE') -or
+                -not $diffData.PSObject.Properties['BeforeCollectionComplete'] -or
+                -not $diffData.PSObject.Properties['AfterCollectionComplete'] -or
+                -not $diffData.PSObject.Properties['BeforeCollectionErrors'] -or
+                -not $diffData.PSObject.Properties['AfterCollectionErrors']) {
+                throw 'Diff completeness metadata is missing or invalid; this comparison cannot be verified.'
+            }
+            if (-not $beforeFlag -or -not $afterFlag -or
+                @(Get-Items (Get-Prop $diffData 'BeforeCollectionErrors')).Count -gt 0 -or
+                @(Get-Items (Get-Prop $diffData 'AfterCollectionErrors')).Count -gt 0) {
+                $diffData.Verdict = 'INCOMPLETE'
+            }
+        }
         catch { $diffError = $_.Exception.Message }
     } else { $diffError = 'Diff file not found.' }
 }
@@ -755,7 +777,7 @@ if ($ScannerSummary -or $ScannersSkipped) {
                     if ([string]::IsNullOrWhiteSpace($parseNote)) { $parseNote = 'Scan results are not available in a parseable format.' }
                     $findingsDisplay += "<p class='muted'><strong>$(Fmt $scannerName):</strong> $(Fmt $parseNote)</p>`n"
                 } else {
-                    $threats = @(Get-Prop $scannerFindings 'Threats')
+                    $threats = @(Get-Items (Get-Prop $scannerFindings 'Threats'))
                     if ($threats.Count -gt 0) {
                         $findingsDisplay += "<h3>$(Fmt $scannerName) - $(Fmt $threats.Count) threat(s) detected</h3>`n"
                         $scanDate = [string](Get-Prop $scannerFindings 'ScanDate')

@@ -1503,7 +1503,7 @@ function Move-ToQuarantine {
     if (-not (Test-Path -LiteralPath $SourcePath)) {
         Write-Log "  Source not found, skipping quarantine: $SourcePath"
         Add-ManifestEntry -InstanceId $InstanceId -Action 'Quarantine' -Target $SourcePath -Result 'Skipped' -Details "Not found: $Description"
-        return $true
+        return 'AlreadyAbsent'
     }
 
     # A directory has no single file hash - Get-FileHash on a folder returns
@@ -1642,6 +1642,7 @@ function Move-ToQuarantine {
                 if (-not ($script:DeferredQuarantineInstanceIds -contains $InstanceId)) {
                     [void]$script:DeferredQuarantineInstanceIds.Add($InstanceId)
                 }
+                $outcome = 'Deferred'
                 Add-ManifestEntry -InstanceId $InstanceId -Action 'Quarantine' -Target $SourcePath -Result 'Deferred' -Details "File in use, scheduled for reboot move. SHA256: $sha256. Original: $SourcePath`nQuarantine: $destPath`nDescription: $Description" -SourcePath $SourcePath -DestinationPath $destPath -SourceIdentity $sourceIdentity
             } else {
                 $destinationIdentity = Get-PathIdentityHash -Path $destPath
@@ -1652,20 +1653,70 @@ function Move-ToQuarantine {
                 # trusted to inherit the protected quarantine policy.
                 Protect-QuarantinePathAcl -Path $destPath
                 # Already moved by the attempt above - just record it.
+                $outcome = 'MovedNow'
                 Add-ManifestEntry -InstanceId $InstanceId -Action 'Quarantine' -Target $SourcePath -Result 'Success' -Details "Moved to quarantine. SHA256: $sha256. Original: $SourcePath`nQuarantine: $destPath`nDescription: $Description" -SourcePath $SourcePath -DestinationPath $destPath -SourceIdentity $sourceIdentity
             }
-            return $true
+            return $outcome
         } catch {
             $msg = $_.Exception.Message
             Write-Log "  Failed to quarantine: $msg" 'Error'
             Add-ManifestEntry -InstanceId $InstanceId -Action 'Quarantine' -Target $SourcePath -Result 'Failed' -Details $msg
-            return $false
+            return 'MoveFailed'
         }
     } else {
         Write-Log "  [DRY-RUN] Would quarantine: $SourcePath -> $destPath (SHA256: $sha256)"
         Add-ManifestEntry -InstanceId $InstanceId -Action 'Quarantine' -Target $SourcePath -Result 'DryRun' -Details "Would move to quarantine. SHA256: $sha256"
-        return $true
+        return 'DryRun'
     }
+}
+
+# Caller must prove containment before entering this metadata boundary.
+function Remove-ContainedInstanceMetadata {
+    param([string]$ServiceName, $UninstallEntry, [string]$InstanceId)
+    $failed = $false
+    if ($ServiceName) {
+        if (-not (Delete-ServiceRegistration -ServiceName $ServiceName -InstanceId $InstanceId)) { $failed = $true }
+    }
+    if ($UninstallEntry) {
+        $orphanPath = [string](Get-EntryPropertySafe -Instance $UninstallEntry -PropertyName 'PSPath')
+        if ($orphanPath) {
+            $regPath = $orphanPath -replace '^Microsoft\.PowerShell\.Core\\Registry::', ''
+            $regPath = $regPath -replace '^HKEY_LOCAL_MACHINE', 'HKLM'
+            $regPath = $regPath -replace '^HKEY_CURRENT_USER', 'HKCU'
+            $safeInstanceFileStem = Get-SafeInstanceFileStem -InstanceId $InstanceId
+            $backup = Join-Path $WorkDir ('uninstall-key-' + $safeInstanceFileStem + '.reg')
+            if (-not (Test-PathContained -Root $WorkDir -Candidate $backup)) {
+                throw "Refusing uninstall-key backup outside WorkDir: $backup"
+            }
+            if ($Execute) {
+                try {
+                    & reg.exe export "$regPath" "$backup" /y 2>$null | Out-Null
+                    $exportCode = $LASTEXITCODE
+                    if ($exportCode -ne 0 -or -not (Test-Path -LiteralPath $backup)) {
+                        Write-Log "  Export of $regPath backup failed (exit $exportCode); NOT deleting the orphan key" 'Error'
+                        Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'Failed' -Details "Backup export failed (exit $exportCode); key left in place for safety"
+                        $failed = $true
+                    } else {
+                        & reg.exe delete "$regPath" /f 2>$null | Out-Null
+                        $delCode = $LASTEXITCODE
+                        if ($delCode -eq 0) {
+                            Write-Log "  Removed orphaned uninstall entry: $regPath"
+                            Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'Success' -Details "Orphaned after manual surgery; exported to $backup"
+                        } else {
+                            Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'Failed' -Details "reg delete exit $delCode"
+                            $failed = $true
+                        }
+                    }
+                } catch {
+                    Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'Failed' -Details $_.Exception.Message
+                    $failed = $true
+                }
+            } else {
+                Add-ManifestEntry -InstanceId $InstanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'DryRun' -Details 'Would export then delete the orphaned uninstall key'
+            }
+        }
+    }
+    return (-not $failed)
 }
 
 function Set-RunOnceResume {
@@ -1929,7 +1980,8 @@ foreach ($inst in $scInstancesArray) {
         # re-run the vendor uninstaller or manual surgery - finish only the
         # deferred persistence cleanup, then close the instance status.
         if ($isRebootPendingResume) {
-            Write-Log "  RebootPending resume: vendor uninstaller already succeeded; running post-reboot persistence cleanup only"
+            Write-Log '  RebootPending resume: verifying containment before post-reboot cleanup'
+            $instanceFailed = $false
             if ($script:DeferredQuarantineInstanceIds -contains $instanceId) {
                 $deferredRecord = @($script:DeferredQuarantineRecords | Where-Object { $_.InstanceId -eq $instanceId } | Select-Object -First 1)
                 $resumeSource = if ($deferredRecord.Count -gt 0) { [string]$deferredRecord[0].SourcePath } else { '' }
@@ -1964,9 +2016,9 @@ foreach ($inst in $scInstancesArray) {
                     continue
                 }
                 Add-ManifestEntry -InstanceId $instanceId -Action 'ResumeVerify' -Target $resumeDest -Result 'Success' -Details "Deferred quarantine source is absent and destination identity matches $expectedIdentity; ACLs verified"
+                if (-not (Remove-ContainedInstanceMetadata -ServiceName $serviceName -UninstallEntry $uninstallEntry -InstanceId $instanceId)) { $instanceFailed = $true }
             }
-            Add-ManifestEntry -InstanceId $instanceId -Action 'ResumeSkip' -Target 'N/A' -Result 'RebootPending' -Details 'Vendor uninstaller already succeeded (3010); skipping uninstall and manual surgery'
-            $instanceFailed = $false
+            Add-ManifestEntry -InstanceId $instanceId -Action 'ResumeSkip' -Target 'N/A' -Result 'RebootPending' -Details 'Resuming pending cleanup without rerunning the vendor uninstaller or payload move'
             if ($installDir) {
                 if (-not (Clean-Persistence -InstallDir $installDir -InstanceId $instanceId)) { $instanceFailed = $true }
             }
@@ -2026,6 +2078,7 @@ foreach ($inst in $scInstancesArray) {
         $uninstallResult = $null
         $uninstallSucceeded = $false
         $rebootRequired = $false
+        $containmentFailed = $false
         if ($uninstallEntry) {
             $uninstallResult = Run-VendorUninstaller -UninstallEntry $uninstallEntry -InstanceId $instanceId -InstallDir $installDir
             if ($uninstallResult -is [hashtable] -and $uninstallResult.RebootRequired) {
@@ -2084,75 +2137,25 @@ foreach ($inst in $scInstancesArray) {
 
             # Quarantine the entire install directory. No destructive metadata
             # surgery is allowed unless containment succeeded first.
-            $quarantineSucceeded = Move-ToQuarantine -SourcePath $installDir -InstanceId $instanceId -Description 'Install directory'
-            if (-not $quarantineSucceeded) { $instanceFailed = $true }
+            $quarantineOutcome = Move-ToQuarantine -SourcePath $installDir -InstanceId $instanceId -Description 'Install directory'
+            $quarantineSucceeded = $quarantineOutcome -in @('MovedNow','AlreadyAbsent','DryRun')
+            if ($quarantineOutcome -eq 'Deferred') {
+                $rebootRequired = $true
+                Write-Log '  Quarantine is deferred; service, uninstall key and persistence remain until verified resume' 'Warn'
+            } elseif (-not $quarantineSucceeded) {
+                $instanceFailed = $true
+                $containmentFailed = $true
+            }
 
             if ($quarantineSucceeded) {
-                # Delete service registration only after the payload is safely
-                # in quarantine (or was already absent and recorded as skipped).
-                if ($serviceName) {
-                    if (-not (Delete-ServiceRegistration -ServiceName $serviceName -InstanceId $instanceId)) { $instanceFailed = $true }
-                }
-
-            # Remove the now-orphaned Uninstall registry entry. When the vendor
-            # uninstaller runs, MSI clears this itself; after MANUAL SURGERY it
-            # is left behind, so ScreenConnect kept showing up in Programs and
-            # Features even though every file and the service were gone. The key
-            # is exported to the working directory first so the removal stays
-            # reversible and auditable.
-            if ($uninstallEntry) {
-                $orphanPath = [string](Get-EntryPropertySafe -Instance $uninstallEntry -PropertyName 'PSPath')
-                if ($orphanPath) {
-                    $regPath = $orphanPath -replace '^Microsoft\.PowerShell\.Core\\Registry::', ''
-                    $regPath = $regPath -replace '^HKEY_LOCAL_MACHINE', 'HKLM'
-                    $regPath = $regPath -replace '^HKEY_CURRENT_USER', 'HKCU'
-                    $safeInstanceFileStem = Get-SafeInstanceFileStem -InstanceId $instanceId
-                    $backup = Join-Path $WorkDir ('uninstall-key-' + $safeInstanceFileStem + '.reg')
-                    if (-not (Test-PathContained -Root $WorkDir -Candidate $backup)) {
-                        throw "Refusing uninstall-key backup outside WorkDir: $backup"
-                    }
-                    if ($Execute) {
-                        try {
-                            # Export FIRST and verify the backup landed before
-                            # deleting. reg.exe export writes a .reg file; if it
-                            # failed (unwritable path, bad quoting), the delete
-                            # must NOT proceed or we lose the only reversal.
-                            & reg.exe export "$regPath" "$backup" /y 2>$null | Out-Null
-                            $exportCode = $LASTEXITCODE
-                            if ($exportCode -ne 0 -or -not (Test-Path -LiteralPath $backup)) {
-                                Write-Log "  Export of $regPath backup failed (exit $exportCode); NOT deleting the orphan key" 'Error'
-                                Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'Failed' -Details "Backup export failed (exit $exportCode); key left in place for safety"
-                                $instanceFailed = $true
-                            } else {
-                                & reg.exe delete "$regPath" /f 2>$null | Out-Null
-                                $delCode = $LASTEXITCODE
-                                if ($delCode -eq 0) {
-                                    Write-Log "  Removed orphaned uninstall entry: $regPath"
-                                    Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'Success' -Details "Orphaned after manual surgery; exported to $backup"
-                                } else {
-                                    Write-Log "  Could not delete orphaned uninstall entry: $regPath" 'Warn'
-                                    Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'Failed' -Details "reg delete exit $delCode"
-                                    $instanceFailed = $true
-                                }
-                            }
-                        } catch {
-                            Write-Log (  "Could not delete orphaned uninstall entry: " + $_.Exception.Message) 'Warn'
-                            Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'Failed' -Details $_.Exception.Message
-                            $instanceFailed = $true
-                        }
-                    } else {
-                        Write-Log "  [DRY-RUN] Would remove orphaned uninstall entry: $regPath"
-                        Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteUninstallKey' -Target $regPath -Result 'DryRun' -Details 'Would export then delete the orphaned uninstall key'
-                    }
-                }
-            }
+                if (-not (Remove-ContainedInstanceMetadata -ServiceName $serviceName -UninstallEntry $uninstallEntry -InstanceId $instanceId)) { $instanceFailed = $true }
             } else {
-                Write-Log "  Quarantine failed; leaving service and uninstall registry metadata in place for safety" 'Error'
+                Write-Log "  Quarantine not complete ($quarantineOutcome); leaving service and uninstall registry metadata in place for safety" 'Warn'
                 if ($serviceName) {
-                    Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteService' -Target $serviceName -Result 'Skipped' -Details 'Quarantine failed; service registration left in place'
+                    Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteService' -Target $serviceName -Result 'Skipped' -Details "Quarantine not complete ($quarantineOutcome); service registration left in place"
                 }
                 if ($uninstallEntry) {
-                    Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteUninstallKey' -Target 'N/A' -Result 'Skipped' -Details 'Quarantine failed; uninstall registry key left in place'
+                    Add-ManifestEntry -InstanceId $instanceId -Action 'DeleteUninstallKey' -Target 'N/A' -Result 'Skipped' -Details "Quarantine not complete ($quarantineOutcome); uninstall registry key left in place"
                 }
             }
         } elseif ($uninstallPostconditionFailed) {
@@ -2180,7 +2183,7 @@ foreach ($inst in $scInstancesArray) {
         # 4. Clean persistence (ONLY if uninstall failed - do NOT run after successful
         # uninstall with exit 3010 as it would destructively alter a reboot-pending
         # install and poison resume. After 3010, persistence cleanup runs on -Resume.)
-        if ($installDir -and -not $rebootRequired) {
+        if ($installDir -and -not $rebootRequired -and -not $containmentFailed) {
             if (-not (Clean-Persistence -InstallDir $installDir -InstanceId $instanceId)) { $instanceFailed = $true }
         }
 
@@ -2192,7 +2195,7 @@ foreach ($inst in $scInstancesArray) {
         # so this sweep silently searched a directory that never exists.
         # Prefer the detector's already-parsed MainExe; otherwise pull the exe
         # out of the ImagePath before taking its parent.
-        if (-not $rebootRequired) {
+        if (-not $rebootRequired -and -not $containmentFailed) {
             $svcExe = [string](Get-EntryPropertySafe -Instance $inst -PropertyName 'MainExe')
             if (-not $svcExe) {
                 $svcImagePath = [string](Get-EntryPropertySafe -Instance $inst -PropertyName 'ServiceImagePath')

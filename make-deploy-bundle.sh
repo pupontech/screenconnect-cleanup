@@ -10,11 +10,20 @@ set -euo pipefail
 PYTHON="${PYTHON:-python3}"
 SRC="$(cd "$(dirname "$0")" && pwd)"
 OUT_BASE="$(dirname "$SRC")/screenconnect-cleanup"
-# Version is read from the VERSION file (repo root). Fall back to 'dev' if absent.
-VER="$(tr -d '[:space:]' < "$SRC/VERSION" 2>/dev/null || echo dev)"
-OUT="${OUT_BASE}-v${VER}.zip"
+# Reject uncommitted payloads before touching any existing output artifact.
+if [ -n "$(git -C "$SRC" status --porcelain --untracked-files=all)" ]; then
+  echo 'ERROR: a clean committed checkout is required for bundle provenance.' >&2
+  exit 1
+fi
+SOURCE_SHA="$(git -C "$SRC" rev-parse HEAD)"
 STAGE="$(mktemp -d)"
-trap 'rm -rf "$STAGE"' EXIT
+INPUT="$(mktemp -d)"
+trap 'rm -rf "$STAGE" "$INPUT"' EXIT
+# Copy only bytes from the immutable ref, including on Windows CRLF checkouts.
+git -C "$SRC" archive "$SOURCE_SHA" | tar -x -C "$INPUT"
+SRC="$INPUT"
+VER="$(tr -d '[:space:]' < "$SRC/VERSION")"
+OUT="${OUT_BASE}-v${VER}.zip"
 D="$STAGE/screenconnect-cleanup"
 mkdir -p "$D/tools"
 
@@ -56,12 +65,11 @@ if [ ! -f "$D/VERSION" ]; then
   cp "$SRC/VERSION" "$D/VERSION"
 fi
 
-"$PYTHON" - "$OUT" "$STAGE" "$SRC" "$VER" <<'PY'
-import sys, zipfile, os, hashlib, subprocess
+"$PYTHON" - "$OUT" "$STAGE" "$SOURCE_SHA" "$VER" <<'PY'
+import sys, zipfile, os, hashlib
 out, stage = sys.argv[1], sys.argv[2]
-src, version = sys.argv[3], sys.argv[4]
+sha, version = sys.argv[3], sys.argv[4]
 bundle = os.path.join(stage, 'screenconnect-cleanup')
-sha = subprocess.check_output(['git', '-C', src, 'rev-parse', 'HEAD'], text=True).strip()
 if len(sha) != 40:
     raise SystemExit('A full source commit is required for package provenance.')
 with open(os.path.join(bundle, 'BUILD-INFO.txt'), 'w', encoding='ascii', newline='\n') as f:
