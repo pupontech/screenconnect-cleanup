@@ -12,6 +12,14 @@ rem
 rem  Pure ASCII, no BOM. Run from an elevated command prompt.
 rem ============================================================================
 
+rem ---- Capture our own path/args BEFORE enabling delayed expansion --------
+rem A folder name containing ( ) - e.g. the "name (1)" copy Windows creates
+rem on a second extract - would otherwise end a ( ... ) block early at PARSE
+rem time and abort this launcher with no message. !VAR! is substituted at run
+rem time, after parsing, so it is safe for such paths.
+set "SCC_DP0=%~dp0"
+set "SCC_F0=%~f0"
+set "SCC_ARG1=%~1"
 setlocal EnableDelayedExpansion
 title ScreenConnect Cleanup Tool - REMOVAL TEST
 
@@ -22,10 +30,10 @@ rem command line. A failed/cancelled UAC prompt must be visible, never silent.
 rem The relaunch passes --elevation-attempted; if that flag is present and this
 rem window is STILL not elevated, stop instead of prompting again, so a probe
 rem that misreports elevation can never loop UAC.
-set "SCC_SELF=%~f0"
+set "SCC_SELF=!SCC_F0!"
 powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "if(([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){exit 0}else{exit 1}"
 if errorlevel 1 (
-    if /i "%~1"=="--elevation-attempted" (
+    if /i "!SCC_ARG1!"=="--elevation-attempted" (
         echo.
         echo  [ERROR] This window is still not elevated after the UAC request, so
         echo          the tool will not ask again. Right-click RUN-REMOVAL-TEST.bat
@@ -46,7 +54,7 @@ if errorlevel 1 (
 )
 set "SCC_SELF="
 
-cd /d "%~dp0"
+cd /d "!SCC_DP0!"
 
 echo.
 echo  ============================================================
