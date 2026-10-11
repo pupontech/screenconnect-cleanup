@@ -11,11 +11,11 @@ if ($batteryLine -match '(?i)-WindowStyle\s+Hidden') { throw 'Foreground battery
 if ($batch -notmatch '(?m)^start "" powershell\.exe .*?-WindowStyle Hidden .*Keep-Awake\.ps1') { throw 'Separate keep-awake child must retain its hidden window.' }
 Write-Host 'PASS: foreground battery invocation does not hide its console; separate keep-awake remains hidden.'
 
-# The launcher no longer writes %~dp0 inline (a path containing ( ) ends a
-# ( ... ) block early at parse time), so its path/args live in variables it
-# captures before enabling delayed expansion. The fixture below must run the
-# invocation line in the same context, so it borrows the launcher's own capture
-# lines instead of re-declaring them.
+# The launcher no longer writes %~dp0 inline (a path containing ( ) would end a
+# ( ... ) block early at parse time); its path lives in variables it captures
+# before enabling delayed expansion. The fixture below is a plain batch, so the
+# captured tokens are resolved back to their expansions for this replay - the
+# fixture keeps its original shape, which the native window probe depends on.
 $captureLines = @($batch -split '\r?\n' | Where-Object { $_ -match '^set "SCC_(DP0|F0|ARG1|ARGS)=' })
 if ($batteryLine -match '!SCC_') {
     if ($captureLines.Count -eq 0) { throw 'Battery line uses !SCC_*! but START-HERE.bat declares no captures.' }
@@ -80,11 +80,12 @@ try {
         if ($scenario -eq 'CancelVisible') { $exitCode = 1 }
         [IO.File]::WriteAllText((Join-Path $tools 'Confirm-OnBattery.ps1'), ('exit ' + $exitCode), [Text.Encoding]::ASCII)
         $line = $batteryLine
+        $line = $line.Replace('!SCC_DP0!', ($root.TrimEnd('\') + '\')).Replace('!SCC_F0!', (Join-Path $root 'fixture.bat')).Replace('!SCC_ARG1!', '').Replace('!SCC_ARGS!', '')
         if ($scenario -eq 'HiddenNegativeControl') { $line = $line.Replace(' -STA ', ' -STA -WindowStyle Hidden ') }
         $marker = Join-Path $root ($scenario + '.continued')
         $fixture = Join-Path $root ($scenario + '.bat')
         $report = Join-Path $root ($scenario + '.report')
-        $lines = @('@echo off', 'setlocal EnableDelayedExpansion') + $captureLines + @($line, 'if errorlevel 1 exit /b 1', ('echo continued>"' + $marker + '"'), 'exit /b 0')
+        $lines = @('@echo off', $line, 'if errorlevel 1 exit /b 1', ('echo continued>"' + $marker + '"'), 'exit /b 0')
         [IO.File]::WriteAllText($fixture, (($lines -join "`r`n") + "`r`n"), [Text.Encoding]::ASCII)
         $process = Start-Process -FilePath $exe -ArgumentList ('"' + $fixture + '" "' + $report + '"') -WindowStyle Normal -PassThru
         try {
