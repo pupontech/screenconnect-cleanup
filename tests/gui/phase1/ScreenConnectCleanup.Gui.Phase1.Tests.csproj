@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="../../../gui/MainWindow.xaml" Link="Ui/MainWindow.xaml" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../../gui/Views/**/*.xaml" Link="Ui/Views/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="../../../gui/Models/Models.cs" Link="Production/Models.cs" />
+    <Compile Include="../../../gui/Services/Services.cs" Link="Production/Services.cs" />
+    <Compile Include="../../../gui/Services/SyntheticFixtures.cs" Link="Production/SyntheticFixtures.cs" />
+    <Compile Include="../../../gui/ViewModels/**/*.cs" Link="Production/ViewModels/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

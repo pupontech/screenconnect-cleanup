@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ScreenConnectCleanup protected component manifest",
+  "schemaVersion": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "component",
+    "version",
+    "files"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1,
+      "type": "integer"
+    },
+    "component": {
+      "const": "ScreenConnectCleanup.Protected"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])\\.(0|[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])\\.(0|[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$"
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "sha256",
+          "size"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "enum": [
+              "payload/ProtectedEvidence.ps1",
+              "payload/ProtectedPathPolicy.ps1",
+              "payload/ProtectedRollbackProof.ps1",
+              "payload/ProtectedInstallManifest.ps1"
+            ]
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16777216
+          }
+        }
+      },
+      "allOf": [
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "path"
+            ],
+            "properties": {
+              "path": {
+                "const": "payload/ProtectedEvidence.ps1"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "path"
+            ],
+            "properties": {
+              "path": {
+                "const": "payload/ProtectedPathPolicy.ps1"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "path"
+            ],
+            "properties": {
+              "path": {
+                "const": "payload/ProtectedRollbackProof.ps1"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "path"
+            ],
+            "properties": {
+              "path": {
+                "const": "payload/ProtectedInstallManifest.ps1"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1
+        }
+      ]
+    }
+  }
+}

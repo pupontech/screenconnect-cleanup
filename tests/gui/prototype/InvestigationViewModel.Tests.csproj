@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="../../../gui/Models/Models.cs" Link="Production/Models.cs" />
+    <Compile Include="../../../gui/Services/FindingsReader.cs" Link="Production/FindingsReader.cs" />
+    <Compile Include="../../../gui/Services/IReadOnlyRunLauncher.cs" Link="Production/IReadOnlyRunLauncher.cs" />
+    <Compile Include="../../../gui/Services/ReadOnlyRunLauncher.cs" Link="Production/ReadOnlyRunLauncher.cs" />
+    <Compile Include="../../../gui/Services/WindowsProcessContainment.cs" Link="Production/WindowsProcessContainment.cs" />
+    <Compile Include="../../../gui/Services/RunStateReader.cs" Link="Production/RunStateReader.cs" />
+    <Compile Include="../../../gui/Services/SyntheticFixtures.cs" Link="Production/SyntheticFixtures.cs" />
+    <Compile Include="../../../gui/ViewModels/ViewModels.cs" Link="Production/ViewModels.cs" />
+  </ItemGroup>
+</Project>

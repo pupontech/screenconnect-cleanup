@@ -1,0 +1,175 @@
+name: gui-readonly-prototype-ci
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/gui-readonly-prototype-ci.yml'
+      - 'gui/**'
+      - 'gui-bridge/**'
+      - 'detect-remote-access.ps1'
+      - 'tests/gui/phase1/**'
+      - 'tests/gui/phase2/**'
+      - 'tests/gui/phase3/**'
+      - 'tests/gui/prototype/**'
+      - 'tests/gui/packaging/**'
+      - 'scripts/build-readonly-gui-prototype.ps1'
+      - 'START-READONLY-GUI.bat'
+      - 'docs/GUI-READONLY-PROTOTYPE.md'
+      - 'docs/GUI-CONTRACT.md'
+      - 'openspec/changes/minimal-wpf-gui/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  readonly-prototype:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      REVIEWED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout the exact reviewed source commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify checkout identity
+        shell: pwsh
+        run: |
+          $actual = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read checked-out source SHA.' }
+          if ($actual -cne $env:REVIEWED_SHA) {
+            throw "Checkout SHA $actual does not match reviewed SHA $env:REVIEWED_SHA."
+          }
+          if (-not [System.String]::IsNullOrWhiteSpace((git status --porcelain=v1 --untracked-files=all))) {
+            throw 'Checkout must be clean before tests and packaging.'
+          }
+          Write-Host "Verified exact source commit $actual"
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: House rules and PowerShell parsing
+        shell: pwsh
+        run: |
+          ./tests/ci/Test-HouseRules.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Phase 2 and Phase 3 synthetic PowerShell regressions (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) {
+            throw "These tests require Windows PowerShell 5.1; got $($PSVersionTable.PSVersion)."
+          }
+          ./tests/ci/Test-Parse.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./tests/gui/phase2/DetectorCollectionTests.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./tests/gui/phase3/GuiStateTests.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./tests/gui/phase3/InvokeGuiStageTests.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host 'PASS: all PowerShell regressions used synthetic fixtures; no live detector or remover was run.'
+
+      - name: Packaging safety and archive integrity tests (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) {
+            throw "These tests require Windows PowerShell 5.1; got $($PSVersionTable.PSVersion)."
+          }
+          $testScratch = Join-Path $env:RUNNER_TEMP 'gui-packaging-safety-tests'
+          $ErrorActionPreference = 'Stop'
+          ./tests/gui/packaging/PackagingSafetyTests.ps1 -ScratchRoot $testScratch
+          ./tests/gui/packaging/PublishedGuiCleanupTests.ps1 -ScratchRoot $env:RUNNER_TEMP
+
+      - name: Build the WPF GUI in Release
+        shell: pwsh
+        run: |
+          dotnet build gui/ScreenConnectCleanup.Gui.csproj --configuration Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run Phase 1 tests
+        shell: pwsh
+        run: |
+          dotnet test tests/gui/phase1/ScreenConnectCleanup.Gui.Phase1.Tests.csproj --configuration Release --logger 'console;verbosity=normal'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run Phase 2 findings-reader tests
+        shell: pwsh
+        run: |
+          dotnet test tests/gui/phase2/ScreenConnectCleanup.Gui.Phase2.Tests.csproj --configuration Release `
+            --logger 'trx;LogFileName=phase2-reader.trx' --results-directory "$env:RUNNER_TEMP/gui-phase2-results"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $trxPath = Join-Path $env:RUNNER_TEMP 'gui-phase2-results/phase2-reader.trx'
+          if (-not (Test-Path -LiteralPath $trxPath)) { throw "Missing Phase 2 test proof: $trxPath" }
+          [xml]$trx = Get-Content -LiteralPath $trxPath -Raw
+          $counters = $trx.TestRun.ResultSummary.Counters
+          if ([int]$counters.total -ne 23 -or [int]$counters.executed -ne 23 -or
+              [int]$counters.passed -ne 23 -or [int]$counters.failed -ne 0) {
+            throw "Expected 23/23 Phase 2 tests; got total=$($counters.total), executed=$($counters.executed), passed=$($counters.passed), failed=$($counters.failed)."
+          }
+          Write-Host 'PASS: all 23 Phase 2 findings-reader tests passed.'
+
+      - name: Run Phase 3 state-reader tests
+        shell: pwsh
+        run: |
+          dotnet test tests/gui/phase3/ScreenConnectCleanup.Gui.Phase3.Tests.csproj --configuration Release `
+            --logger 'trx;LogFileName=phase3-state-reader.trx' --results-directory "$env:RUNNER_TEMP/gui-phase3-results"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $trxPath = Join-Path $env:RUNNER_TEMP 'gui-phase3-results/phase3-state-reader.trx'
+          if (-not (Test-Path -LiteralPath $trxPath)) { throw "Missing Phase 3 test proof: $trxPath" }
+          [xml]$trx = Get-Content -LiteralPath $trxPath -Raw
+          $counters = $trx.TestRun.ResultSummary.Counters
+          if ([int]$counters.total -ne 37 -or [int]$counters.executed -ne 37 -or
+              [int]$counters.passed -ne 37 -or [int]$counters.failed -ne 0) {
+            throw "Expected 37/37 Phase 3 tests; got total=$($counters.total), executed=$($counters.executed), passed=$($counters.passed), failed=$($counters.failed)."
+          }
+          Write-Host 'PASS: all 37 Phase 3 state-reader tests passed.'
+
+      - name: Run Detect-Only prototype launcher tests
+        shell: pwsh
+        run: |
+          dotnet test tests/gui/prototype/ReadOnlyRunLauncher.Tests.csproj --configuration Release --logger 'console;verbosity=normal'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run real-run viewmodel regression tests
+        shell: pwsh
+        run: |
+          dotnet test tests/gui/prototype/InvestigationViewModel.Tests.csproj --configuration Release --logger 'console;verbosity=normal'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build and verify the exact-SHA portable package
+        shell: pwsh
+        run: |
+          $packageRoot = Join-Path $env:RUNNER_TEMP 'gui-readonly-prototype-package'
+          New-Item -ItemType Directory -Path $packageRoot | Out-Null
+          ./scripts/build-readonly-gui-prototype.ps1 -ReviewedSha $env:REVIEWED_SHA -OutputDirectory $packageRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Extracted ZIP WPF UI Automation smoke (no detector action)
+        shell: powershell
+        run: |
+          $packageRoot = Join-Path $env:RUNNER_TEMP 'gui-readonly-prototype-package'
+          $zip = Join-Path $packageRoot 'gui-readonly-prototype-win-x64.zip'
+          $extractRoot = Join-Path $env:RUNNER_TEMP 'gui-readonly-prototype-extracted-smoke'
+          ./tests/gui/packaging/PublishedGuiSmoke.ps1 -ZipPath $zip -ScratchRoot $extractRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host 'Runner is hosted/admin; UI smoke deliberately does not invoke a run or perform a live machine action.'
+
+      - name: Upload verified prototype ZIP and digest (not a release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-readonly-prototype-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/gui-readonly-prototype-package/gui-readonly-prototype-win-x64.zip
+            ${{ runner.temp }}/gui-readonly-prototype-package/gui-readonly-prototype-win-x64.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
