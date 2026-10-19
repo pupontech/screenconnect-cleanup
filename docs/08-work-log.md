@@ -1286,12 +1286,17 @@ the restore-point frequency window.
 
 Built (strict vertical TDD, one behavior per slice, RED before each edit):
 - `SystemRestore.psm1` (new, packaged): dynamic system drive
-  (`SystemDrive`/`SystemRoot`/`windir`/`ProgramData`, no hardcoded `C:`),
-  `Enable-ComputerRestore -Drive <system> -ErrorAction Stop` BEFORE the checkpoint
-  (always, idempotent - an empty restore history is not proof of "disabled"),
-  checkpoint, then a read-back of `Get-ComputerRestorePoint` requiring a NEW
-  sequence number. Statuses: Created / Throttled / EnableFailed /
+  (`SystemDrive`/`SystemRoot`/`windir`, then `Win32_OperatingSystem.SystemDrive`;
+  no data-path guess, no hardcoded `C:`), explicit pre-call guards (Windows Server
+  -> `UnsupportedServer`, unelevated -> `NotElevated`, `DisableSR` policy ->
+  `PolicyBlocked` - read only, never written), `Enable-ComputerRestore -Drive
+  <system> -ErrorAction Stop` BEFORE the checkpoint (always, idempotent - an empty
+  restore history is not proof of "disabled"), checkpoint, then a read-back of
+  `Get-ComputerRestorePoint` requiring a NEW sequence number that carries this
+  run's description. An unreadable baseline list is NOT treated as empty; it fails
+  closed before any restore call. Statuses: Created / Throttled / EnableFailed /
   EnableUnavailable / CheckpointUnavailable / CreateFailed / Unverified /
+  SnapshotUnreadable / NotElevated / UnsupportedServer / PolicyBlocked /
   DriveUnresolved / UnsupportedOs. Throttle detection uses the warning text
   (`-WarningVariable`) and reports `SKIPPED (throttled)` plus the newest existing
   point. No Group Policy, quota/retention or service changes.
@@ -1303,8 +1308,11 @@ Built (strict vertical TDD, one behavior per slice, RED before each edit):
   `$script:RestorePointFailed` is set for every non-Created status, so the Stage 4
   gate and `-np` semantics are unchanged.
 
-Verified here (pwsh 7.6.7, Linux): new regression 68/68; safety contracts 76/76;
-full repo suites and package checks (see the report accompanying this commit).
-NOT verified here: the live cmdlets on Windows - owner-live gates are recorded in
-docs/09 section 7e (System Restore off, throttled second run, non-C: system drive,
-no policy/quota/service drift, missing cmdlet).
+Verified here (pwsh 7.6.7, Linux): new regression 91/91 (also from the extracted
+deploy ZIP), safety contracts green, HouseRules + Parse green, all 45 local suites
+green, relay unittest and diff fixture green. Verified on the hosted Windows
+matrix (windows-2022 and windows-2025, PowerShell 5.1 + pwsh, including the
+extracted-package loop) on commit 7c706d3: green.
+NOT verified here: the LIVE cmdlets on a real machine - owner-live gates are
+recorded in docs/09 section 7e (System Restore off, throttled second run, non-C:
+system drive, no policy/quota/service drift, missing cmdlet).
