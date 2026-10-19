@@ -62,6 +62,42 @@ registry export always blocks destructive removal. **Check System Restore is act
 enabled** — it frequently is not, and a silently-failed restore point is worse than
 none.
 
+Both entry points (`preflight.ps1` Stage 0 and `sc-cleanup.ps1` Stage 0) do this
+through one shared helper, `SystemRestore.psm1`, which:
+
+1. resolves the OS **system drive dynamically** (`SystemDrive` / `SystemRoot` /
+   `windir`, then the OS-reported `Win32_OperatingSystem.SystemDrive`); `C:` is never
+   assumed, no data path is used as a guess, and an unresolvable drive fails closed;
+2. runs `Enable-ComputerRestore -Drive <system> -ErrorAction Stop` **before**
+   `Checkpoint-Computer`. Enablement is ensured idempotently — the cmdlet is a no-op
+   on an already-enabled volume — because an empty restore-point list is **not**
+   proof that System Restore is off (no points may simply mean none were kept). When
+   no reliable enabled/disabled probe exists, the helper still enables;
+3. runs `Checkpoint-Computer -RestorePointType MODIFY_SETTINGS -ErrorAction Stop`;
+4. **reads the restore-point list back** and only reports `Created` when a new
+   sequence number appeared **that carries this run's description**, so a restore
+   point written concurrently by something else is never adopted as the rollback
+   point. An unreadable baseline list is not treated as empty: the step fails closed
+   before any restore API call. A non-throwing `Checkpoint-Computer` proves nothing:
+   Windows silently declines a checkpoint inside the restore-point frequency window
+   (default 24 h) and emits only a warning. That case is reported as
+   `SKIPPED (throttled)` with the newest existing point, and is recorded in
+   `master.log` as such — never as `Restore point: Created`;
+5. refuses before any restore call when the host cannot support the step: Windows
+   Server SKU (`UnsupportedServer`), an unelevated session (`NotElevated`), or a
+   System Restore policy that disables it (`PolicyBlocked`, read-only - policy is
+   never written or overridden);
+6. reports enable failures, creation errors and missing cmdlets
+   (`Enable-ComputerRestore` / `Checkpoint-Computer`) truthfully, with the `Status`
+   that failed.
+
+`RestorePointFailed` stays the fail-closed gate: any status other than `Created`
+(throttled, enable failure, unavailable cmdlet, unverified point, non-Windows) blocks
+destructive Stage 4 unless the operator passed `-np`. The helper deliberately makes
+**no** Group Policy change, **no** quota or retention change (`DiskPercent`,
+`MaxSize`), and **no** service or checkpoint-frequency change; those are machine
+policy the operator did not ask for.
+
 ### 5. Uninstall before surgery
 Always run the vendor's own uninstaller (from the registry `UninstallString` /
 `QuietUninstallString`, or `msiexec /x {ProductCode} /qn`) before touching services or

@@ -1270,3 +1270,41 @@ threshold logic, bat scan clean, full suite green.
 
 NOT proven on Windows: the user's actual staging state - re-run Step 1, then
 6a; the new WARN lines will name the failure if it persists.
+
+## 18. Restore point: enable System Restore first, then verify the point (2026-10-19, branch fix/auto-enable-system-restore)
+
+Owner request: "automatically enable System Restore if off, then create the
+pre-cleanup restore point". Baseline origin/main 66d800b.
+
+What was wrong before: preflight guessed enablement from
+`root\default:SystemRestore` + an `RPSessionInterval` registry read and hard-failed
+when both were empty (so a healthy machine with no retained points could be
+refused), sc-cleanup called `Checkpoint-Computer` directly with no enablement and
+no verification, and BOTH callers logged "created" from a non-throwing cmdlet -
+which is exactly what Windows does when it silently throttles a checkpoint inside
+the restore-point frequency window.
+
+Built (strict vertical TDD, one behavior per slice, RED before each edit):
+- `SystemRestore.psm1` (new, packaged): dynamic system drive
+  (`SystemDrive`/`SystemRoot`/`windir`/`ProgramData`, no hardcoded `C:`),
+  `Enable-ComputerRestore -Drive <system> -ErrorAction Stop` BEFORE the checkpoint
+  (always, idempotent - an empty restore history is not proof of "disabled"),
+  checkpoint, then a read-back of `Get-ComputerRestorePoint` requiring a NEW
+  sequence number. Statuses: Created / Throttled / EnableFailed /
+  EnableUnavailable / CheckpointUnavailable / CreateFailed / Unverified /
+  DriveUnresolved / UnsupportedOs. Throttle detection uses the warning text
+  (`-WarningVariable`) and reports `SKIPPED (throttled)` plus the newest existing
+  point. No Group Policy, quota/retention or service changes.
+- `preflight.ps1`: `Invoke-RestorePoint` now loads the helper from
+  `$script:PreflightRoot` and maps LogLines to Write-Stage/Warn/Fail; still fails
+  closed on Windows guard, missing helper, enable failure or unverified point.
+- `sc-cleanup.ps1`: Stage 0 loads the helper at init and records
+  `Restore point: <summary>` in master.log from the helper's verified result;
+  `$script:RestorePointFailed` is set for every non-Created status, so the Stage 4
+  gate and `-np` semantics are unchanged.
+
+Verified here (pwsh 7.6.7, Linux): new regression 68/68; safety contracts 76/76;
+full repo suites and package checks (see the report accompanying this commit).
+NOT verified here: the live cmdlets on Windows - owner-live gates are recorded in
+docs/09 section 7e (System Restore off, throttled second run, non-C: system drive,
+no policy/quota/service drift, missing cmdlet).

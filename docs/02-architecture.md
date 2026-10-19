@@ -15,7 +15,9 @@ sc-cleanup.ps1  [flags]          <- top-level runner, BUILT (wires Stages 0-9)
 |                 (blank/no/invalid answer aborts; no silent bypass)
 |    working dir C:\RIT-SCC\<host>-<timestamp>\
 |    master log open (no tech/client/date prompts - owner directive 2026-08-27)
-|    System Restore point + registry hive export   [skip: -np]
+|    System Restore: ensure enabled (idempotent) -> checkpoint -> verify
+|                 the fresh point, via SystemRestore.psm1  [skip: -np]
+|    registry hive export
 |    tool pack: verify hashes (tools/Get-ToolPack.ps1)
 |
 +- STAGE 1  SNAPSHOT (BEFORE)          <- read-mostly, always runs, NEVER skippable
