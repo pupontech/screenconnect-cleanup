@@ -48,6 +48,9 @@ Set-StrictMode -Version 2.0
 
 $ErrorActionPreference = 'Stop'
 $script:PreflightOk = $true
+# Script location, used to load the shared SystemRestore.psm1 helper. Resolved
+# once at script scope: $PSScriptRoot is empty inside functions.
+$script:PreflightRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 # ---------------------------------------------------------------------
 # Helpers
@@ -171,8 +174,10 @@ function Confirm-LowDiskSpace {
 function Invoke-RestorePoint {
     # Creates a System Restore point + exports key registry hives.
     # Returns $true when the caller may continue.
-    # Per docs/06-safety-model.md: CHECK System Restore is actually enabled;
-    # a silently-failed restore point is worse than none.
+    # Per docs/06-safety-model.md: System Restore is frequently DISABLED on
+    # client machines, so it is enabled first (idempotently) and the resulting
+    # point is verified by reading it back. A restore point that cannot be
+    # confirmed is a failure, never a warning.
     Write-Stage 'Creating System Restore point + registry hive export ...'
 
     if ($env:OS -ne 'Windows_NT') {
@@ -180,50 +185,34 @@ function Invoke-RestorePoint {
         return $false
     }
 
-    # Check System Restore is enabled on the system drive FIRST
-    try {
-        $srStatus = Get-CimInstance -ClassName 'SystemRestore' -Namespace 'root\default' `
-                        -ErrorAction SilentlyContinue
-        $srEnabled = $true
-        try {
-            $srConfig = Get-CimInstance -ClassName 'Win32_OSRecoveryConfiguration' `
-                            -ErrorAction SilentlyContinue
-        } catch { }
-
-        # The reliable enablement probe: try reading SR config via wmic-style CIM.
-        # If SystemRestore class returns nothing AND SR is disabled, fail loudly.
-        $regValue = $null
-        try {
-            $regValue = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore' `
-                             -Name 'RPSessionInterval' -ErrorAction SilentlyContinue
-        } catch { }
-        if ($null -eq $srStatus -and $null -eq $regValue) {
-            # Cannot confirm System Restore is enabled -> treat as NOT enabled
-            Write-StageFail ('System Restore appears to be DISABLED or unreadable on this machine. ' +
-                'Enable it manually (SystemPropertiesProtection.exe), then re-run preflight. ' +
-                'A silently-failed restore point is worse than none.')
-            return $false
-        }
-        $srEnabled = $true
-    } catch {
-        Write-StageWarn ("Could not probe System Restore status: {0}" -f $_.Exception.Message)
+    # Shared helper - the direct runner (sc-cleanup.ps1) uses the same module
+    # so both entry points enable System Restore and verify the point alike.
+    $restoreModule = Join-Path $script:PreflightRoot 'SystemRestore.psm1'
+    if (-not (Test-Path -LiteralPath $restoreModule)) {
+        Write-StageFail ("Shared restore-point helper is missing: {0}. Cannot create a verified restore point." -f $restoreModule)
+        return $false
     }
-
-    # Create the restore point (Checkpoint-Computer exists on 5.1+)
     try {
-        if (Get-Command Checkpoint-Computer -ErrorAction SilentlyContinue) {
-            Checkpoint-Computer -Description 'RIT-SCC ScreenConnect cleanup - preflight' `
-                -RestorePointType MODIFY_SETTINGS -ErrorAction Stop
-            Write-Stage 'System Restore point created OK.'
-        } else {
-            Write-StageFail 'Checkpoint-Computer cmdlet not available on this OS.'
-            return $false
-        }
+        Import-Module -Name $restoreModule -Force -ErrorAction Stop
     } catch {
-        Write-StageFail ("Failed to create restore point: {0}" -f $_.Exception.Message)
+        Write-StageFail ("Could not load the shared restore-point helper: {0}" -f $_.Exception.Message)
         return $false
     }
 
+    $point = Invoke-SccRestorePoint -Description 'RIT-SCC ScreenConnect cleanup - preflight' -IsElevated $true
+    foreach ($line in @($point.LogLines)) {
+        switch ($line.Level) {
+            'Error' { Write-StageFail $line.Text }
+            'Warn'  { Write-StageWarn $line.Text }
+            default { Write-Stage $line.Text }
+        }
+    }
+    if (-not $point.Success) {
+        Write-StageFail ('System Restore point was not created ({0}). Enable System Restore manually (SystemPropertiesProtection.exe) and re-run preflight. A silently-failed restore point is worse than none.' -f $point.Status)
+        return $false
+    }
+
+    Write-Stage ('System Restore point created and verified (sequence {0}).' -f $point.SequenceNumber)
     return $true
 }
 
