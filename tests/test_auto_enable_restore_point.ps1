@@ -224,6 +224,7 @@ Assert-True ($logText -notmatch 'restore point created') 'a throttled checkpoint
 Assert-True ($logText -match '24 hours') 'the throttling warning from Windows is preserved for the technician'
 Assert-True ($logText -match 'sequence 7') 'the existing recent restore point is reported for the technician'
 Assert-True ($result.SequenceNumber -eq $null) 'a throttled checkpoint reports no new sequence number'
+Assert-True ($result.CanContinue -eq $true) 'a verified recent point permits continuing after throttling'
 
 # Some Windows builds surface the throttle on the error stream instead of the
 # warning stream. It is still a skip, never a created point.
@@ -233,6 +234,36 @@ $result = Invoke-TestRestorePoint -Description 'unit test point'
 Assert-Equal 'Throttled' $result.Status 'a throttled checkpoint raised as an error is still Throttled'
 Assert-True ($result.Success -eq $false) 'a throttled error is not a success'
 Assert-True ($result.Summary -notmatch '^Created') 'a throttled error never claims a restore point was created'
+Assert-True ($result.CanContinue -eq $true) 'a throttled error permits continuing with a verified recent point'
+
+Reset-Fakes -CreateOnCheckpoint $false -CheckpointThrows 'A restore point cannot be created: access denied.'
+[void]$global:Fake.Points.Add($existing)
+$result = Invoke-TestRestorePoint -Description 'unit test point'
+Assert-Equal 'CreateFailed' $result.Status 'a generic creation failure is not classified as throttling'
+Assert-True ($result.CanContinue -eq $false) 'a recent point does not waive an actual creation error'
+
+# Missing, stale, unknown and future-dated points never satisfy the gate,
+# even when Windows emits a throttle warning or error.
+foreach ($throttleStream in @('Warning', 'Error')) {
+    foreach ($pointCase in @('Missing', 'Stale', 'UnknownTime', 'Future', 'InvalidSequence')) {
+        Reset-Fakes -CreateOnCheckpoint $false
+        $throttleText = 'A new system restore point cannot be created because one has already been created within the past 24 hours.'
+        if ($throttleStream -eq 'Warning') { $global:Fake.CheckpointWarning = $throttleText }
+        else { $global:Fake.CheckpointThrows = $throttleText }
+        if ($pointCase -ne 'Missing') {
+            $created = (Get-Date).AddHours(-2)
+            if ($pointCase -eq 'Stale') { $created = (Get-Date).AddHours(-25) }
+            if ($pointCase -eq 'UnknownTime') { $created = 'invalid timestamp' }
+            if ($pointCase -eq 'Future') { $created = (Get-Date).AddHours(2) }
+            $sequence = 7
+            if ($pointCase -eq 'InvalidSequence') { $sequence = 0 }
+            [void]$global:Fake.Points.Add([pscustomobject]@{ SequenceNumber = $sequence; Description = 'Existing'; CreationTime = $created })
+        }
+        $result = Invoke-TestRestorePoint -Description 'unit test point'
+        Assert-True ($result.CanContinue -eq $false) ($throttleStream + ': ' + $pointCase + ' blocks cleanup')
+        Assert-True ($result.SequenceNumber -eq $null) ($throttleStream + ': ' + $pointCase + ' never claims creation')
+    }
+}
 
 # ---------------------------------------------------------------------
 # Case 5: the cmdlets can be absent (older SKUs / partially serviced OS).
@@ -333,11 +364,12 @@ if ($restoreFn.Count -eq 1) {
     $script:PreflightOk = $true
     $preflightResult = Invoke-RestorePoint
     $preflightLog = (($script:StageLines | ForEach-Object { $_.Text }) -join "`n")
-    Assert-True ($preflightResult -eq $false) 'preflight refuses to continue when the restore point was throttled'
+    Assert-True ($preflightResult -eq $true) 'preflight continues when throttled with a recent point'
+    Assert-True ($preflightLog -notmatch 'created and verified') 'preflight never claims creation when reusing an existing point'
     Assert-True ($preflightLog -notmatch 'restore point created OK') 'preflight never reports a created point for a throttled checkpoint'
     Assert-True ($preflightLog -match '(?i)throttl') 'preflight reports the throttle to the technician'
     Assert-True ($preflightLog -match 'sequence 41') 'preflight reports the existing restore point it found'
-    Assert-True (@($script:StageLines | Where-Object { $_.Kind -eq 'Fail' }).Count -ge 1) 'a throttled checkpoint is a preflight failure'
+    Assert-Equal 0 @($script:StageLines | Where-Object { $_.Kind -eq 'Fail' }).Count 'a recent throttled checkpoint is not a preflight failure'
 
     Reset-Fakes
     $script:StageLines.Clear()
@@ -430,7 +462,7 @@ if ($null -ne $stage0Assign) {
     Reset-Fakes -CreateOnCheckpoint $false -CheckpointWarning 'A new system restore point cannot be created because one has already been created within the past 24 hours.'
     [void]$global:Fake.Points.Add([pscustomobject]@{ SequenceNumber = 12; Description = 'Earlier point'; CreationTime = (Get-Date).AddHours(-1) })
     $fixture = Invoke-Stage0Fixture
-    Assert-Equal 'True' $fixture.Failed 'a throttled checkpoint fails the Stage 4 restore-point gate closed'
+    Assert-Equal 'False' $fixture.Failed 'a recent throttled checkpoint permits Stage 4'
     Assert-True ($fixture.MasterLog -notmatch 'Restore point: Created') 'sc-cleanup never records Restore point: Created for a throttled checkpoint'
     Assert-True ($fixture.MasterLog -match 'Restore point: SKIPPED \(throttled\)') 'sc-cleanup records the throttle truthfully in master.log'
 

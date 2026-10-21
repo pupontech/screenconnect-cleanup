@@ -177,7 +177,7 @@ function Invoke-RestorePoint {
     # Per docs/06-safety-model.md: System Restore is frequently DISABLED on
     # client machines, so it is enabled first (idempotently) and the resulting
     # point is verified by reading it back. A restore point that cannot be
-    # confirmed is a failure, never a warning.
+    # confirmed is a failure, except throttling with a verified point under 24h old.
     Write-Stage 'Creating System Restore point + registry hive export ...'
 
     if ($env:OS -ne 'Windows_NT') {
@@ -207,12 +207,16 @@ function Invoke-RestorePoint {
             default { Write-Stage $line.Text }
         }
     }
-    if (-not $point.Success) {
+    if (-not $point.CanContinue) {
         Write-StageFail ('System Restore point was not created ({0}). Enable System Restore manually (SystemPropertiesProtection.exe) and re-run preflight. A silently-failed restore point is worse than none.' -f $point.Status)
         return $false
     }
 
-    Write-Stage ('System Restore point created and verified (sequence {0}).' -f $point.SequenceNumber)
+    if ($point.Status -eq 'Created') {
+        Write-Stage ('System Restore point created and verified (sequence {0}).' -f $point.SequenceNumber)
+    } else {
+        Write-StageWarn $point.Summary
+    }
     return $true
 }
 

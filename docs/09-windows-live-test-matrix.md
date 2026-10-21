@@ -314,10 +314,12 @@ MOVES them (never deletes) to `<LogDir>\av-uninstall-quarantine`.
 
 7e.3 Owner live check - throttled second run: re-run preflight within the 24 h
     restore-point window. Expect `Restore point: SKIPPED (throttled) - ...` with the
-    newest existing point named, preflight exit 1, and NO "created" claim. With
-    `sc-cleanup.ps1 -ExecuteRemoval` and no `-np`, Stage 4 must be blocked and the
-    pipeline must still run Stages 5-9 and exit nonzero; with `-np` Stage 4 may
-    proceed only when registry exports succeeded.
+    newest existing point named and NO "created" claim. If that point is less
+    than 24 hours old, preflight continues and the direct runner's restore gate
+    permits Stage 4 (registry exports and removal approval must still succeed).
+    Missing, stale, unknown-time, invalid-sequence or future-dated points must
+    still fail preflight and block destructive Stage 4. Check throttle warnings
+    and errors alike; no checkpoint-frequency setting may change.
 
 7e.4 Owner live check - non-C: system drive: on a VM whose OS volume is not C:
     (or an image built that way), confirm the enable/checkpoint targets that drive

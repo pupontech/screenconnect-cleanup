@@ -3,6 +3,20 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.11] - Unreleased
+- The official Malwarebytes download fallback now requires typing `DONE` after
+  installation, then again after the attended scan is finished and its window
+  is closed. A short-lived installer/bootstrapper or GUI handoff can no longer
+  advance the pipeline automatically. Missing input or cancellation is never
+  reported as a completed scan. Winget behavior is unchanged.
+- Continue cleanup when Windows throttles a new restore point and the readable
+  restore-point list confirms an existing point less than 24 hours old. Both
+  guided preflight and the direct runner log `SKIPPED (throttled)` with the
+  existing sequence/time; neither claims a new point was created.
+- Missing, stale, unknown-time, invalid-sequence and future-dated points still
+  block cleanup, as do actual enable/create/read failures. Registry export and
+  removal approval gates are unchanged. No checkpoint-frequency policy changes.
+
 ## [1.8.10] - 2026-10-19
 **TESTING CANDIDATE - the pre-cleanup restore point now enables System Restore
 first, and is verified before it is trusted.**

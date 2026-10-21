@@ -133,6 +133,7 @@ function New-SccRestorePointLogLine {
 function New-SccRestorePointResult {
     param(
         [bool]$Success = $false,
+        [bool]$CanContinue = $false,
         [string]$Status = 'Failed',
         [string]$Drive = $null,
         [bool]$EnableAttempted = $false,
@@ -148,6 +149,7 @@ function New-SccRestorePointResult {
     if ($null -ne $Lines) { $logLines = $Lines.ToArray() }
     return [pscustomobject]@{
         Success                = $Success
+        CanContinue            = ($Success -or $CanContinue)
         Status                 = $Status
         Drive                  = $Drive
         EnableAttempted        = $EnableAttempted
@@ -177,7 +179,7 @@ function Test-SccRestoreThrottleMessage {
     # non-terminating error, so the text is classified instead of the stream.
     param([string]$Text)
     if (-not $Text) { return $false }
-    return ($Text -match '(?i)already been created|cannot be created|restore point.*(?:frequency|interval)|within the past')
+    return ($Text -match '(?i)already been created.*(?:past|hour|minute|day)|restore point.*(?:frequency|interval)|restore point.*within the past')
 }
 
 function New-SccThrottledRestorePointResult {
@@ -210,7 +212,18 @@ function New-SccThrottledRestorePointResult {
     New-SccRestorePointLogLine -Lines $Lines -Text ('Windows declined a new restore point (frequency throttle): ' + $ReasonText) -Level 'Warn'
     $message = 'SKIPPED (throttled) - Windows declined a new restore point: ' + $ReasonText
     if ($newestText) { $message = $message + ' ' + $newestText }
-    return New-SccRestorePointResult -Status 'Throttled' -Drive $Drive -EnableAttempted $EnableAttempted -StateBefore $StateBefore -PreviousPointCount $PreviousPointCount -Lines $Lines -Message $message -ExistingSequenceNumber $existingSequence -ExistingCreationTime $existingTime
+    $recent = $false
+    if ($existingSequence -gt 0 -and $existingTime -ne [datetime]::MinValue) {
+        $age = (Get-Date) - $existingTime
+        $recent = ($age.TotalSeconds -ge 0 -and $age.TotalHours -lt 24)
+    }
+    if ($recent) {
+        $message += ' Continuing with this verified existing point (less than 24 hours old).'
+    } else {
+        $message += ' No verified existing point less than 24 hours old; cleanup remains blocked.'
+    }
+    New-SccRestorePointLogLine -Lines $Lines -Text $message -Level 'Warn'
+    return New-SccRestorePointResult -CanContinue $recent -Status 'Throttled' -Drive $Drive -EnableAttempted $EnableAttempted -StateBefore $StateBefore -PreviousPointCount $PreviousPointCount -Lines $Lines -Message $message -ExistingSequenceNumber $existingSequence -ExistingCreationTime $existingTime
 }
 
 function Test-SccRestorePointElevation {
@@ -403,11 +416,8 @@ function Invoke-SccRestorePoint {
         New-SccRestorePointLogLine -Lines $lines -Text $newestText
     }
 
-    if ($warningText -match '(?i)already been created|cannot be created|restore point.*(?:frequency|interval)|within the past') {
-        New-SccRestorePointLogLine -Lines $lines -Text (('Windows declined a new restore point (frequency throttle): ' + $warningText)) -Level 'Warn'
-        $throttleMessage = 'SKIPPED (throttled) - Windows declined a new restore point: ' + $warningText
-        if ($newestText) { $throttleMessage = $throttleMessage + ' ' + $newestText }
-        return New-SccRestorePointResult -Status 'Throttled' -Drive $resolvedDrive -EnableAttempted $enableAttempted -StateBefore $stateBefore -PreviousPointCount $previousCount -Lines $lines -Message $throttleMessage -ExistingSequenceNumber $existingSequence -ExistingCreationTime $existingTime
+    if (Test-SccRestoreThrottleMessage -Text $warningText) {
+        return New-SccThrottledRestorePointResult -Lines $lines -ReasonText $warningText -Drive $resolvedDrive -EnableAttempted $enableAttempted -StateBefore $stateBefore -PreviousPointCount $previousCount -Snapshot $snapshotAfter
     }
 
     New-SccRestorePointLogLine -Lines $lines -Text 'Checkpoint-Computer returned without error but no new restore point is present.' -Level 'Error'

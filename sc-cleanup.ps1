@@ -576,7 +576,7 @@ $stage0Result = Invoke-Stage -StageId 0 -StageName 'Preflight' -SkipFlag '' -Sta
     # machines, so the shared helper enables it (idempotent - no Group Policy,
     # quota or service changes), creates the point, and verifies that a fresh
     # point was actually recorded. Only a verified point is logged as created;
-    # a throttled/failed one fails closed for Stage 4.
+    # throttling permits Stage 4 only with a verified existing point under 24h old.
     $script:RestorePointFailed = $false
     if (-not $np) {
         if (-not (Get-Command -Name 'Invoke-SccRestorePoint' -ErrorAction SilentlyContinue)) {
@@ -589,7 +589,7 @@ $stage0Result = Invoke-Stage -StageId 0 -StageName 'Preflight' -SkipFlag '' -Sta
             foreach ($restoreLine in @($restorePoint.LogLines)) {
                 Write-StageLog $restoreLine.Text $restoreLine.Level
             }
-            if (-not $restorePoint.Success) {
+            if (-not $restorePoint.CanContinue) {
                 # Recorded so Stage 4 can fail closed before any destructive work.
                 $script:RestorePointFailed = $true
             }
@@ -896,7 +896,7 @@ try { $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 's
             Write-StageLog ("Launching " + $launch.Scanner + " for attended scan (technician drives the GUI)...")
             $scannerResultPath = Join-Path $logsDir ('scanner-' + $launch.Scanner + '-result.json')
             $scannerArgs = @('-Scanner', $launch.Scanner, '-TimeoutMinutes', '240', '-ResultPath', $scannerResultPath)
-            $rc = Invoke-ChildScript -ScriptPath $guiScanner -ArgumentList $scannerArgs -LogTag ("Scanner(" + $launch.Scanner + ")")
+            $rc = Invoke-ChildScript -ScriptPath $guiScanner -ArgumentList $scannerArgs -LogTag ("Scanner(" + $launch.Scanner + ")") -Interactive
             $status = 'Completed'
             if ($rc -eq 2) { $status = 'LaunchFailed' }
             elseif ($rc -eq 3) { $status = 'NotInstalled' }

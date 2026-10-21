@@ -212,6 +212,15 @@ function Invoke-MalwarebytesOfflineFallback {
             throw ("Malwarebytes fallback installer exited with code " + $fallback.InstallerExitCode + '.')
         }
 
+        # The vendor EXE can hand installation to a detached bootstrapper.
+        # Its exit is NOT proof that setup finished; keep this attended stage
+        # parked until the technician confirms completion before looking for UI.
+        Write-Host 'Finish the Malwarebytes installation in its own window. This step will not continue automatically.' -ForegroundColor Cyan
+        $installConfirmation = Read-Host 'When installation is finished, type DONE (anything else cancels this scanner step)'
+        if ($installConfirmation -notmatch '^\s*(?i:DONE)\s*$') {
+            throw 'Malwarebytes installation was not confirmed; no attended scan was completed.'
+        }
+
         $gui = $null
         $deadline = (Get-Date).AddSeconds(30)
         do {
@@ -226,7 +235,9 @@ function Invoke-MalwarebytesOfflineFallback {
 
         $fallback.GuiPath = $gui
         Write-Host ("Launching Malwarebytes GUI: " + $gui) -ForegroundColor Cyan
-        Write-Host "Drive a scan in the Malwarebytes UI - this script waits until you close it." -ForegroundColor Cyan
+        # For the downloaded fallback, completion is technician-confirmed:
+        # detached installer/GUI launchers must never advance this stage alone.
+        Write-Host "Drive a scan in the Malwarebytes UI - this script waits until you close it and confirm DONE." -ForegroundColor Cyan
         $guiProc = Start-Process -FilePath $gui -PassThru -ErrorAction Stop
         if ($null -eq $guiProc) {
             throw 'Start-Process returned no process handle for the Malwarebytes GUI.'
@@ -237,6 +248,13 @@ function Invoke-MalwarebytesOfflineFallback {
             return [pscustomobject]$fallback
         }
         $fallback.GuiExitCode = $guiProc.ExitCode
+        # mbam.exe may only activate an already-running GUI and exit immediately.
+        # Do not mistake that handoff (or the tray lifetime) for a finished scan.
+        Write-Host 'Finish the scan and any requested cleanup in Malwarebytes, then close its window.' -ForegroundColor Cyan
+        $scanConfirmation = Read-Host 'When the Malwarebytes scan is finished and its window is closed, type DONE (anything else cancels this scanner step)'
+        if ($scanConfirmation -notmatch '^\s*(?i:DONE)\s*$') {
+            throw 'Malwarebytes scan completion was not confirmed.'
+        }
         $fallback.Status = 'Completed'
         $fallback.Success = $true
     } catch {

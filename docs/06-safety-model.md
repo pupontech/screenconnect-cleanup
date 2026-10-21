@@ -91,9 +91,15 @@ through one shared helper, `SystemRestore.psm1`, which:
    (`Enable-ComputerRestore` / `Checkpoint-Computer`) truthfully, with the `Status`
    that failed.
 
-`RestorePointFailed` stays the fail-closed gate: any status other than `Created`
-(throttled, enable failure, unavailable cmdlet, unverified point, non-Windows) blocks
-destructive Stage 4 unless the operator passed `-np`. The helper deliberately makes
+`RestorePointFailed` stays the fail-closed gate. A verified `Created` point permits
+continuation. `Throttled` also permits continuation only when the readable list
+confirms an existing point with a positive sequence number and a known creation
+time less than 24 hours old (never future-dated). This is logged as
+`SKIPPED (throttled)`, not `Created`; no frequency setting is changed. Missing,
+stale, unknown-time or unreadable points, enable failures, unavailable cmdlets,
+and unsupported hosts still block destructive Stage 4 unless the operator passed
+`-np`. The shared result's `CanContinue` carries this gate decision separately
+from `Success`, which remains false for a skipped creation. The helper deliberately makes
 **no** Group Policy change, **no** quota or retention change (`DiskPercent`,
 `MaxSize`), and **no** service or checkpoint-frequency change; those are machine
 policy the operator did not ask for.
