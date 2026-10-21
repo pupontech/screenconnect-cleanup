@@ -3,6 +3,55 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.11] - Unreleased
+- The official Malwarebytes download fallback now requires typing `DONE` after
+  installation, then again after the attended scan is finished and its window
+  is closed. A short-lived installer/bootstrapper or GUI handoff can no longer
+  advance the pipeline automatically. Missing input or cancellation is never
+  reported as a completed scan. Winget behavior is unchanged.
+- Continue cleanup when Windows throttles a new restore point and the readable
+  restore-point list confirms an existing point less than 24 hours old. Both
+  guided preflight and the direct runner log `SKIPPED (throttled)` with the
+  existing sequence/time; neither claims a new point was created.
+- Missing, stale, unknown-time, invalid-sequence and future-dated points still
+  block cleanup, as do actual enable/create/read failures. Registry export and
+  removal approval gates are unchanged. No checkpoint-frequency policy changes.
+
+## [1.8.10] - 2026-10-19
+**TESTING CANDIDATE - the pre-cleanup restore point now enables System Restore
+first, and is verified before it is trusted.**
+- New shared helper `SystemRestore.psm1` (packaged, used by BOTH `preflight.ps1`
+  Stage 0 and `sc-cleanup.ps1` Stage 0): resolves the OS system drive dynamically
+  (never assumes `C:`), runs `Enable-ComputerRestore -Drive <system>
+  -ErrorAction Stop` before `Checkpoint-Computer`, then reads the restore-point
+  list back and reports `Created` only when a NEW sequence number appeared.
+  Enablement is ensured idempotently because an empty restore-point list is not
+  proof that System Restore is off, and no Group Policy, quota/retention or
+  service settings are touched.
+- Windows throttles checkpoints inside the restore-point frequency window
+  (default 24 h) and `Checkpoint-Computer` then returns WITHOUT throwing - only a
+  warning. That case is now recorded as `Restore point: SKIPPED (throttled)` with
+  the newest existing point named, never as `Restore point: Created`, and it fails
+  the `RestorePointFailed` gate closed for destructive Stage 4 unless `-np`.
+  Enable failures, missing cmdlets (`EnableUnavailable` /
+  `CheckpointUnavailable`), creation errors and an unresolvable system drive are
+  reported with their own status instead of a generic message.
+- Host guards are explicit and run BEFORE any restore API call: Windows Server
+  SKU (`UnsupportedServer`), an unelevated session (`NotElevated`), and a System
+  Restore policy that disables it (`PolicyBlocked` - read only, never written or
+  overridden). An unreadable restore-point list is not treated as empty, and a
+  point that appears but does not carry this run's description is not adopted as
+  the rollback point.
+- Unchanged by design: `-np` / `-SkipRestore` semantics, the registry-export gate,
+  and "a failed restore point blocks destructive removal".
+- New regression `tests/test_auto_enable_restore_point.ps1` drives the real
+  module and the real Stage 0 code of both entry points with in-process cmdlet
+  fakes (`reg.exe` stubbed); wired into both CI editions and the extracted-package
+  test loop. `Test-SafetyRegressionContracts.ps1` gains source contracts (no
+  direct `Checkpoint-Computer` in either caller, enable-before-checkpoint,
+  fresh-point verification, no policy/quota/service edits, no hardcoded `C:`).
+  `verify_deploy_zip.py` now requires `SystemRestore.psm1` in the bundle.
+
 ## [1.8.9] - 2026-10-11
 **TESTING CANDIDATE - launcher fix for paths containing parentheses.**
 - `START-HERE.bat` now survives a folder name containing `(` or `)` - e.g.

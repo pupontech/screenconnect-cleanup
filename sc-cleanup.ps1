@@ -364,6 +364,20 @@ function Invoke-Stage {
 
 # Initialize
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+# Shared System Restore helper (enablement + verified pre-change point).
+# Package-relative: a missing helper fails the restore-point step closed
+# instead of silently skipping the rollback boundary.
+$script:SystemRestoreModulePath = Join-Path $ScriptRoot 'SystemRestore.psm1'
+if (Test-Path -LiteralPath $script:SystemRestoreModulePath) {
+    try {
+        Import-Module -Name $script:SystemRestoreModulePath -Force -ErrorAction Stop
+    } catch {
+        Write-StageLog ("Could not load SystemRestore.psm1: " + $_.Exception.Message + "; the restore-point step will fail closed.") 'Warn'
+    }
+} else {
+    Write-StageLog ("SystemRestore.psm1 not found at " + $script:SystemRestoreModulePath + "; the restore-point step will fail closed.") 'Warn'
+}
 $isAdmin = Test-IsAdmin
 $isServer = Test-IsServerOS
 $hostName = $env:COMPUTERNAME
@@ -558,19 +572,29 @@ $stage0Result = Invoke-Stage -StageId 0 -StageName 'Preflight' -SkipFlag '' -Sta
 
     # Master log opened (console copy printed at init)
 
-    # System Restore point
+    # System Restore point. System Restore is frequently DISABLED on client
+    # machines, so the shared helper enables it (idempotent - no Group Policy,
+    # quota or service changes), creates the point, and verifies that a fresh
+    # point was actually recorded. Only a verified point is logged as created;
+    # throttling permits Stage 4 only with a verified existing point under 24h old.
     $script:RestorePointFailed = $false
     if (-not $np) {
-        Write-StageLog "Creating System Restore point..."
-        try {
-            Checkpoint-Computer -Description "ScreenConnect Cleanup - $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))" -RestorePointType 'MODIFY_SETTINGS' -ErrorAction Stop
-            Write-StageLog "System Restore point created"
-            Add-Content -Path $MasterLogPath -Value "Restore point: Created" -Encoding UTF8
-        } catch {
-            # Recorded so Stage 4 can fail closed before any destructive work.
+        if (-not (Get-Command -Name 'Invoke-SccRestorePoint' -ErrorAction SilentlyContinue)) {
             $script:RestorePointFailed = $true
-            Write-StageLog "System Restore point creation failed: $($_.Exception.Message)" 'Warn'
-            Add-Content -Path $MasterLogPath -Value "Restore point: FAILED - $($_.Exception.Message)" -Encoding UTF8
+            Write-StageLog "System Restore helper unavailable (SystemRestore.psm1 missing); no restore point was created." 'Warn'
+            Add-Content -Path $MasterLogPath -Value "Restore point: FAILED - helper unavailable" -Encoding UTF8
+        } else {
+            Write-StageLog "Ensuring System Restore is enabled, then creating the restore point..."
+            $restorePoint = Invoke-SccRestorePoint -Description ("ScreenConnect Cleanup - " + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) -IsElevated $isAdmin -IsServerSku $isServer
+            foreach ($restoreLine in @($restorePoint.LogLines)) {
+                Write-StageLog $restoreLine.Text $restoreLine.Level
+            }
+            if (-not $restorePoint.CanContinue) {
+                # Recorded so Stage 4 can fail closed before any destructive work.
+                $script:RestorePointFailed = $true
+            }
+            Write-StageLog ("Restore point status: " + $restorePoint.Status)
+            Add-Content -Path $MasterLogPath -Value ("Restore point: " + $restorePoint.Summary) -Encoding UTF8
         }
     } else {
         Write-StageLog "Skipping System Restore point (-np specified)"
@@ -872,7 +896,7 @@ try { $stage5Result = Invoke-Stage -StageId 5 -StageName 'Scanners' -SkipFlag 's
             Write-StageLog ("Launching " + $launch.Scanner + " for attended scan (technician drives the GUI)...")
             $scannerResultPath = Join-Path $logsDir ('scanner-' + $launch.Scanner + '-result.json')
             $scannerArgs = @('-Scanner', $launch.Scanner, '-TimeoutMinutes', '240', '-ResultPath', $scannerResultPath)
-            $rc = Invoke-ChildScript -ScriptPath $guiScanner -ArgumentList $scannerArgs -LogTag ("Scanner(" + $launch.Scanner + ")")
+            $rc = Invoke-ChildScript -ScriptPath $guiScanner -ArgumentList $scannerArgs -LogTag ("Scanner(" + $launch.Scanner + ")") -Interactive
             $status = 'Completed'
             if ($rc -eq 2) { $status = 'LaunchFailed' }
             elseif ($rc -eq 3) { $status = 'NotInstalled' }

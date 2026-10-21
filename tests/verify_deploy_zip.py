@@ -32,6 +32,7 @@ def verify(path, version, commit):
             "sc-cleanup.ps1", "Invoke-PersistenceScan.ps1", "Invoke-PersistenceInventoryWorker.ps1",
             "Show-PersistenceReview.ps1",
             "Persistence.Inventory.psm1", "Persistence.Removal.psm1",
+            "SystemRestore.psm1",
             "New-InvestigationReport.ps1", "Submit-ConnectWiseReport.ps1",
             "tools/Keep-Awake.ps1", "tools/Confirm-OnBattery.ps1",
             "README.md", "DEPLOY.md", "CHANGELOG.md", "docs/12-post-av-persistence.md",
@@ -57,6 +58,14 @@ def verify(path, version, commit):
         assert b"-PersistenceInventory" in batch and b"-PersistenceResult" in batch
         assert b"Get-SccPersistenceInventory" in members["Persistence.Inventory.psm1"]
         assert b"Invoke-SccPersistenceReview" in members["Persistence.Removal.psm1"]
+        # The pre-change restore point must ship with both entry points: the
+        # helper enables System Restore, checkpoints and verifies a fresh point.
+        restore_module = members["SystemRestore.psm1"]
+        assert b"Invoke-SccRestorePoint" in restore_module
+        assert b"Enable-ComputerRestore" in restore_module
+        assert b"Get-ComputerRestorePoint" in restore_module
+        assert b"Invoke-SccRestorePoint" in members["sc-cleanup.ps1"]
+        assert b"Invoke-SccRestorePoint" in members["preflight.ps1"]
         assert b"Persistence" in members["Submit-ConnectWiseReport.ps1"]
         print(f"PASS deploy ZIP: {len(members)} members, exact manifest, version {version}, source {commit}")
 

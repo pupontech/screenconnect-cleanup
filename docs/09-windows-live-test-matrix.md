@@ -288,6 +288,54 @@ MOVES them (never deletes) to `<LogDir>\av-uninstall-quarantine`.
     AC connected, verify no warning appears. If API status is unknown, the
     launcher proceeds without the battery-specific prompt.
 
+## 7e. Pre-change restore point: enable + verification [NEW 1.8.10 candidate]
+
+7e.1 Automated coverage (both editions, no live System Restore):
+    `tests/test_auto_enable_restore_point.ps1` runs the real `SystemRestore.psm1`
+    with in-process fakes for `Enable-ComputerRestore`, `Checkpoint-Computer` and
+    `Get-ComputerRestorePoint`, plus the real Stage 0 code of `preflight.ps1`
+    (`Invoke-RestorePoint`) and `sc-cleanup.ps1` (Stage 0 block, with `reg.exe`
+    stubbed). It proves: dynamic system-drive resolution, enable-before-checkpoint
+    with `-ErrorAction Stop`, `Created` only when a fresh sequence number appears,
+    throttle warning recorded as `SKIPPED (throttled)` (never `Created`), enable
+    failure / missing cmdlet / unresolvable drive fail closed, an unreadable baseline
+    list and a concurrently created unrelated point are never reported as `Created`,
+    Server SKU / unelevated / policy-blocked hosts are refused before any restore
+    call, `-np` skips the whole step, and non-Windows hosts make no restore call. It does NOT prove the live
+    cmdlets behave as documented on a real Windows box.
+
+7e.2 Owner live check - System Restore OFF: on a disposable, snapshotted VM with
+    System Protection disabled for the system volume, run `preflight.ps1`. Expect:
+    "Ensuring System Restore is enabled on <drive> (idempotent).",
+    "System Restore enable was requested on <drive>.", "System Restore point created
+    and verified (sequence N).", and per-volume confirmation that System Protection
+    is now on. `Get-ComputerRestorePoint` must list a point with the
+    `RIT-SCC ScreenConnect cleanup - preflight` description.
+
+7e.3 Owner live check - throttled second run: re-run preflight within the 24 h
+    restore-point window. Expect `Restore point: SKIPPED (throttled) - ...` with the
+    newest existing point named and NO "created" claim. If that point is less
+    than 24 hours old, preflight continues and the direct runner's restore gate
+    permits Stage 4 (registry exports and removal approval must still succeed).
+    Missing, stale, unknown-time, invalid-sequence or future-dated points must
+    still fail preflight and block destructive Stage 4. Check throttle warnings
+    and errors alike; no checkpoint-frequency setting may change.
+
+7e.4 Owner live check - non-C: system drive: on a VM whose OS volume is not C:
+    (or an image built that way), confirm the enable/checkpoint targets that drive
+    and that nothing references a hardcoded `C:`.
+
+7e.5 Owner live check - no policy/quota/service drift: capture
+    `vssadmin list shadowstorage`, the per-volume `DiskPercent`/`MaxSize` values and
+    the VSS service start type before and after a run. The helper must change none
+    of them, and must not touch `DisableSR`/`DisableConfig` or the checkpoint
+    frequency value.
+
+7e.6 Owner live check - missing cmdlet: on a Windows SKU where
+    `Enable-ComputerRestore` is absent (or with the module command removed in a
+    throwaway VM), the run must report `EnableUnavailable` and fail closed; it must
+    never fall through to a checkpoint-only attempt.
+
 ## 8. Release gate summary
 
 A release is blocked if ANY of the following fails on Windows PowerShell 5.1:
@@ -301,4 +349,7 @@ implying clean when -sa was used); the UAC-disabled prompt not appearing (or
 not waiting); the installer hard-erroring on a same-version re-run; the keep-awake
 runtime suite failing to reset the native request or leaving a helper after its
 runner exits; the battery warning failing to require explicit confirmation on
-AC-offline status, or Cancel allowing the cleanup runner to proceed.
+AC-offline status, or Cancel allowing the cleanup runner to proceed; a
+pre-change restore point that was not verified (throttled, enable failure,
+missing cmdlet) being logged as `Created`, or the enable step changing Group
+Policy, quota/retention or service settings.
