@@ -32,6 +32,9 @@ param(
     [switch]$procmon,     # force Procmon stage (bounded live capture)
     [switch]$force,       # override server-OS refusal
     [switch]$ExecuteRemoval, # TEST MODE: pre-authorize removal (no typed confirmation)
+    [switch]$RepairPowerOptions, # opt-in system repair before the after snapshot
+    [switch]$ResetLocalGpo, # explicit opt-in to back up and reset local GPO folders
+    [switch]$AllowManagedDevice, # explicit authorization to override local policy on managed devices
 
     # Configuration
     [int]$ProcmonRuntime = 180,  # Stage 7 capture window in seconds (default 3 min)
@@ -56,10 +59,15 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
+if (($ResetLocalGpo -or $AllowManagedDevice) -and -not $RepairPowerOptions) {
+    [Console]::Error.WriteLine('-ResetLocalGpo and -AllowManagedDevice require -RepairPowerOptions.')
+    exit 2
+}
+
 # -----------------------------------------------------------------------------
 # Constants & script metadata
 # -----------------------------------------------------------------------------
-$ScriptVersion = '1.8.9'
+$ScriptVersion = '1.8.12-beta.1'
 $ScriptName = 'sc-cleanup.ps1'
 $PipelineStages = @(
     @{ Id = 0; Name = 'Preflight';            SkipFlag = '' },
@@ -1153,6 +1161,36 @@ $stage7Result = Invoke-Stage -StageId 7 -StageName 'Procmon' -SkipFlag '' -Stage
 # -----------------------------------------------------------------------------
 try {
 $stage8Result = Invoke-Stage -StageId 8 -StageName 'Snapshot (After)+Diff' -SkipFlag '' -StageBlock {
+    $powerOptionsRepairPath = Join-Path $WorkDir 'power-options-repair.json'
+    $powerOptionsRepairExitCode = $null
+    $powerOptionsRepairAttempted = [bool]$RepairPowerOptions
+    if ($RepairPowerOptions) {
+        $resetLocalGpoConsent = [bool]$ResetLocalGpo
+        if (-not $resetLocalGpoConsent) {
+            Write-Host 'Local Group Policy can reapply restrictions. Reset it only after a backup; default is No.' -ForegroundColor Yellow
+            Write-Host 'Also reset local Group Policy folders? [y/N]' -NoNewline
+            $resetAnswer = ''
+            try { $resetAnswer = Read-Host } catch { $resetAnswer = '' }
+            if ($resetAnswer -and $resetAnswer.Trim() -match '^(?i:y|yes)$') { $resetLocalGpoConsent = $true }
+        }
+
+        $repairScript = Join-Path $ScriptRoot 'Repair-PowerOptions.ps1'
+        if (-not (Test-Path -LiteralPath $repairScript -PathType Leaf)) {
+            Write-StageLog 'Repair-PowerOptions.ps1 is missing; the optional repair did not run.' 'Error'
+            $powerOptionsRepairExitCode = 4
+        } else {
+            $repairArgs = @('-Apply', '-Confirm:$false', '-WorkDir', $WorkDir, '-ResultPath', $powerOptionsRepairPath)
+            if ($resetLocalGpoConsent) { $repairArgs += '-ResetLocalGpo' }
+            if ($AllowManagedDevice) { $repairArgs += '-AllowManagedDevice' }
+            Write-StageLog 'Running the consented power-options repair before the after snapshot.'
+            $powerOptionsRepairExitCode = Invoke-ChildScript -ScriptPath $repairScript -ArgumentList $repairArgs -LogTag 'PowerRepair'
+            $powerOptionsRepairAttempted = Test-Path -LiteralPath $powerOptionsRepairPath -PathType Leaf
+            if ($powerOptionsRepairExitCode -ne 0) {
+                Write-StageLog ("Power-options repair exited " + $powerOptionsRepairExitCode + '; review power-options-repair.json. Continuing to produce the after snapshot and report.') 'Warn'
+            }
+        }
+    }
+
     $collectSnapshot = Join-Path $ScriptRoot 'collect-snapshot.ps1'
     if (-not (Test-Path $collectSnapshot)) {
         throw "collect-snapshot.ps1 not found at $collectSnapshot"
@@ -1270,6 +1308,9 @@ $stage8Result = Invoke-Stage -StageId 8 -StageName 'Snapshot (After)+Diff' -Skip
         DiffIncomplete = ($diffVerdict -eq 'INCOMPLETE')
         RemovalManifest = $removalManifest
         RemovalManifestData = $manifest
+        PowerOptionsRepairPath = $(if ($RepairPowerOptions) { $powerOptionsRepairPath } else { $null })
+        PowerOptionsRepairExitCode = $powerOptionsRepairExitCode
+        PowerOptionsRepairAttempted = $powerOptionsRepairAttempted
     }
 }
 } catch {
@@ -1329,6 +1370,11 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
 
     Write-StageLog ("Generating HTML report from " + $findingsJson)
     $repArgs = @('-FindingsJson', $findingsJson, '-OutputPath', $reportHtml)
+    $powerOptionsRepairPath = $null
+    if ($stage8Result -and $stage8Result.Result -is [System.Collections.IDictionary] -and $stage8Result.Result.Contains('PowerOptionsRepairPath')) {
+        $powerOptionsRepairPath = [string]$stage8Result.Result['PowerOptionsRepairPath']
+    }
+    if ($powerOptionsRepairPath -and (Test-Path -LiteralPath $powerOptionsRepairPath -PathType Leaf)) { $repArgs += @('-PowerOptionsRepair', $powerOptionsRepairPath) }
     $reportDiffPath = if ($stage8Result -and $stage8Result.Result -and $stage8Result.Result.DiffPath) { [string]$stage8Result.Result.DiffPath } else { $null }
     if ($reportDiffPath) { $repArgs += @('-DiffPath', $reportDiffPath) }
     $avUninstallResults = if ($stage6Result -and $stage6Result.Result -and $stage6Result.Result.ResultsPath) { $stage6Result.Result.ResultsPath } else { $null }
@@ -1380,6 +1426,12 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
             $otherTotal += @(Get-JsonItems (Get-PropertyValue $otherTarget 'Hits')).Count
         }
     }
+    $repairPath = $null
+    $repairExit = $null
+    if ($stage8Result -and $stage8Result.Result) {
+        $repairPath = $stage8Result.Result.PowerOptionsRepairPath
+        $repairExit = $stage8Result.Result.PowerOptionsRepairExitCode
+    }
     $summary = @{
         GeneratedUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
         ComputerName = $findings.ComputerName
@@ -1399,6 +1451,10 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
         PersistenceStatus = $persistenceStatus
         PersistenceInventoryStatus = $persistenceInventoryStatus
         PersistenceRemovalStatus = $persistenceRemovalStatus
+        PowerOptionsRepairPath = $repairPath
+        PowerOptionsRepairExitCode = $repairExit
+        PowerOptionsRepairOutcome = $(if (-not $RepairPowerOptions) { 'NotRequested' } elseif ($repairExit -eq 0) { 'Succeeded' } else { 'Failed' })
+        PowerOptionsRepairAttempted = [bool]$RepairPowerOptions
         PlanJson = $planJson
         SCInstanceCount = $scCount
         OtherHitTotal = $otherTotal
@@ -1446,10 +1502,22 @@ $stage9Result = Invoke-Stage -StageId 9 -StageName 'Report' -SkipFlag '' -StageB
     } catch {
         Write-StageLog ("Could not open report folder: " + $_.Exception.Message) 'Warn'
     }
+    $reportLaunchSucceeded = $false
     try {
         $null = Start-Process -FilePath $reportHtml -ErrorAction Stop
+        $reportLaunchSucceeded = $true
     } catch {
         Write-StageLog ("Could not open report: " + $_.Exception.Message) 'Warn'
+    }
+    if ($RepairPowerOptions -and $reportLaunchSucceeded -and $powerOptionsRepairPath -and
+        (Test-Path -LiteralPath $powerOptionsRepairPath -PathType Leaf)) {
+        Write-Host 'Restart will forcibly close apps and may lose unsaved work. Save your work first.' -ForegroundColor Yellow
+        Write-Host 'Restart now from CMD? [y/N]' -NoNewline
+        $rebootChoice = ''
+        try { $rebootChoice = Read-Host } catch { $rebootChoice = '' }
+        if ($rebootChoice -match '^(?i:y|yes)$') {
+            & $env:ComSpec /d /c 'shutdown /r /t 0 /f'
+        }
     }
 
     # Owner directive 2026-09-06: leave a copy of report.html on the current

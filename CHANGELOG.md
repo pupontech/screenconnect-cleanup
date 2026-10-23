@@ -3,7 +3,31 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
-## [1.8.11] - Unreleased
+## [1.8.12-beta.1] - 2026-10-23
+**BETA - optional power-options repair; owner live Windows acceptance required.**
+- Based on v1.8.11; retains recent-restore-point handling, attended Malwarebytes
+  fallback, post-AV persistence workflow and launcher path fixes. No WPF/GUI
+  implementation or unrelated detection/report-sharing WIP is included.
+- Default-No guided repair and CLI `-RepairPowerOptions` restore named power/menu
+  restrictions, existing Start visibility flags, default power schemes,
+  hibernation, AC/DC button/lid Sleep defaults and additive shutdown rights.
+- Back up affected settings before changes. Reset local Group Policy only with
+  separate consent and verified backup. Refuse server editions and refuse managed
+  or unknown-management devices unless separately authorized.
+- Local HTML report records repair evidence and incomplete outcomes with escaped
+  content. This is command-result evidence, not independent restoration proof;
+  enforcing policy or persistence may reapply restrictions.
+- Require a current-run repair result and successful report launch before a
+  separate default-No reboot offer. Explicit yes invokes CMD `shutdown /r /t 0 /f`;
+  forced app closure can lose unsaved work. No automatic reboot.
+- Limit Explorer refresh to the current session. Reject existing junctions and
+  symlinks in backup/result path chains; concurrent hostile path swaps and
+  hard-link attacks are not certified by these checks.
+- Synthetic core, consent, report/XSS, path, runner and packaging regressions;
+  Windows CI covers PowerShell 5.1 and 7 on Windows 2022/2025. Actual repair,
+  registry/powercfg/LSA/GPO effects, Explorer UX and restart remain owner-only.
+
+## [1.8.11] - 2026-10-21
 - The official Malwarebytes download fallback now requires typing `DONE` after
   installation, then again after the attended scan is finished and its window
   is closed. A short-lived installer/bootstrapper or GUI handoff can no longer

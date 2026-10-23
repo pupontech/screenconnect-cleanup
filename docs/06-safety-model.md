@@ -150,6 +150,37 @@ its official reporting workflow unless a documented official API is verified.
 
 ---
 
+## Optional power-options repair (scripts only)
+
+`START-HERE.bat` offers a default-No repair before the after snapshot. The CLI
+requires `-RepairPowerOptions`; `-ResetLocalGpo` is a separate opt-in and
+`-AllowManagedDevice` is a separate authorization override. Both require the
+repair switch. These options do not enable the WPF cleanup workflow.
+
+The repair requires 64-bit administrator PowerShell on a Windows client edition.
+Server editions are refused, even if the main runner uses `-force`. Domain/MDM
+managed devices and unknown management state are refused unless explicitly
+allowed. Ask the policy administrator first: local edits cannot remove enforcing
+GPO, MDM, scheduled-task or other persistence.
+
+Affected registry keys are exported before editing. Power schemes and shutdown
+rights are backed up before changing them. Local GPO folders are not cleared
+unless separately requested and their backup verifies. This is not a replacement
+for a recoverable system backup. Custom power plans can be replaced, hibernation
+can allocate disk space, and power/sleep-button and lid actions are set to Sleep
+for AC and DC. Explorer is refreshed; save work first.
+
+A local `power-options-repair.json` records action outcomes and backup locations.
+`Completed` reports command outcomes, not proof that malware/persistence is gone
+or that the power menu is usable. Failures stay visible; optional repair evidence
+is included in the local HTML report, not added to the automatic sanitized share.
+
+The repair helper never reboots. A runner may offer a separate default-No reboot
+only after current-run repair evidence exists and the report successfully opens.
+Explicit consent invokes CMD `shutdown /r /t 0 /f`: **forced app closure can lose
+unsaved work**. Declining or closing the prompt never authorizes restart. Physical
+power-off is not a safe substitute for a Windows shutdown.
+
 ## Coding conventions
 
 ### PowerShell 5.1 compatible — mandatory

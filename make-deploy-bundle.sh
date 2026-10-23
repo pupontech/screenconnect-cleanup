@@ -25,6 +25,7 @@ for f in sc-cleanup.ps1 preflight.ps1 collect-snapshot.ps1 diff-snapshots.ps1 \
          targets.json New-InvestigationReport.ps1 Submit-ConnectWiseReport.ps1 \
          Invoke-PersistenceScan.ps1 Invoke-PersistenceInventoryWorker.ps1 Show-PersistenceReview.ps1 Persistence.Inventory.psm1 Persistence.Removal.psm1 \
          SystemRestore.psm1 \
+         Repair-PowerOptions.ps1 PowerOptionsRepair.Core.psm1 PowerOptionsRepair.Windows.psm1 \
          microbin-url.txt DEPLOY.md; do
   cp "$SRC/$f" "$D/"
 done

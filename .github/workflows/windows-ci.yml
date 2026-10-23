@@ -285,6 +285,22 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
+      - name: Power-options repair contracts (Windows PowerShell 5.1, no live changes)
+        shell: powershell
+        run: |
+          foreach ($test in @('core', 'entry', 'workflow', 'report', 'runner', 'windows', 'paths')) {
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "./tests/test_power_options_repair_$test.ps1"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Power-options repair contracts (pwsh, no live changes)
+        shell: pwsh
+        run: |
+          foreach ($test in @('core', 'entry', 'workflow', 'report', 'runner', 'windows', 'paths')) {
+            pwsh -NoProfile -File "./tests/test_power_options_repair_$test.ps1"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
       - name: Build allowlisted testing ZIP from the tested checkout
         shell: bash
         env:
@@ -303,7 +319,7 @@ jobs:
           Expand-Archive -LiteralPath $zip -DestinationPath $extract
           $package = Join-Path $extract 'screenconnect-cleanup'
           New-Item -ItemType Directory -Path (Join-Path $package 'tests') | Out-Null
-          foreach ($test in @('test_persistence_inventory.ps1', 'test_persistence_removal.ps1', 'test_persistence_report.ps1', 'test_persistence_workflow.ps1', 'test_persistence_output_safety.ps1', 'test_persistence_native_fileinfo.ps1', 'test_persistence_watchdog.ps1', 'test_persistence_review.ps1', 'test_persistence_progress_throughput.ps1', 'test_persistence_overlapping_roots.ps1', 'test_persistence_review_safety.ps1', 'test_after_snapshot_failure_reporting.ps1', 'test_report_av_error_escaping.ps1', 'test_snapshot_section_shapes.ps1', 'test_audit_fixes.ps1', 'test_bootstrap_session.ps1', 'test_resume_materials_trust.ps1', 'test_auto_enable_restore_point.ps1')) {
+          foreach ($test in @('test_persistence_inventory.ps1', 'test_persistence_removal.ps1', 'test_persistence_report.ps1', 'test_persistence_workflow.ps1', 'test_persistence_output_safety.ps1', 'test_persistence_native_fileinfo.ps1', 'test_persistence_watchdog.ps1', 'test_persistence_review.ps1', 'test_persistence_progress_throughput.ps1', 'test_persistence_overlapping_roots.ps1', 'test_persistence_review_safety.ps1', 'test_after_snapshot_failure_reporting.ps1', 'test_report_av_error_escaping.ps1', 'test_snapshot_section_shapes.ps1', 'test_audit_fixes.ps1', 'test_bootstrap_session.ps1', 'test_resume_materials_trust.ps1', 'test_auto_enable_restore_point.ps1', 'test_power_options_repair_core.ps1', 'test_power_options_repair_entry.ps1', 'test_power_options_repair_report.ps1', 'test_power_options_repair_runner.ps1', 'test_power_options_repair_windows.ps1', 'test_power_options_repair_paths.ps1', 'test_power_options_repair_workflow.ps1')) {
             $copied = Join-Path (Join-Path $package 'tests') $test
             Copy-Item -LiteralPath (Join-Path 'tests' $test) -Destination $copied
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File $copied

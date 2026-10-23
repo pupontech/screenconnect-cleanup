@@ -33,6 +33,7 @@ def verify(path, version, commit):
             "Show-PersistenceReview.ps1",
             "Persistence.Inventory.psm1", "Persistence.Removal.psm1",
             "SystemRestore.psm1",
+            "Repair-PowerOptions.ps1", "PowerOptionsRepair.Core.psm1", "PowerOptionsRepair.Windows.psm1",
             "New-InvestigationReport.ps1", "Submit-ConnectWiseReport.ps1",
             "tools/Keep-Awake.ps1", "tools/Confirm-OnBattery.ps1",
             "README.md", "DEPLOY.md", "CHANGELOG.md", "docs/12-post-av-persistence.md",

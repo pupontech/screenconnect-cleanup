@@ -85,6 +85,7 @@ if not defined SCC_RUN_ROOT goto :run_setup_failed
 
 echo     Run: !SCC_RUN_ROOT!
 set "PIPE_RC=0"
+set "POWER_REPAIR_RAN=0"
 
 echo.
 echo  ============================================================
@@ -249,7 +250,27 @@ set GO=
 
 rem ---- Step 8: AFTER snapshot + diff ------------------------------------------
 echo.
-echo  STEP 8/9: After snapshot + diff
+echo  STEP 8/9: Optional power-options repair + after snapshot/diff
+echo    The repair is opt-in. Managed devices may need administrator approval.
+set "GO="
+set /p GO="    Repair missing power options now? [y/N] "
+if /i not "!GO!"=="y" goto :skip_power_repair
+set "RESET_GPO="
+set /p RESET_GPO="    Back up, then reset local Group Policy folders? [y/N] "
+set "RESET_GPO_ARGS="
+if /i "!RESET_GPO!"=="y" set "RESET_GPO_ARGS=-ResetLocalGpo"
+powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!Repair-PowerOptions.ps1" -Apply -Confirm:$false -WorkDir "!SCC_RUN_ROOT!" -ResultPath "!SCC_RUN_ROOT!\power-options-repair.json" !RESET_GPO_ARGS!
+set "POWER_REPAIR_RC=!errorlevel!"
+set "POWER_REPAIR_RAN=0"
+if exist "!SCC_RUN_ROOT!\power-options-repair.json" set "POWER_REPAIR_RAN=1"
+if not "!POWER_REPAIR_RC!"=="0" (
+    echo     [WARN] Power-options repair exited !POWER_REPAIR_RC! - review power-options-repair.json.
+    if "!PIPE_RC!"=="0" set "PIPE_RC=!POWER_REPAIR_RC!"
+)
+:skip_power_repair
+set GO=
+set RESET_GPO=
+set RESET_GPO_ARGS=
 powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!collect-snapshot.ps1" -Label after -OutFile "!SCC_RUN_ROOT!\snapshot_after.json" -Quiet
 if errorlevel 1 echo     [WARN] After-snapshot exited with errorlevel %errorlevel%
 rem Only diff when the baseline from this run actually exists.
@@ -280,11 +301,12 @@ if not defined FINDINGS_JSON (
 ) else (
     if exist "!FINDINGS_JSON!" (
     if exist "!SCC_RUN_ROOT!/removal-manifest.json" (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -RemovalManifest "!SCC_RUN_ROOT!/removal-manifest.json" -PersistenceInventory "!SCC_RUN_ROOT!\persistence\inventory.json" -PersistenceRemoval "!SCC_RUN_ROOT!\persistence\removal.json" -PersistenceResult "!SCC_RUN_ROOT!\persistence\result.json" -OutputPath "!SCC_RUN_ROOT!/report.html"
+        powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -RemovalManifest "!SCC_RUN_ROOT!/removal-manifest.json" -PersistenceInventory "!SCC_RUN_ROOT!\persistence\inventory.json" -PersistenceRemoval "!SCC_RUN_ROOT!\persistence\removal.json" -PersistenceResult "!SCC_RUN_ROOT!\persistence\result.json" -PowerOptionsRepair "!SCC_RUN_ROOT!/power-options-repair.json" -OutputPath "!SCC_RUN_ROOT!/report.html"
     ) else (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -PersistenceInventory "!SCC_RUN_ROOT!\persistence\inventory.json" -PersistenceRemoval "!SCC_RUN_ROOT!\persistence\removal.json" -PersistenceResult "!SCC_RUN_ROOT!\persistence\result.json" -OutputPath "!SCC_RUN_ROOT!/report.html"
+        powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!New-InvestigationReport.ps1" -FindingsJson "!FINDINGS_JSON!" -PersistenceInventory "!SCC_RUN_ROOT!\persistence\inventory.json" -PersistenceRemoval "!SCC_RUN_ROOT!\persistence\removal.json" -PersistenceResult "!SCC_RUN_ROOT!\persistence\result.json" -PowerOptionsRepair "!SCC_RUN_ROOT!/power-options-repair.json" -OutputPath "!SCC_RUN_ROOT!/report.html"
     )
         set "REPORT_RC=!errorlevel!"
+        set "REPORT_OPENED=0"
         if not "!REPORT_RC!"=="0" (
             echo     [WARN] Report generation failed with errorlevel !REPORT_RC! - see the messages above.
             if "!PIPE_RC!"=="0" set "PIPE_RC=!REPORT_RC!"
@@ -308,6 +330,7 @@ if not defined FINDINGS_JSON (
             rem Owner directive 2026-08-27: open the report folder + report.
             explorer /select,"!SCC_RUN_ROOT!/report.html"
             start "" "!SCC_RUN_ROOT!/report.html"
+            if not errorlevel 1 set "REPORT_OPENED=1"
             rem Owner directive 2026-09-06: also leave a copy of report.html on
             rem the current user's Desktop. The run-root original is preserved;
             rem a failed copy is reported visibly (never silent) and marks the
@@ -326,6 +349,21 @@ if not defined FINDINGS_JSON (
     )
 )
 set GO=
+if not "!POWER_REPAIR_RAN!"=="1" goto :skip_optional_reboot
+if not "!REPORT_RC!"=="0" goto :skip_optional_reboot
+if not "!REPORT_OPENED!"=="1" goto :skip_optional_reboot
+set "REBOOT="
+echo.
+echo  The report was opened above. Restart closes apps without warning and may lose unsaved work.
+echo  Command: shutdown /r /t 0 /f
+set /p REBOOT="    Restart now through CMD? [y/N] "
+if /i not "!REBOOT!"=="y" goto :skip_optional_reboot
+set "REBOOT="
+echo     Running cmd.exe /d /c "shutdown /r /t 0 /f"
+cmd.exe /d /c "shutdown /r /t 0 /f"
+if errorlevel 1 echo     [WARN] Restart was denied. Do not force power off except as a last resort; unsaved data may be lost.
+:skip_optional_reboot
+set REBOOT=
 set FINDINGS_JSON=
 
 echo.

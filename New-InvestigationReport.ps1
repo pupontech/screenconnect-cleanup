@@ -19,6 +19,7 @@ param(
     [string]$PersistenceInventory,
     [string]$PersistenceRemoval,
     [string]$PersistenceResult,
+    [string]$PowerOptionsRepair,
     [switch]$ScannersSkipped,
     [switch]$PassThru
 )
@@ -1089,7 +1090,79 @@ footer { margin-top: 30px; padding-top: 10px; border-top: 1px solid var(--border
 '@
 
 # ---------------------------------------------------------------------------
+# Optional PowerOptionsRepair evidence. Any supplied but unavailable or
+# malformed evidence is explicitly incomplete; status text is never trusted
+# to imply restoration beyond the recorded action outcomes.
+# ---------------------------------------------------------------------------
+$powerRepairSectionHtml = ''
+if ($PowerOptionsRepair) {
+    $repairData = $null
+    $repairError = $null
+    if (-not (Test-Path -LiteralPath $PowerOptionsRepair -PathType Leaf)) {
+        $repairError = 'Repair result file is missing or is not a file.'
+    } else {
+        try {
+            $repairData = (Get-Content -LiteralPath $PowerOptionsRepair -Raw -ErrorAction Stop) | ConvertFrom-Json -ErrorAction Stop
+            if ($null -eq $repairData -or $repairData -isnot [System.Management.Automation.PSCustomObject]) { throw 'Repair evidence must be a JSON object.' }
+            $rawActions = Get-Prop $repairData 'Actions'
+            if ($null -ne $rawActions -and $rawActions -isnot [System.Array] -and $rawActions -isnot [System.Management.Automation.PSCustomObject]) { throw 'Actions must be an array or object.' }
+            foreach ($action in (Get-Items $rawActions)) {
+                if ($null -eq $action -or $action -isnot [System.Management.Automation.PSCustomObject]) { throw 'Each action must be an object.' }
+            }
+            foreach ($field in @('Notes','ManagementWarnings')) {
+                $rawList = Get-Prop $repairData $field
+                if ($null -ne $rawList -and $rawList -isnot [System.Array] -and $rawList -isnot [System.Management.Automation.PSCustomObject] -and $rawList -isnot [string]) { throw ($field + ' must be an array or scalar text.') }
+            }
+        } catch {
+            $repairData = $null
+            $repairError = $_.Exception.Message
+        }
+    }
+    $repairStatus = Get-Prop $repairData 'Status'
+    $isIncomplete = $repairError -or [string]::IsNullOrWhiteSpace([string]$repairStatus)
+    if ($isIncomplete) { $repairStatus = 'Unknown / incomplete' }
+    $statusClass = 'badge-unknown'
+    if (-not $isIncomplete -and [string]$repairStatus -ieq 'Completed') { $statusClass = 'badge-medium' }
+    elseif (-not $isIncomplete -and [string]$repairStatus -ieq 'Partial') { $statusClass = 'badge-high' }
+    elseif (-not $isIncomplete) { $statusClass = 'badge-medium' }
+    $repairBody = ''
+    if ($repairError) { $repairBody += "<p class='warn-line'>Repair evidence unavailable or invalid: $(Fmt $repairError). No repair outcome can be confirmed.</p>" }
+    elseif ([string]$repairStatus -ieq 'Completed') { $repairBody += "<p class='warn-line'>The result records Completed; this report does not independently verify restoration. Review each recorded action and confirm power options on the device.</p>" }
+    else { $repairBody += "<p class='warn-line'>This evidence does not establish a completed restoration. Review the recorded outcomes and verify device state independently.</p>" }
+    $backupRoot = Get-Prop $repairData 'BackupRoot'
+    if (-not $backupRoot) { $backupRoot = Get-Prop $repairData 'BackupPath' }
+    if ($backupRoot) { $repairBody += "<p>Backup location recorded: <code>$(Fmt $backupRoot)</code></p>" }
+    $resetOptIn = Get-Prop $repairData 'ResetLocalGpo'
+    if ($null -eq $resetOptIn) { $resetOptIn = Get-Prop $repairData 'ResetLocalGpoRequested' }
+    $managedOptIn = Get-Prop $repairData 'AllowManagedDevice'
+    if ($null -eq $managedOptIn) { $managedOptIn = Get-Prop (Get-Prop $repairData 'ManagementState') 'ExplicitOverride' }
+    $repairBody += "<p>Reset local GPO opt-in: $(FmtBool $resetOptIn 'Unknown'); managed-device override opt-in: $(FmtBool $managedOptIn 'Unknown').</p>"
+    $actionRows = ''
+    foreach ($action in (Get-Items (Get-Prop $repairData 'Actions'))) {
+        $actionRows += "<tr><td>$(Fmt (Get-Prop $action 'Action'))</td><td>$(Fmt (Get-Prop $action 'Status'))</td><td>$(Fmt (Get-Prop $action 'Detail'))</td></tr>`n"
+    }
+    if (-not $actionRows) { $actionRows = '<tr><td colspan="3">No action outcomes were recorded; restoration is unverified.</td></tr>' }
+    foreach ($field in @('Notes','ManagementWarnings')) {
+        $items = Get-Items (Get-Prop $repairData $field)
+        if ($items.Count -gt 0) {
+            $label = if ($field -eq 'Notes') { 'Repair notes' } else { 'Management warnings' }
+            $listHtml = ''
+            foreach ($item in $items) { $text = if ($item -is [System.Management.Automation.PSCustomObject]) { $item | ConvertTo-Json -Compress -Depth 4 } else { $item }; $listHtml += "<li>$(Fmt $text)</li>" }
+            $repairBody += "<h3>$label</h3><ul>$listHtml</ul>"
+        }
+    }
+    $powerRepairSectionHtml = @"
+<section id="power-options-repair">
+  <h2>Power options repair <span class="badge $statusClass">$(Fmt $repairStatus)</span></h2>
+  $repairBody
+  <div class="table-scroll"><table class="data-table"><thead><tr><th>Action</th><th>Outcome</th><th>Details</th></tr></thead><tbody>$actionRows</tbody></table></div>
+</section>
+"@
+}
+
+# ---------------------------------------------------------------------------
 # Assemble document
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 
 $titleText = "Remote Access Investigation Report"
@@ -1113,6 +1186,7 @@ $headerHtml
 <main>
 $summaryHtml
 $persistenceSectionHtml
+$powerRepairSectionHtml
 $scSectionHtml
 $otherSectionHtml
 $avUninstallSectionHtml

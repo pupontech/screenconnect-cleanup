@@ -242,6 +242,35 @@ credentials for the ConnectWise site to this tool.
 | `-MicroBinUploaderPasswordFile <path>` | MicroBin uploader password file, for servers that require one (environment fallback: `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD`) |
 | `-NoShare` | create the local sanitized package but do not share it (`Submit-ConnectWiseReport.ps1`: `-NoUpload`) |
 
+### Optional repair and restart
+
+The guided runner asks before repairing missing power options. The equivalent
+CLI opt-in is `-RepairPowerOptions`. The standalone helper can be previewed
+without changes:
+
+```powershell
+powershell -NoProfile -File .\Repair-PowerOptions.ps1 -Apply -WhatIf
+```
+
+For an owner-authorized live repair, run the helper elevated with `-Apply`, or
+opt in through the runner. Keep both `PowerOptionsRepair.*.psm1` modules beside
+it. Do not add `-ResetLocalGpo` unless the broader local-policy reset is wanted;
+do not override managed-device refusal without the policy administrator's
+permission. Save work before Explorer refresh. Custom power plans are backed up
+before replacement; button/lid defaults are Sleep, and hibernation uses disk.
+
+The local report shows action outcomes, backup paths and incomplete evidence.
+Repair evidence is local-only and not added to MicroBin's sanitized payload.
+After repair evidence exists and the report opens successfully, the runner may
+ask separately about rebooting. Default is No. Accepting invokes
+`shutdown /r /t 0 /f` through CMD and **can lose unsaved work**. The helper never
+reboots automatically. Domain/MDM/task persistence can restore restrictions;
+this repair does not certify malware removal. See [safety model](docs/06-safety-model.md).
+
+Windows owner acceptance remains required for actual registry, powercfg, LSA,
+policy reset, Explorer refresh, UAC and reboot behavior. Synthetic CI contracts
+are not live-system acceptance.
+
 ## 5. Before you trust it — outstanding live validation
 
 These were never run against real Windows content (agents had no Windows box;
