@@ -1,2 +1,4 @@
-# Windows batch files are intentionally CRLF; do not flag the CR as whitespace.
-*.bat whitespace=cr-at-eol
+# Preserve source bytes across Linux and Windows checkouts.
+* text=auto eol=lf
+# Batch files are committed as CRLF; preserve those bytes without conversion.
+*.bat -text whitespace=cr-at-eol

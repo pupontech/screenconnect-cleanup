@@ -3,8 +3,9 @@ import argparse
 import hashlib
 import re
 import stat
+import subprocess
 import zipfile
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 
 def verify(path, version, commit):
@@ -50,6 +51,14 @@ def verify(path, version, commit):
             expected[name] = digest
         actual = {name: hashlib.sha256(data).hexdigest() for name, data in members.items() if name != "SHA256SUMS.txt"}
         assert expected == actual, "manifest must cover all members exactly with matching bytes"
+        # A checkout can rewrite line endings even when its own hashes agree.
+        # Compare raw payload bytes with the exact source commit, not normalized text.
+        source_root = Path(__file__).resolve().parents[1]
+        for name, data in members.items():
+            if name in ("BUILD-INFO.txt", "SHA256SUMS.txt"):
+                continue
+            original = subprocess.check_output(["git", "show", commit + ":" + name], cwd=source_root)
+            assert data == original, "source byte mismatch: " + name
         for name, data in members.items():
             if name.endswith((".ps1", ".psm1", ".psd1", ".bat")):
                 assert not data.startswith(b"\xef\xbb\xbf") and all(byte < 128 for byte in data), name
