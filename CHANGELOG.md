@@ -3,6 +3,23 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.12-gui-alpha.2] - 2026-11-10 - GUI alpha: REMOVE-gate safety fix, restyle (ALPHA)
+**ALPHA. Replaces 1.8.12-gui-alpha.1, which must not be used (the typed REMOVE was not enforced).
+Owner live Windows acceptance still required (docs/14 section 12.4).**
+- New header button "Open RIT-SCC folder" (opens C:\RIT-SCC, where every run folder lives; disabled
+  until that folder exists, never created by the window).
+- **Safety fix: the typed-REMOVE confirmation did not gate the Remove button in 1.8.12-gui-alpha.1.**
+  The dialog read `NeedsWord` from a hashtable's `PSObject.Properties`, which never lists hashtable
+  keys, so in a real run the Remove button was enabled before `REMOVE` was typed (both the ScreenConnect
+  removal and the persistence cleanup confirmation). The script's own y/N still followed, but the
+  typed-word safeguard was not in force. Fixed, and now covered by `Start-CleanupGui.ps1 -SelfTest`,
+  which builds the real dialogs (not shown) and checks the button stays disabled for "remove",
+  "REMOVE " etc. and enables only on exactly `REMOVE`. The earlier tests skipped real dialogs.
+- Restyle: design tokens in `gui\MainWindow.xaml` (one light and one dark palette of semantic colours,
+  radius and spacing; nothing else in the window names a colour), shared button / card / mode-card /
+  scrollbar styles, a status dot per step, cards for each instance, themed dialogs. Dark follows the
+  Windows app-mode setting, or `-Theme Light|Dark`. No behaviour change.
+
 ## [1.8.12-gui-alpha.1] - 2026-11-10 - GUI window (ALPHA, on top of 1.8.12-offline-alpha.1)
 **ALPHA. Not an upstream release. Owner live Windows acceptance required (docs/14 section 12.4). The
 removal path has been exercised only against stubs and the real review script with a stubbed remover -

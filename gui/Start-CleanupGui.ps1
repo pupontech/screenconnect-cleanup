@@ -36,7 +36,11 @@ param(
     [string]$Mode = '',
     [string]$ResultPath = '',
     [int]$HoldSeconds = 0,
-    [string]$RenderPng = ''
+    [string]$RenderPng = '',
+    # Light or dark design tokens; System follows the Windows app-mode setting.
+    [ValidateSet('System', 'Light', 'Dark')][string]$Theme = 'System',
+    # Builds the real dialogs without showing them and checks the typed-word gate and the design tokens.
+    [switch]$SelfTest
 )
 
 Set-StrictMode -Version 2.0
@@ -71,7 +75,7 @@ if (-not $isAdmin -and -not $AllowNotElevated) {
 $xamlText = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'MainWindow.xaml'))
 $win = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader ([xml]$xamlText)))
 $ui = @{}
-$controlNames = 'TitleText', 'InfoText', 'RunText', 'BtnOpenRunHeader', 'StepperHost', 'StartPanel',
+$controlNames = 'TitleText', 'InfoText', 'RunText', 'BtnOpenRitRoot', 'BtnOpenRunHeader', 'StepperHost', 'StartPanel',
 'RbOffline', 'RbOnline', 'RbDetect', 'RbStage', 'BtnStart', 'PriorRunsText',
 'RunPanel', 'StatusTitle', 'StatusDetail', 'Busy', 'Banner', 'BannerText', 'ReviewBar', 'ReviewSummary', 'BtnReviewContinue',
 'CardsHost', 'BtnOpenReport', 'BtnOpenRun', 'BtnRestart', 'BtnNewRun', 'BtnCopy', 'BtnOpenLog', 'ConsoleBox'
@@ -136,9 +140,38 @@ function Get-TestAnswer {
     return $null
 }
 
-function New-Brush {
-    param([string]$Hex)
-    return (New-Object System.Windows.Media.BrushConverter).ConvertFromString($Hex)
+function Get-Brush {
+    # A design token from MainWindow.xaml ("Brush.<Tone>"). Never a literal colour: the token set is the
+    # one place colours live, and it swaps as a whole for the dark theme. An unknown token throws.
+    param([string]$Tone)
+    return $win.FindResource('Brush.' + $Tone)
+}
+
+function Set-GuiTheme {
+    # Light is what the XAML defines. Dark replaces every Brush.* token with the Theme.Dark set before any
+    # element is built, so everything that uses the tokens (XAML via DynamicResource, code via Get-Brush)
+    # follows. System = the Windows "app mode" setting (Settings > Personalization > Colors).
+    param([string]$Name)
+    $useDark = $false
+    if ($Name -eq 'Dark') { $useDark = $true }
+    elseif ($Name -eq 'System') {
+        try {
+            $v = Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name 'AppsUseLightTheme' -ErrorAction Stop
+            $useDark = ([int]$v.AppsUseLightTheme -eq 0)
+        } catch { $useDark = $false }
+    }
+    if ($useDark) {
+        $dark = $win.Resources['Theme.Dark']
+        foreach ($k in @($dark.Keys)) { $win.Resources[$k] = $dark[$k] }
+    }
+    $script:ThemeName = $(if ($useDark) { 'Dark' } else { 'Light' })
+}
+Set-GuiTheme $Theme
+
+function Set-ButtonStyle {
+    # Buttons the script builds use the same component styles as the XAML ones.
+    param($Button, [string]$Variant = 'Secondary')
+    $Button.Style = $win.FindResource('Button.' + $Variant)
 }
 
 function Write-GuiLogText {
@@ -191,28 +224,38 @@ function Initialize-Stepper {
         $seen[$id] = $true
         $e = [pscustomobject]@{ StepId = $id; StepTitle = [string]$step.Title }
         $outside = -not $inMode.ContainsKey($id)
+        # A row: a status dot, the step number and title, and the state underneath. Rounded, borderless
+        # until the step is the one running or waiting, which gets an outline in its state colour.
         $border = New-Object System.Windows.Controls.Border
-        $border.Padding = New-Object System.Windows.Thickness(8, 6, 8, 6)
-        $border.Margin = New-Object System.Windows.Thickness(0, 0, 0, 4)
+        $border.Padding = New-Object System.Windows.Thickness(10, 7, 10, 7)
+        $border.Margin = New-Object System.Windows.Thickness(0, 0, 0, 3)
+        $border.CornerRadius = New-Object System.Windows.CornerRadius(8)
         $border.BorderThickness = New-Object System.Windows.Thickness(1)
-        $border.BorderBrush = New-Brush '#D3DAE1'
+        $border.BorderBrush = [System.Windows.Media.Brushes]::Transparent
+        $dock = New-Object System.Windows.Controls.DockPanel
+        $dot = New-Object System.Windows.Shapes.Ellipse
+        $dot.Width = 9; $dot.Height = 9; $dot.Margin = New-Object System.Windows.Thickness(0, 5, 10, 0); $dot.VerticalAlignment = 'Top'
+        [System.Windows.Controls.DockPanel]::SetDock($dot, 'Left')
         $sp = New-Object System.Windows.Controls.StackPanel
         $title = New-Object System.Windows.Controls.TextBlock
         $title.Text = $e.StepId + '  ' + $e.StepTitle
         $title.TextWrapping = 'Wrap'
         $title.FontWeight = 'SemiBold'
+        $title.Foreground = Get-Brush 'Foreground'
         $state = New-Object System.Windows.Controls.TextBlock
         $state.TextWrapping = 'Wrap'
-        $state.FontSize = 12
+        $state.FontSize = 11.5
+        $state.Margin = New-Object System.Windows.Thickness(0, 1, 0, 0)
         [void]$sp.Children.Add($title); [void]$sp.Children.Add($state)
-        $border.Child = $sp
+        [void]$dock.Children.Add($dot); [void]$dock.Children.Add($sp)
+        $border.Child = $dock
         $reason = ''
         if ($outside) {
             $reason = Get-NotInModeReason -ModeName $ModeName -Step $step
-            $title.Foreground = New-Brush '#8A949E'; $border.Opacity = 0.75
+            $title.Foreground = Get-Brush 'Subtle'; $title.FontWeight = 'Normal'
         }
         [void]$ui.StepperHost.Children.Add($border)
-        $script:StepRows[$e.StepId] = [pscustomobject]@{ Border = $border; State = $state; OutsideReason = $reason }
+        $script:StepRows[$e.StepId] = [pscustomobject]@{ Border = $border; State = $state; Dot = $dot; OutsideReason = $reason }
     }
 }
 
@@ -221,33 +264,142 @@ function Update-Stepper {
         $row = $script:StepRows[$id]
         if ($row.OutsideReason) {
             $row.State.Text = 'skipped in this mode - ' + $row.OutsideReason
-            $row.State.Foreground = New-Brush '#8A949E'
-            $row.Border.Background = New-Brush '#F7F8FA'
+            $row.State.Foreground = Get-Brush 'Subtle'
+            $row.Border.Background = [System.Windows.Media.Brushes]::Transparent
+            $row.Border.BorderBrush = [System.Windows.Media.Brushes]::Transparent
+            $row.Dot.Fill = [System.Windows.Media.Brushes]::Transparent
+            $row.Dot.Stroke = Get-Brush 'Border'; $row.Dot.StrokeThickness = 1.5
             continue
         }
-        $word = 'waiting'; $note = ''; $bg = '#FFFFFF'; $fg = '#4A5560'
+        $word = 'waiting'; $note = ''; $bg = ''; $fg = 'Muted'; $dotTone = 'BorderStrong'; $active = $false
         $res = $null
         if ($script:Session) { $res = @($script:Session.Results | Where-Object { $_.StepId -eq $id }) | Select-Object -Last 1 }
         if ($script:Action -and $script:Action.StepId -eq $id) {
-            if ($script:Action.Kind -eq 'Ask') { $word = 'waiting for you'; $bg = '#FFF6E5'; $fg = '#7A5A06' }
-            else { $word = 'running'; $bg = '#EAF2FB'; $fg = '#174A7C' }
+            $active = $true
+            if ($script:Action.Kind -eq 'Ask') { $word = 'waiting for you'; $bg = 'WarningBg'; $fg = 'WarningFg' }
+            else { $word = 'running'; $bg = 'InfoBg'; $fg = 'InfoFg' }
         }
         elseif ($res) {
             switch ($res.Status) {
-                'Done' { $word = 'done'; $bg = '#EAF6EC'; $fg = '#275C31' }
-                'Warn' { $word = 'done with warning'; $bg = '#FFF6E5'; $fg = '#7A5A06'; $note = $res.Message }
-                'Failed' { $word = 'failed'; $bg = '#FDECEA'; $fg = '#8A2B23'; $note = $res.Message }
-                'Skipped' { $word = 'skipped'; $bg = '#F1F4F7'; $fg = '#4A5560'; $note = $res.Message }
-                'Resurrection' { $word = 'RESURRECTION found'; $bg = '#FDECEA'; $fg = '#8A2B23'; $note = $res.Message }
+                'Done' { $word = 'done'; $bg = 'SuccessBg'; $fg = 'SuccessFg' }
+                'Warn' { $word = 'done with warning'; $bg = 'WarningBg'; $fg = 'WarningFg'; $note = $res.Message }
+                'Failed' { $word = 'failed'; $bg = 'DangerBg'; $fg = 'DangerFg'; $note = $res.Message }
+                'Skipped' { $word = 'skipped'; $bg = ''; $fg = 'Muted'; $note = $res.Message }
+                'Resurrection' { $word = 'RESURRECTION found'; $bg = 'DangerBg'; $fg = 'DangerFg'; $note = $res.Message }
             }
+            $dotTone = $(if ($fg -eq 'Muted') { 'Subtle' } else { $fg })
         }
+        if ($active) { $dotTone = $fg }
         $row.State.Text = $word + $(if ($note) { ' - ' + $note } else { '' })
-        $row.State.Foreground = New-Brush $fg
-        $row.Border.Background = New-Brush $bg
+        $row.State.Foreground = Get-Brush $fg
+        $row.Border.Background = $(if ($bg) { Get-Brush $bg } else { [System.Windows.Media.Brushes]::Transparent })
+        $row.Border.BorderBrush = $(if ($active) { Get-Brush $fg } else { [System.Windows.Media.Brushes]::Transparent })
+        $row.Dot.Fill = Get-Brush $dotTone
+        $row.Dot.Stroke = $null
     }
 }
 
 # ---- dialogs -----------------------------------------------------------------------------------
+function Test-ButtonNeedsWord {
+    # Button specs are hashtables (@{ Text; Value; NeedsWord }); a hashtable's keys are NOT in
+    # .PSObject.Properties, so read the key itself. (Reading PSObject.Properties here once left the
+    # Remove button enabled without the typed word - see -SelfTest.)
+    param($Spec)
+    if ($Spec -is [System.Collections.IDictionary]) { return [bool]$Spec['NeedsWord'] }
+    $p = $Spec.PSObject.Properties['NeedsWord']
+    return ($p -and [bool]$p.Value)
+}
+
+function New-DialogWindow {
+    # Builds (does not show) one modal dialog in the window's design tokens. See Show-Dialog.
+    param(
+        [string]$Title, [string]$Message, [string]$Detail = '', $Buttons,
+        $Checks = @(), [switch]$TextInput, [string]$TypeWord = ''
+    )
+    $w = New-Object System.Windows.Window
+    $w.Title = $Title; $w.SizeToContent = 'WidthAndHeight'; $w.MaxWidth = 660; $w.ResizeMode = 'NoResize'
+    $w.ShowInTaskbar = $false; $w.WindowStartupLocation = 'CenterOwner'
+    if ($win.IsLoaded) { $w.Owner = $win }
+    # A dialog is its own window and does not see the main window's resources, so it gets a copy of
+    # them (tokens already set to the current theme, plus the component styles that use them).
+    foreach ($k in @($win.Resources.Keys)) { $w.Resources[$k] = $win.Resources[$k] }
+    $w.Background = Get-Brush 'Background'; $w.Foreground = Get-Brush 'Foreground'
+    $w.FontFamily = $win.FontFamily; $w.FontSize = $win.FontSize
+    $sp = New-Object System.Windows.Controls.StackPanel
+    $sp.Margin = New-Object System.Windows.Thickness(22, 18, 22, 18)
+    $head = New-Object System.Windows.Controls.TextBlock
+    $head.Text = $Title; $head.FontSize = 15; $head.FontWeight = 'SemiBold'; $head.Margin = New-Object System.Windows.Thickness(0, 0, 0, 8)
+    $head.Foreground = Get-Brush 'Foreground'
+    [void]$sp.Children.Add($head)
+    $tb = New-Object System.Windows.Controls.TextBlock
+    $tb.Text = $Message; $tb.TextWrapping = 'Wrap'; $tb.MaxWidth = 610; $tb.Foreground = Get-Brush 'Muted'
+    [void]$sp.Children.Add($tb)
+    if ($Detail) {
+        $d = New-Object System.Windows.Controls.TextBox
+        $d.Text = $Detail; $d.IsReadOnly = $true; $d.TextWrapping = 'Wrap'; $d.FontFamily = 'Consolas'; $d.FontSize = 12
+        $d.MaxHeight = 200; $d.VerticalScrollBarVisibility = 'Auto'; $d.Margin = New-Object System.Windows.Thickness(0, 12, 0, 0)
+        $d.Padding = New-Object System.Windows.Thickness(8, 6, 8, 6)
+        $d.Background = Get-Brush 'SurfaceSunken'; $d.Foreground = Get-Brush 'Foreground'; $d.BorderBrush = Get-Brush 'Border'
+        [void]$sp.Children.Add($d)
+    }
+    $tag = @{ Checks = @{}; Text = $null; Word = $TypeWord; Gated = @() }
+    foreach ($c in @($Checks)) {
+        $cb = New-Object System.Windows.Controls.CheckBox
+        $cb.Content = $c.Text; $cb.IsChecked = [bool]$c.Checked; $cb.IsEnabled = $(if ($c.PSObject.Properties['Enabled']) { [bool]$c.Enabled } else { $true })
+        $cb.Margin = New-Object System.Windows.Thickness(0, 10, 0, 0); $cb.Foreground = Get-Brush 'Foreground'
+        if ($c.PSObject.Properties['DependsOn'] -and $c.DependsOn) { $cb.Tag = [string]$c.DependsOn }
+        $tag.Checks[[string]$c.Key] = $cb
+        [void]$sp.Children.Add($cb)
+    }
+    foreach ($cb in @($tag.Checks.Values)) {
+        if ($cb.Tag) {
+            # a tick box that only makes sense when another is ticked (e.g. the GPO reset needs the repair)
+            $parent = $tag.Checks[[string]$cb.Tag]
+            $child = $cb
+            $apply = { param($s, $e) $child.IsEnabled = [bool]$parent.IsChecked; if (-not $parent.IsChecked) { $child.IsChecked = $false } }.GetNewClosure()
+            $parent.add_Checked($apply); $parent.add_Unchecked($apply)
+            & $apply $null $null
+        }
+    }
+    if ($TextInput -or $TypeWord) {
+        $box = New-Object System.Windows.Controls.TextBox
+        $box.Margin = New-Object System.Windows.Thickness(0, 12, 0, 0); $box.FontFamily = 'Consolas'; $box.FontSize = 13
+        $box.Padding = New-Object System.Windows.Thickness(8, 6, 8, 6)
+        $box.Background = Get-Brush 'Surface'; $box.Foreground = Get-Brush 'Foreground'; $box.BorderBrush = Get-Brush 'BorderStrong'
+        $box.CaretBrush = Get-Brush 'Foreground'
+        $tag.Text = $box
+        [void]$sp.Children.Add($box)
+    }
+    $wp = New-Object System.Windows.Controls.WrapPanel
+    $wp.Margin = New-Object System.Windows.Thickness(0, 18, 0, 0)
+    foreach ($b in $Buttons) {
+        $btn = New-Object System.Windows.Controls.Button
+        $btn.Content = $b.Text; $btn.Tag = $b.Value
+        # Neutral buttons everywhere; only the approval that needs the typed word looks like what it does.
+        $needs = ($TypeWord -and (Test-ButtonNeedsWord $b))
+        Set-ButtonStyle $btn $(if ($needs) { 'Danger' } else { 'Secondary' })
+        if ($needs) { $btn.IsEnabled = $false; $tag.Gated += $btn }
+        $btn.add_Click({
+                param($s, $e)
+                $dw = [System.Windows.Window]::GetWindow($s)
+                $script:DlgValue = [string]$s.Tag
+                $script:DlgChecks = @{}
+                foreach ($k in @($dw.Tag.Checks.Keys)) { $script:DlgChecks[$k] = [bool]$dw.Tag.Checks[$k].IsChecked }
+                if ($dw.Tag.Text) { $script:DlgText = [string]$dw.Tag.Text.Text }
+                $dw.Close()
+            })
+        [void]$wp.Children.Add($btn)
+    }
+    if ($TypeWord) {
+        $gated = $tag.Gated; $word = $TypeWord; $boxRef = $tag.Text
+        $boxRef.add_TextChanged({ param($s, $e) foreach ($g in $gated) { $g.IsEnabled = (([string]$boxRef.Text) -ceq $word) } }.GetNewClosure())
+    }
+    [void]$sp.Children.Add($wp)
+    $w.Tag = $tag
+    $w.Content = $sp
+    return $w
+}
+
 function Show-Dialog {
     # One modal dialog primitive. Returns $null when it was closed with the window X (the caller then
     # sends the engine's REFUSING answer, never yes); otherwise an object with
@@ -271,71 +423,7 @@ function Show-Dialog {
         return [pscustomobject]@{ Value = [string]$t.Value; Checks = $ticked; Text = $(if ($t.PSObject.Properties['Text']) { [string]$t.Text } else { '' }) }
     }
     $script:DlgValue = $null; $script:DlgChecks = @{}; $script:DlgText = $null
-    $w = New-Object System.Windows.Window
-    $w.Title = $Title; $w.SizeToContent = 'WidthAndHeight'; $w.MaxWidth = 640; $w.ResizeMode = 'NoResize'
-    $w.ShowInTaskbar = $false; $w.Owner = $win; $w.WindowStartupLocation = 'CenterOwner'
-    $sp = New-Object System.Windows.Controls.StackPanel
-    $sp.Margin = New-Object System.Windows.Thickness(16)
-    $tb = New-Object System.Windows.Controls.TextBlock
-    $tb.Text = $Message; $tb.TextWrapping = 'Wrap'; $tb.MaxWidth = 600
-    [void]$sp.Children.Add($tb)
-    if ($Detail) {
-        $d = New-Object System.Windows.Controls.TextBox
-        $d.Text = $Detail; $d.IsReadOnly = $true; $d.TextWrapping = 'Wrap'; $d.FontFamily = 'Consolas'; $d.FontSize = 12
-        $d.MaxHeight = 180; $d.VerticalScrollBarVisibility = 'Auto'; $d.Margin = New-Object System.Windows.Thickness(0, 10, 0, 0)
-        [void]$sp.Children.Add($d)
-    }
-    $tag = @{ Checks = @{}; Text = $null; Word = $TypeWord; Gated = @() }
-    foreach ($c in @($Checks)) {
-        $cb = New-Object System.Windows.Controls.CheckBox
-        $cb.Content = $c.Text; $cb.IsChecked = [bool]$c.Checked; $cb.IsEnabled = $(if ($c.PSObject.Properties['Enabled']) { [bool]$c.Enabled } else { $true })
-        $cb.Margin = New-Object System.Windows.Thickness(0, 10, 0, 0)
-        if ($c.PSObject.Properties['DependsOn'] -and $c.DependsOn) { $cb.Tag = [string]$c.DependsOn }
-        $tag.Checks[[string]$c.Key] = $cb
-        [void]$sp.Children.Add($cb)
-    }
-    foreach ($cb in @($tag.Checks.Values)) {
-        if ($cb.Tag) {
-            # a tick box that only makes sense when another is ticked (e.g. the GPO reset needs the repair)
-            $parent = $tag.Checks[[string]$cb.Tag]
-            $child = $cb
-            $apply = { param($s, $e) $child.IsEnabled = [bool]$parent.IsChecked; if (-not $parent.IsChecked) { $child.IsChecked = $false } }.GetNewClosure()
-            $parent.add_Checked($apply); $parent.add_Unchecked($apply)
-            & $apply $null $null
-        }
-    }
-    if ($TextInput -or $TypeWord) {
-        $box = New-Object System.Windows.Controls.TextBox
-        $box.Margin = New-Object System.Windows.Thickness(0, 10, 0, 0); $box.FontFamily = 'Consolas'
-        $tag.Text = $box
-        [void]$sp.Children.Add($box)
-    }
-    $wp = New-Object System.Windows.Controls.WrapPanel
-    $wp.Margin = New-Object System.Windows.Thickness(0, 14, 0, 0)
-    foreach ($b in $Buttons) {
-        $btn = New-Object System.Windows.Controls.Button
-        $btn.Content = $b.Text; $btn.Tag = $b.Value
-        $btn.Padding = New-Object System.Windows.Thickness(14, 6, 14, 6)
-        $btn.Margin = New-Object System.Windows.Thickness(0, 0, 8, 0)
-        if ($TypeWord -and $b.PSObject.Properties['NeedsWord'] -and $b.NeedsWord) { $btn.IsEnabled = $false; $tag.Gated += $btn }
-        $btn.add_Click({
-                param($s, $e)
-                $dw = [System.Windows.Window]::GetWindow($s)
-                $script:DlgValue = [string]$s.Tag
-                $script:DlgChecks = @{}
-                foreach ($k in @($dw.Tag.Checks.Keys)) { $script:DlgChecks[$k] = [bool]$dw.Tag.Checks[$k].IsChecked }
-                if ($dw.Tag.Text) { $script:DlgText = [string]$dw.Tag.Text.Text }
-                $dw.Close()
-            })
-        [void]$wp.Children.Add($btn)
-    }
-    if ($TypeWord) {
-        $gated = $tag.Gated; $word = $TypeWord; $boxRef = $tag.Text
-        $boxRef.add_TextChanged({ param($s, $e) foreach ($g in $gated) { $g.IsEnabled = (([string]$boxRef.Text) -ceq $word) } }.GetNewClosure())
-    }
-    [void]$sp.Children.Add($wp)
-    $w.Tag = $tag
-    $w.Content = $sp
+    $w = New-DialogWindow -Title $Title -Message $Message -Detail $Detail -Buttons $Buttons -Checks $Checks -TextInput:$TextInput -TypeWord $TypeWord
     $script:InDialog = $true
     try { [void]$w.ShowDialog() } finally { $script:InDialog = $false }
     if ($null -eq $script:DlgValue) { return $null }
@@ -429,12 +517,18 @@ function Resolve-Prompt {
 # ---- panels and findings -----------------------------------------------------------------------
 function Show-Banner {
     param([string]$Text, [string]$Kind = 'info')
-    $bg = '#F1F4F7'; $bd = '#D3DAE1'
-    if ($Kind -eq 'ok') { $bg = '#EAF6EC'; $bd = '#3F9450' }
-    if ($Kind -eq 'warn') { $bg = '#FFF6E5'; $bd = '#D99A1B' }
-    if ($Kind -eq 'bad') { $bg = '#FDECEA'; $bd = '#E0554A' }
-    $ui.Banner.Background = New-Brush $bg
-    $ui.Banner.BorderBrush = New-Brush $bd
+    $bg = 'SurfaceSunken'; $bd = 'Border'
+    if ($Kind -eq 'ok') { $bg = 'SuccessBg'; $bd = 'SuccessBorder' }
+    if ($Kind -eq 'warn') { $bg = 'WarningBg'; $bd = 'WarningBorder' }
+    if ($Kind -eq 'bad') { $bg = 'DangerBg'; $bd = 'DangerBorder' }
+    $fg = 'Foreground'
+    if ($Kind -eq 'ok') { $fg = 'SuccessFg' }
+    if ($Kind -eq 'warn') { $fg = 'WarningFg' }
+    if ($Kind -eq 'bad') { $fg = 'DangerFg' }
+    $ui.Banner.Background = Get-Brush $bg
+    $ui.Banner.BorderBrush = Get-Brush $bd
+    $ui.BannerText.Foreground = Get-Brush $fg
+    $ui.BannerText.FontWeight = 'SemiBold'
     $ui.BannerText.Text = $Text
     $ui.Banner.Visibility = 'Visible'
 }
@@ -445,7 +539,7 @@ function Add-Fact {
     $tb = New-Object System.Windows.Controls.TextBlock
     $tb.TextWrapping = 'Wrap'
     $tb.Margin = New-Object System.Windows.Thickness(0, 1, 0, 1)
-    $r1 = New-Object System.Windows.Documents.Run ($Label + ': '); $r1.FontWeight = 'SemiBold'; $r1.Foreground = New-Brush '#4A5560'
+    $r1 = New-Object System.Windows.Documents.Run ($Label + ': '); $r1.FontWeight = 'SemiBold'; $r1.Foreground = Get-Brush 'Muted'
     $r2 = New-Object System.Windows.Documents.Run $Value
     [void]$tb.Inlines.Add($r1); [void]$tb.Inlines.Add($r2)
     [void]$Panel.Children.Add($tb)
@@ -457,15 +551,16 @@ function New-InstanceCard {
     # Remove / Keep pair (Remove is the default); the pair is recorded in $script:KeepRows.
     param($Inst, [int]$Total, [switch]$Choose)
     $b = New-Object System.Windows.Controls.Border
-    $b.BorderBrush = New-Brush '#B8C2CC'; $b.BorderThickness = New-Object System.Windows.Thickness(1)
-    $b.Padding = New-Object System.Windows.Thickness(12); $b.Margin = New-Object System.Windows.Thickness(0, 0, 0, 10)
+    $b.Style = $win.FindResource('Card')
+    $b.Margin = New-Object System.Windows.Thickness(0, 0, 0, 10)
     $sp = New-Object System.Windows.Controls.StackPanel
     $lbl = New-Object System.Windows.Controls.TextBlock
-    $lbl.Text = 'INSTANCE ' + $Inst.Number + ' OF ' + $Total + ' - RELAY HOST AND PORT'; $lbl.FontSize = 11; $lbl.FontWeight = 'Bold'; $lbl.Foreground = New-Brush '#4A5560'
+    $lbl.Text = 'INSTANCE ' + $Inst.Number + ' OF ' + $Total + ' - RELAY HOST AND PORT'; $lbl.Style = $win.FindResource('Text.Overline')
     [void]$sp.Children.Add($lbl)
     $relay = New-Object System.Windows.Controls.TextBox
     $relay.IsReadOnly = $true; $relay.BorderThickness = New-Object System.Windows.Thickness(0); $relay.Background = [System.Windows.Media.Brushes]::Transparent
-    $relay.FontSize = 24; $relay.FontWeight = 'Bold'; $relay.TextWrapping = 'Wrap'; $relay.Padding = New-Object System.Windows.Thickness(0)
+    $relay.FontSize = 24; $relay.FontWeight = 'SemiBold'; $relay.TextWrapping = 'Wrap'; $relay.Padding = New-Object System.Windows.Thickness(0)
+    $relay.Foreground = Get-Brush 'Foreground'; $relay.Margin = New-Object System.Windows.Thickness(-2, 2, 0, 6)
     $relay.Text = $(if ($Inst.Relay) { $Inst.Relay } else { '(no relay host recorded)' })
     [void]$sp.Children.Add($relay)
     Add-Fact $sp 'Identifier' $Inst.Identifier
@@ -484,7 +579,7 @@ function New-InstanceCard {
         if (-not $Inst.KeepSelectable) {
             $kp.IsEnabled = $false
             $note = New-Object System.Windows.Controls.TextBlock
-            $note.Text = '  Cannot be kept one at a time: its identifier is missing, repeated or contains a comma.'; $note.Foreground = New-Brush '#7A5A06'; $note.FontSize = 12
+            $note.Text = '  Cannot be kept one at a time: its identifier is missing, repeated or contains a comma.'; $note.Foreground = Get-Brush 'WarningFg'; $note.FontSize = 12
         }
         $rm.add_Checked({ Update-ReviewSummary }); $kp.add_Checked({ Update-ReviewSummary })
         [void]$pair.Children.Add($rm); [void]$pair.Children.Add($kp)
@@ -515,14 +610,14 @@ function Show-Findings {
     [void]$ui.CardsHost.Children.Add($head)
     if ($Choose -and $n -gt 0) {
         $hint = New-Object System.Windows.Controls.TextBlock
-        $hint.TextWrapping = 'Wrap'; $hint.Margin = New-Object System.Windows.Thickness(0, 0, 0, 8); $hint.Foreground = New-Brush '#4A5560'
+        $hint.TextWrapping = 'Wrap'; $hint.Margin = New-Object System.Windows.Thickness(0, 0, 0, 8); $hint.Foreground = Get-Brush 'Muted'
         $hint.Text = 'Check the relay host and the signature of each one. Every instance is set to Remove unless you mark it Keep. Nothing is removed until you confirm on the next screen.'
         [void]$ui.CardsHost.Children.Add($hint)
     }
     foreach ($inst in $view.Instances) { [void]$ui.CardsHost.Children.Add((New-InstanceCard -Inst $inst -Total $n -Choose:$Choose)) }
     if ($view.ParseIssueCount -gt 0) {
         $pi = New-Object System.Windows.Controls.TextBlock
-        $pi.Text = 'Parse problems: ' + $view.ParseIssueCount + ' (see the report).'; $pi.Foreground = New-Brush '#8A2B23'; $pi.Margin = New-Object System.Windows.Thickness(0, 0, 0, 8)
+        $pi.Text = 'Parse problems: ' + $view.ParseIssueCount + ' (see the report).'; $pi.Foreground = Get-Brush 'DangerFg'; $pi.Margin = New-Object System.Windows.Thickness(0, 0, 0, 8)
         [void]$ui.CardsHost.Children.Add($pi)
     }
     if (@($view.OtherTargets).Count -gt 0) {
@@ -554,6 +649,10 @@ function Show-Panel {
 }
 
 function Update-HeaderButtons {
+    # The folder that holds every run (C:\RIT-SCC). The window never creates it; a run does.
+    $ritExists = Test-Path -LiteralPath $RitRoot -PathType Container
+    $ui.BtnOpenRitRoot.IsEnabled = [bool]$ritExists
+    $ui.BtnOpenRitRoot.ToolTip = $(if ($ritExists) { 'Every run''s folder lives here: ' + $RitRoot } else { $RitRoot + ' does not exist yet - it is created by the first run on this PC' })
     $has = ($script:Session -and $script:Session.RunRoot -and (Test-Path -LiteralPath $script:Session.RunRoot))
     $ui.BtnOpenRunHeader.IsEnabled = [bool]$has
     $ui.BtnOpenRun.IsEnabled = [bool]$has
@@ -806,7 +905,7 @@ function Complete-Run {
 }
 
 function Add-SummaryLine {
-    param([string]$Label, [string]$Value, [string]$Hex = '#1B2430', [switch]$Selectable)
+    param([string]$Label, [string]$Value, [string]$Tone = 'Foreground', [switch]$Selectable)
     $tb = New-Object System.Windows.Controls.TextBlock
     $tb.TextWrapping = 'Wrap'; $tb.Margin = New-Object System.Windows.Thickness(0, 2, 0, 2)
     $r1 = New-Object System.Windows.Documents.Run ($Label + ': '); $r1.FontWeight = 'SemiBold'
@@ -818,7 +917,7 @@ function Add-SummaryLine {
         [void]$ui.CardsHost.Children.Add($box)
         return
     }
-    $r2 = New-Object System.Windows.Documents.Run $Value; $r2.Foreground = New-Brush $Hex
+    $r2 = New-Object System.Windows.Documents.Run $Value; $r2.Foreground = Get-Brush $Tone
     [void]$tb.Inlines.Add($r2)
     [void]$ui.CardsHost.Children.Add($tb)
 }
@@ -836,13 +935,13 @@ function Show-RunSummary {
     if ($planIds -contains '6d' -and $Sess.RunRoot) {
         $sub = $(if ($Sess.Phase -eq 'ONLINE') { 'after-scans\persistence' } else { 'persistence' })
         $pv = Get-GuiPersistenceView -RunRoot $Sess.RunRoot -SubDir $sub
-        if (-not $pv.Available) { Add-SummaryLine 'Persistence check' ('not available (' + $pv.Error + ')') '#7A5A06' }
+        if (-not $pv.Available) { Add-SummaryLine 'Persistence check' ('not available (' + $pv.Error + ')') 'WarningFg' }
         else {
             $st = $pv.Status + $(if ($pv.RunStatus -and $pv.RunStatus -ne $pv.Status) { ', review ' + $pv.RunStatus } else { '' })
-            Add-SummaryLine 'Persistence check' ($st + ' - ' + @($pv.Findings).Count + ' finding(s)') $(if ($pv.Status -eq 'Complete') { '#1B2430' } else { '#7A5A06' })
+            Add-SummaryLine 'Persistence check' ($st + ' - ' + @($pv.Findings).Count + ' finding(s)') $(if ($pv.Status -eq 'Complete') { 'Foreground' } else { 'WarningFg' })
             if (@($pv.Findings).Count -gt 0) {
                 $h = New-Object System.Windows.Controls.TextBlock
-                $h.Text = 'Heuristic matches, not malware verdicts'; $h.FontStyle = 'Italic'; $h.Foreground = New-Brush '#4A5560'
+                $h.Text = 'Heuristic matches, not malware verdicts'; $h.FontStyle = 'Italic'; $h.Foreground = Get-Brush 'Muted'
                 [void]$ui.CardsHost.Children.Add($h)
                 $grid = New-Object System.Windows.Controls.Grid
                 $grid.Margin = New-Object System.Windows.Thickness(0, 4, 0, 6)
@@ -871,25 +970,25 @@ function Show-RunSummary {
     }
     if ($planIds -contains '8c') {
         $d = $res['8c']
-        if (-not $d) { Add-SummaryLine 'Before / after diff' 'not run' '#7A5A06' }
+        if (-not $d) { Add-SummaryLine 'Before / after diff' 'not run' 'WarningFg' }
         else {
             switch ($d.Status) {
-                'Done' { Add-SummaryLine 'Before / after diff' 'Clean - nothing that was removed came back' '#275C31' }
-                'Resurrection' { Add-SummaryLine 'Before / after diff' 'RESURRECTION DETECTED - see snapshot_diff.json' '#8A2B23' }
-                'Skipped' { Add-SummaryLine 'Before / after diff' ('INCOMPLETE - ' + $d.Message) '#7A5A06' }
-                default { Add-SummaryLine 'Before / after diff' ('diff failed - ' + $d.Message) '#8A2B23' }
+                'Done' { Add-SummaryLine 'Before / after diff' 'Clean - nothing that was removed came back' 'SuccessFg' }
+                'Resurrection' { Add-SummaryLine 'Before / after diff' 'RESURRECTION DETECTED - see snapshot_diff.json' 'DangerFg' }
+                'Skipped' { Add-SummaryLine 'Before / after diff' ('INCOMPLETE - ' + $d.Message) 'WarningFg' }
+                default { Add-SummaryLine 'Before / after diff' ('diff failed - ' + $d.Message) 'DangerFg' }
             }
         }
     }
     foreach ($sid in '9b', '9o') {
         if ($planIds -notcontains $sid) { continue }
         $s = $res[$sid]
-        if (-not $s) { Add-SummaryLine 'Report share' 'not reached' '#7A5A06'; continue }
-        if ($s.Status -eq 'Skipped') { Add-SummaryLine 'Report share' ('not shared - ' + $s.Message) '#4A5560' }
-        elseif ($s.Status -ne 'Done') { Add-SummaryLine 'Report share' ('failed - ' + $s.Message + ' The local report is kept.') '#8A2B23' }
+        if (-not $s) { Add-SummaryLine 'Report share' 'not reached' 'WarningFg'; continue }
+        if ($s.Status -eq 'Skipped') { Add-SummaryLine 'Report share' ('not shared - ' + $s.Message) 'Muted' }
+        elseif ($s.Status -ne 'Done') { Add-SummaryLine 'Report share' ('failed - ' + $s.Message + ' The local report is kept.') 'DangerFg' }
         elseif ($script:ShareUrl) { Add-SummaryLine 'Report shared - paste link' $script:ShareUrl -Selectable }
-        elseif ($Sess.Phase -eq 'OFFLINE') { Add-SummaryLine 'Report' 'package built on this PC, not uploaded (the Online half shares it)' '#4A5560' }
-        else { Add-SummaryLine 'Report share' 'done (no paste link was printed)' '#4A5560' }
+        elseif ($Sess.Phase -eq 'OFFLINE') { Add-SummaryLine 'Report' 'package built on this PC, not uploaded (the Online half shares it)' 'Muted' }
+        else { Add-SummaryLine 'Report share' 'done (no paste link was printed)' 'Muted' }
     }
 }
 
@@ -978,6 +1077,57 @@ function Invoke-Tick {
     if ($pp) { Resolve-Prompt $pp }
 }
 
+# ---- self-test (no window is shown, nothing runs) -------------------------------------------------
+if ($SelfTest) {
+    $fails = New-Object System.Collections.ArrayList
+    function Test-Gate([string]$Name, $Win2) {
+        $buttons = @($Win2.Content.Children[$Win2.Content.Children.Count - 1].Children)
+        $approve = $buttons[0]; $other = $buttons[1]; $box = $Win2.Tag.Text
+        if ($approve.IsEnabled) { [void]$fails.Add($Name + ': the approve button is enabled before anything is typed') }
+        if (-not $other.IsEnabled) { [void]$fails.Add($Name + ': the refusing button is disabled') }
+        foreach ($wrong in 'remove', 'REMOVE ', ' REMOVE', 'REMOV', 'Remove') {
+            $box.Text = $wrong
+            if ($approve.IsEnabled) { [void]$fails.Add($Name + ': "' + $wrong + '" enables the approve button') }
+        }
+        $box.Text = 'REMOVE'
+        if (-not $approve.IsEnabled) { [void]$fails.Add($Name + ': typing exactly REMOVE does not enable the approve button') }
+        $box.Text = ''
+        if ($approve.IsEnabled) { [void]$fails.Add($Name + ': clearing the box leaves the approve button enabled') }
+        if ($approve.Style -ne $win.FindResource('Button.Danger')) { [void]$fails.Add($Name + ': the approve button is not styled as Danger') }
+    }
+    Test-Gate 'RemoveConfirm' (New-DialogWindow -Title 'Confirm removal' -Message 'x' -Detail 'REMOVE a' -TypeWord 'REMOVE' -Buttons @(@{ Text = 'Remove'; Value = 'ok'; NeedsWord = $true }, @{ Text = 'Do not remove'; Value = 'cancel' }))
+    Test-Gate 'PersistRemove' (New-DialogWindow -Title 'Confirm persistence cleanup' -Message 'x' -TypeWord 'REMOVE' -Buttons @(@{ Text = 'Remove'; Value = 'ok'; NeedsWord = $true }, @{ Text = 'Do not remove'; Value = 'cancel' }))
+    $plain = New-DialogWindow -Title 'Plain' -Message 'x' -Buttons @(@{ Text = 'Continue'; Value = 'go' })
+    if (-not @($plain.Content.Children[$plain.Content.Children.Count - 1].Children)[0].IsEnabled) { [void]$fails.Add('a dialog without a typed word has its button disabled') }
+    # Both palettes define the same tokens, and every token the script asks for exists.
+    $light = @($win.Resources.Keys | Where-Object { ([string]$_).StartsWith('Brush.') } | ForEach-Object { [string]$_ } | Sort-Object)
+    $dark = @($win.Resources['Theme.Dark'].Keys | Where-Object { $_ -is [string] -and $_.StartsWith('Brush.') } | Sort-Object)
+    if (($light -join ',') -ne ($dark -join ',')) { [void]$fails.Add('light and dark palettes define different tokens') }
+    $src = [IO.File]::ReadAllText($PSCommandPath)
+    foreach ($m in [regex]::Matches($src, "Get-Brush '(\w+)'")) { if ($light -notcontains ('Brush.' + $m.Groups[1].Value)) { [void]$fails.Add('unknown token: ' + $m.Groups[1].Value) } }
+    if ($RenderPng) {
+        # Test hook: draw the removal confirmation (not shown) to a PNG, to look at the dialog design.
+        $dw = New-DialogWindow -Title 'Confirm removal' -TypeWord 'REMOVE' `
+            -Message ('ScreenConnect will be removed from this PC for the instances marked REMOVE below. Files are quarantined, never deleted. Instances marked KEEP are not touched.' + "`r`n`r`nType REMOVE to confirm.") `
+            -Detail ("REMOVE  evil.example.net:8041   aaaa1111aaaa1111`r`nKEEP    support.customer.example:443   bbbb2222bbbb2222") `
+            -Buttons @(@{ Text = 'Remove'; Value = 'ok'; NeedsWord = $true }, @{ Text = 'Do not remove'; Value = 'cancel' })
+        $dw.Tag.Text.Text = 'REMOV'
+        $content = $dw.Content; $dw.Content = $null
+        $frame = New-Object System.Windows.Controls.Border
+        foreach ($k in @($dw.Resources.Keys)) { $frame.Resources[$k] = $dw.Resources[$k] }
+        $frame.Background = Get-Brush 'Background'; $frame.Width = 640; $frame.Child = $content
+        $frame.Measure((New-Object System.Windows.Size 640, ([double]::PositiveInfinity)))
+        $frame.Arrange((New-Object System.Windows.Rect 0, 0, 640, $frame.DesiredSize.Height)); $frame.UpdateLayout()
+        $rtb = New-Object System.Windows.Media.Imaging.RenderTargetBitmap 640, ([int][Math]::Ceiling($frame.ActualHeight)), 96, 96, ([System.Windows.Media.PixelFormats]::Pbgra32)
+        $rtb.Render($frame)
+        $enc = New-Object System.Windows.Media.Imaging.PngBitmapEncoder; $enc.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($rtb))
+        $fs = [IO.File]::Create($RenderPng); $enc.Save($fs); $fs.Close()
+    }
+    if ($fails.Count -eq 0) { Write-Host ('SELFTEST_OK tokens=' + $light.Count + ' theme=' + $script:ThemeName); exit 0 }
+    $fails | ForEach-Object { Write-Host ('SELFTEST_FAIL ' + $_) }
+    exit 1
+}
+
 # ---- wiring --------------------------------------------------------------------------------------
 $ui.TitleText.Text = 'ScreenConnect Cleanup  v' + $script:Version
 $ui.RbOffline.Tag = 'Offline'; $ui.RbOnline.Tag = 'Online'; $ui.RbDetect.Tag = 'Detect'; $ui.RbStage.Tag = 'Stage'
@@ -985,6 +1135,7 @@ foreach ($rb in $ui.RbOffline, $ui.RbOnline, $ui.RbDetect, $ui.RbStage) {
     $rb.add_Checked({ param($s, $e) if (-not $script:Session -or $script:Finished) { Set-PreviewMode ([string]$s.Tag) } })
 }
 Set-PreviewMode 'Offline'
+Update-HeaderButtons
 
 try {
     $prior = @(Get-ChildItem -LiteralPath $RitRoot -Directory -ErrorAction Stop | Where-Object { $_.Name -like ($env:COMPUTERNAME + '-*') } | Sort-Object LastWriteTime -Descending | Select-Object -First 3)
@@ -1004,6 +1155,7 @@ $ui.BtnRestart.add_Click({
         $ans = [System.Windows.MessageBox]::Show("The report was opened above. Restart closes apps without warning and may lose unsaved work.`n`nCommand: shutdown /r /t 0 /f`n`nRestart now?", 'ScreenConnect Cleanup', 'YesNo', 'Warning')
         if ($ans -eq 'Yes') { Start-Process -FilePath 'cmd.exe' -ArgumentList '/d /c "shutdown /r /t 0 /f"' }
     })
+$ui.BtnOpenRitRoot.add_Click({ if (Test-Path -LiteralPath $RitRoot -PathType Container) { Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $RitRoot + '"') } })
 $ui.BtnOpenRunHeader.add_Click({ if ($script:Session -and $script:Session.RunRoot) { Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $script:Session.RunRoot + '"') } })
 $ui.BtnOpenRun.add_Click({ if ($script:Session -and $script:Session.RunRoot) { Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $script:Session.RunRoot + '"') } })
 $ui.BtnOpenReport.add_Click({ if ($script:Session) { $r = (Get-GuiReportInfo -RunRoot $script:Session.RunRoot); if ($r.ReportExists) { Start-Process -FilePath $r.ReportPath } } })

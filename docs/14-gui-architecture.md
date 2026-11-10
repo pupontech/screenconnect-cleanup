@@ -602,6 +602,23 @@ Deliberately not changed, with the reason:
 - `VERSION` is not bumped (the owner's build decision); `START-HERE-GUI.bat` sits at the repo root
   like the other launchers rather than beside `gui\Start-CleanupGui.ps1`.
 
+### 12.7 Restyle, and the REMOVE gate (2026-11-10)
+
+- **Design tokens.** `gui\MainWindow.xaml` holds the only colour definitions: `Brush.*` semantic tokens
+  (Background, Surface, Foreground, Muted, Border, Primary, Success/Warning/Danger/Info Fg/Bg/Border,
+  Console...) for the light theme and the same keys in `Theme.Dark`, plus radius and spacing tokens and
+  the component styles (`Card`, `Button.Primary|Secondary|Danger|Ghost`, `ModeCard`, scrollbars). XAML
+  uses them through `DynamicResource`; the script through `Get-Brush '<Tone>'`, never a literal colour
+  (`Test-GuiWindow.ps1` fails on a hex colour in the script). Dark replaces every token at start-up when
+  Windows is set to dark apps, or with `-Theme Dark`. Dialogs are separate windows, so each gets a copy
+  of the tokens and styles.
+- **Bug found while restyling: the REMOVE gate was not in force in 1.8.12-gui-alpha.1.** Button specs
+  are hashtables and `NeedsWord` was read through `PSObject.Properties`, which does not list hashtable
+  keys, so the Remove button was enabled before the word was typed. The test hook (canned answers)
+  never builds a real dialog, which is why no test saw it. Fixed (`Test-ButtonNeedsWord`), and
+  `-SelfTest` now builds both REMOVE confirmations for real (not shown) and checks the gate against
+  wrong spellings, extra spaces and a cleared box, in both themes.
+
 ### 12.4 Not testable by an agent - the owner, on a real PC (add to `docs/09`)
 
 **Everything below is still open.** The window, the removal path and the online half have been

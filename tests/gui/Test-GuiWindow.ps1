@@ -158,6 +158,15 @@ try {
     Check (-not ($bomBytes.Length -ge 3 -and $bomBytes[0] -eq 0xEF -and $bomBytes[1] -eq 0xBB -and $bomBytes[2] -eq 0xBF)) 'no byte order mark in Start-CleanupGui.ps1'
     Check ($guiPs -match 'GetApartmentState' -and $guiPs -match '-STA') 'the window insists on an STA thread'
 
+    Write-Host 'Design tokens and the typed-word gate (built for real, not shown)' -ForegroundColor Cyan
+    Check ($guiCode -notmatch "#[0-9A-Fa-f]{6}\b" -and $guiCode -notmatch 'BrushConverter') 'the window script names no colour: every colour is a design token from MainWindow.xaml'
+    Check ($xaml -match 'x:Key="Theme.Dark"') 'MainWindow.xaml defines the dark palette next to the light one'
+    foreach ($t in 'Light', 'Dark') {
+        $st = & (Join-Path $PSHOME 'powershell.exe') -NoProfile -STA -ExecutionPolicy Bypass -File $guiPath -SelfTest -AllowNotElevated -Theme $t 2>&1
+        $txt = ($st | Out-String)
+        Check ($LASTEXITCODE -eq 0 -and $txt -match 'SELFTEST_OK') ($t + ' theme self-test: REMOVE stays disabled until typed exactly, both palettes match, every token exists' + $(if ($txt -match 'SELFTEST_FAIL') { ' -- ' + (($st | Where-Object { "$_" -match 'SELFTEST_FAIL' }) -join '; ') } else { '' }))
+    }
+
     Write-Host 'Window loads and every named control exists' -ForegroundColor Cyan
     $expected = ([regex]::Matches($xaml, 'x:Name="')).Count - 1   # minus the Window itself
     $load = & (Join-Path $PSHOME 'powershell.exe') -NoProfile -STA -ExecutionPolicy Bypass -File $guiPath -LoadOnly -AllowNotElevated 2>&1
