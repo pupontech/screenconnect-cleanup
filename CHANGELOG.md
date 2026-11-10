@@ -3,6 +3,19 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.12-beta.1-offline.2] - 2026-11-10 - two launchers, own step numbers
+**Not an upstream release. Owner live Windows acceptance required.**
+- The deploy zip has only two launchers: `START-HERE-OFFLINE.bat` and
+  `START-HERE-ONLINE.bat`. `START-HERE-SELECT.bat`, `START-HERE-OFFLINE-SELECT.bat`
+  and `STAGE-TOOLS-ONLINE.bat` are removed; `START-HERE.bat` still takes `--select`
+  and `--stage`. `verify_deploy_zip.py` checks the launcher list.
+- The offline half shows only its own steps, numbered 1-7 (preflight, before
+  snapshot, detect, remove, persistence, after snapshot + diff, report); the
+  online half shows 1-4 (download scanners, virus scans, AV uninstall, share).
+  No "skipped in the offline half" lines. The full run's 1-9 text is unchanged.
+- The offline half asks `Keep any ScreenConnect? [y/N]` before removal when
+  something was detected; `y` = select mode, Enter = remove all (as before).
+
 ## [1.8.12-beta.1-offline.1] - 2026-11-10 - offline / online split (testing build on top of 1.8.12-beta.1)
 **Not an upstream release. Owner live Windows acceptance required.**
 - Deploy ZIP now packages the split launchers, `OFFLINE-ONLINE-SPLIT.md`,

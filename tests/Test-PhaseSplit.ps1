@@ -1,8 +1,9 @@
 <#
   Test-PhaseSplit.ps1 - launcher-logic test for the offline / online split.
 
-  Runs START-HERE-OFFLINE.bat, START-HERE-ONLINE.bat, STAGE-TOOLS-ONLINE.bat and
-  START-HERE.bat (full run) against a STUBBED copy of the tool: every .ps1 is
+  Runs START-HERE-OFFLINE.bat, START-HERE-ONLINE.bat and START-HERE.bat (full run,
+  plus --stage and --select through throwaway wrappers, since those flags have no
+  launcher of their own) against a STUBBED copy of the tool: every .ps1 is
   replaced by a stub that only records "script|arguments" to a trace file (and
   creates the one file the batch needs next, e.g. findings.json). The real
   Find-OfflineRun.ps1 and Write-PhaseMarker.ps1 are kept, so the hand-off between
@@ -79,6 +80,8 @@ function New-Harness {
     # drop anything that is not part of the tool (an old test harness, etc.)
     $ritRoot = Join-Path $work ($Name + '-rit-scc')
     $null = New-Item -ItemType Directory -Path $ritRoot -Force
+    $deskDir = Join-Path $work ($Name + '-desktop')
+    $null = New-Item -ItemType Directory -Path $deskDir -Force
     foreach ($ps in @(Get-ChildItem -Path $dir -Filter '*.ps1' -Recurse -File)) {
         if ($ps.Name -in @('Find-OfflineRun.ps1', 'Write-PhaseMarker.ps1')) { continue }
         if ($ps.FullName -like '*\tests\*') { continue }
@@ -97,11 +100,13 @@ function New-Harness {
     foreach ($b in @(Get-ChildItem -Path $dir -Filter '*.bat' -File)) {
         $raw = [IO.File]::ReadAllText($b.FullName)
         $raw = $raw.Replace('{exit 0}else{exit 1}', '{exit 0}else{exit 0}').Replace('C:\RIT-SCC', $ritRoot)
+        # The report copy goes to the Desktop: point it at a temp folder, never the real one.
+        $raw = $raw.Replace("[Environment]::GetFolderPath('Desktop')", "'" + $deskDir + "'")
         [IO.File]::WriteAllText($b.FullName, $raw, [Text.Encoding]::ASCII)
     }
     if ($BatPath) {
         # baseline: the ORIGINAL START-HERE.bat, patched the same way
-        $raw = [IO.File]::ReadAllText($BatPath).Replace('{exit 0}else{exit 1}', '{exit 0}else{exit 0}').Replace('C:\RIT-SCC', $ritRoot)
+        $raw = [IO.File]::ReadAllText($BatPath).Replace('{exit 0}else{exit 1}', '{exit 0}else{exit 0}').Replace('C:\RIT-SCC', $ritRoot).Replace("[Environment]::GetFolderPath('Desktop')", "'" + $deskDir + "'")
         [IO.File]::WriteAllText((Join-Path $dir 'START-HERE.bat'), $raw, [Text.Encoding]::ASCII)
     }
     return [pscustomobject]@{ Dir = $dir; Rit = $ritRoot }
@@ -126,6 +131,14 @@ function Invoke-Launcher {
     $outText = ''
     if (Test-Path -LiteralPath $out) { $outText = [IO.File]::ReadAllText($out) }
     return [pscustomobject]@{ Timeout = $false; Exit = $p.ExitCode; Trace = $lines; Out = $outText }
+}
+
+function New-FlagWrapper {
+    # START-HERE.bat with a flag that has no shipped launcher (--stage, --select).
+    param($Harness, [string]$Name, [string]$Flag)
+    $text = "@echo off`r`ncall `"%~dp0START-HERE.bat`" $Flag`r`nexit /b %errorlevel%`r`n"
+    [IO.File]::WriteAllText((Join-Path $Harness.Dir $Name), $text, [Text.Encoding]::ASCII)
+    return $Name
 }
 
 function Has { param($Run, [string]$Script) return (@($Run.Trace | Where-Object { $_ -like ($Script + '|*') }).Count -gt 0) }
@@ -170,6 +183,14 @@ try {
         Check ([string]$m.FindingsJson -like '*findings.json') 'marker records the findings.json path'
     }
     Check ($off.Out -match 'OFFLINE HALF FINISHED') 'offline prints the next-step banner'
+    # Offline screen: its own steps 1-7 only, nothing about the online half's steps.
+    Check ($off.Out -match 'SCREENCONNECT CLEANUP - OFFLINE') 'offline banner names the offline run'
+    foreach ($s in 'STEP 1/7: Preflight', 'STEP 2/7: Before snapshot', 'STEP 3/7: Remote-access detection', 'STEP 4/7: Review/remove ScreenConnect', 'STEP 5/7: Persistence inventory and review', 'STEP 5b/7: Open review windows', 'STEP 6/7: Optional power-options repair', 'STEP 7/7: Report') {
+        Check ($off.Out.Contains($s)) ('offline shows "' + $s + '"')
+    }
+    Check (-not ($off.Out -match 'STEP \d+[a-e]?/9')) 'offline shows no 1-9 step numbers'
+    Check (-not ($off.Out -match '(?i)skipped in the offline half|Tool pack \+ KVRT|Antivirus scans|Uninstall third-party AV|1 toolpack')) 'offline does not list the online steps as skipped'
+    Check ($off.Out -match 'Keep any ScreenConnect\? \[y/N\]') 'offline asks whether to keep any ScreenConnect'
 
     # ------------------------------------------------------------------ ONLINE (continues that run)
     Write-Host 'ONLINE half (continuing the offline run)' -ForegroundColor Cyan
@@ -189,6 +210,12 @@ try {
     }
     Check (@(Get-ChildItem -LiteralPath $h.Rit -Directory).Count -eq 1) 'online continued the same run folder (no new one)'
     Check (Test-Path -LiteralPath (Join-Path $runs[0].FullName 'phase-online.json')) 'online wrote phase-online.json'
+    Check ($on.Out -match 'SCREENCONNECT CLEANUP - ONLINE') 'online banner names the online run'
+    Check ($on.Out.Contains('-- 2a: KVRT --') -and $on.Out.Contains('-- 2c: Malwarebytes --') -and -not $on.Out.Contains('-- 6a:')) 'online scanner sub-steps are 2a-2c'
+    foreach ($s in 'STEP 1/4: Download the tool pack', 'STEP 2/4: Antivirus scans', 'STEP 3/4: Uninstall third-party AV', 'STEP 4/4: Share the report') {
+        Check ($on.Out.Contains($s)) ('online shows "' + $s + '"')
+    }
+    Check (-not ($on.Out -match 'STEP \d+[a-e]?/9')) 'online shows no 1-9 step numbers'
 
     # ------------------------------------------------------------------ ONLINE with no prior run
     Write-Host 'ONLINE half (no offline run on this PC)' -ForegroundColor Cyan
@@ -202,7 +229,7 @@ try {
     # ------------------------------------------------------------------ STAGE
     Write-Host 'STAGE (download only)' -ForegroundColor Cyan
     $h3 = New-Harness 'stage' ''
-    $st = Invoke-Launcher $h3 'STAGE-TOOLS-ONLINE.bat' @('') 'stage'
+    $st = Invoke-Launcher $h3 (New-FlagWrapper $h3 'stage-wrapper.bat' '--stage') @('') 'stage'
     Check (-not $st.Timeout) 'stage launcher finished (no hang)'
     Check ((CountOf $st 'Get-ToolPack.ps1') -eq 2 -and (Has $st 'Get-AVTools.ps1')) 'stage downloads the pack and the scanners'
     $others = @($st.Trace | Where-Object { $_ -notlike 'Get-ToolPack.ps1|*' -and $_ -notlike 'Get-AVTools.ps1|*' })
@@ -221,6 +248,12 @@ try {
     Check ($submitFull -notlike '*-NoUpload*') 'full run still uploads (no -NoUpload)'
     $preFull = @($full.Trace | Where-Object { $_ -like 'preflight.ps1|*' })[0]
     Check ($preFull -notlike '*-SkipToolPack*') 'full run still requires the tool pack in preflight'
+    foreach ($s in 'STEP 1/9: Tool pack + KVRT/ESET staging (Malwarebytes fallback at Step 6)', 'STEP 2/9: Preflight', 'STEP 5/9: Review/remove ScreenConnect', 'STEP 6/9: Antivirus scans', 'STEP 6d/9', 'STEP 7/9', 'STEP 8/9', 'STEP 9/9: Report') {
+        Check ($full.Out.Contains($s)) ('full run still shows "' + $s + '"')
+    }
+    Check (-not ($full.Out -match 'Keep any ScreenConnect')) 'full run does not ask the keep question'
+    Check ($full.Out.Contains('-- 6a: KVRT --') -and $full.Out.Contains('-- 6c: Malwarebytes --')) 'full run keeps scanner sub-steps 6a-6c'
+    Check (@(Get-ChildItem -LiteralPath (Join-Path $work 'full-desktop') -Filter 'report.html').Count -eq 1) 'report Desktop copy went to the test folder, not the real Desktop'
     $perFull = @($full.Trace | Where-Object { $_ -like 'Invoke-PersistenceScan.ps1|*' })[0]
     Check ($perFull -notlike '*Timeout*') 'full run keeps the default persistence timeouts'
     $pfSrc = [IO.File]::ReadAllText((Join-Path $ToolRoot 'preflight.ps1'))
@@ -240,21 +273,27 @@ try {
     }
 
     # ------------------------------------------------------------------ static contract checks
-    # ------------------------------------------------------------------ SELECT launchers (keep chosen ScreenConnect instances)
-    Write-Host 'SELECT launchers' -ForegroundColor Cyan
+    # ------------------------------------------------------------------ SELECT mode (keep chosen ScreenConnect instances)
+    Write-Host 'SELECT mode' -ForegroundColor Cyan
     $revOff = @($off.Trace | Where-Object { $_ -like 'Invoke-ReviewAndRemove.ps1|*' })[0]
-    Check ($revOff -notlike '*-SelectKeep*') 'plain offline launcher does not use select mode'
+    Check ($revOff -notlike '*-SelectKeep*') 'offline with Enter at the keep question removes all (no select mode)'
     Check ($submitFull -ne $null -and (@($full.Trace | Where-Object { $_ -like 'Invoke-ReviewAndRemove.ps1|*' })[0]) -notlike '*-SelectKeep*') 'plain full run does not use select mode'
     $h6 = New-Harness 'selfull' ''
-    $selFull = Invoke-Launcher $h6 'START-HERE-SELECT.bat' $answersFull 'selfull'
-    Check (-not $selFull.Timeout) 'START-HERE-SELECT.bat finished (no hang)'
-    Check ((@($selFull.Trace | Where-Object { $_ -like 'Invoke-ReviewAndRemove.ps1|*' })[0]) -like '*-SelectKeep*') 'START-HERE-SELECT.bat runs the review in select mode'
-    Check ((Has $selFull 'Get-ToolPack.ps1') -and (Has $selFull 'Invoke-GUIScanner.ps1')) 'START-HERE-SELECT.bat is still the full run (stages + scanners)'
-    Check ($selFull.Out -match 'SELECT MODE') 'START-HERE-SELECT.bat says it is in select mode at Step 5'
+    $selFull = Invoke-Launcher $h6 (New-FlagWrapper $h6 'select-wrapper.bat' '--select') $answersFull 'selfull'
+    Check (-not $selFull.Timeout) 'START-HERE.bat --select finished (no hang)'
+    Check ((@($selFull.Trace | Where-Object { $_ -like 'Invoke-ReviewAndRemove.ps1|*' })[0]) -like '*-SelectKeep*') 'START-HERE.bat --select runs the review in select mode'
+    Check ((Has $selFull 'Get-ToolPack.ps1') -and (Has $selFull 'Invoke-GUIScanner.ps1')) 'START-HERE.bat --select is still the full run (stages + scanners)'
+    Check ($selFull.Out -match 'SELECT MODE') 'START-HERE.bat --select says it is in select mode at Step 5'
     $h7 = New-Harness 'seloff' ''
-    $selOff = Invoke-Launcher $h7 'START-HERE-OFFLINE-SELECT.bat' $answersFull 'seloff'
-    Check (-not $selOff.Timeout) 'START-HERE-OFFLINE-SELECT.bat finished (no hang)'
-    Check ((@($selOff.Trace | Where-Object { $_ -like 'Invoke-ReviewAndRemove.ps1|*' })[0]) -like '*-SelectKeep*') 'START-HERE-OFFLINE-SELECT.bat runs the review in select mode'
+    # The offline half's first prompt is the keep question: answer y.
+    $selOff = Invoke-Launcher $h7 'START-HERE-OFFLINE.bat' (@('y') + $answersFull) 'seloff'
+    Check (-not $selOff.Timeout) 'offline with y at the keep question finished (no hang)'
+    Check ((@($selOff.Trace | Where-Object { $_ -like 'Invoke-ReviewAndRemove.ps1|*' })[0]) -like '*-SelectKeep*') 'offline with y at the keep question runs the review in select mode'
+    Check ($selOff.Out -match 'SELECT MODE') 'offline select says it is in select mode at Step 4'
+    $shipped = @(Get-ChildItem -LiteralPath $ToolRoot -Filter 'START-HERE*.bat' -File | ForEach-Object { $_.Name } | Sort-Object)
+    $want = @('START-HERE-OFFLINE.bat', 'START-HERE-ONLINE.bat', 'START-HERE.bat') | Sort-Object
+    Check (($shipped -join ',') -eq ($want -join ',')) ('only the two launchers beside the engine (' + ($shipped -join ', ') + ')')
+    Check (-not (Test-Path -LiteralPath (Join-Path $ToolRoot 'STAGE-TOOLS-ONLINE.bat'))) 'STAGE-TOOLS-ONLINE.bat is gone'
     foreach ($s in 'Get-ToolPack.ps1', 'Get-AVTools.ps1', 'Invoke-GUIScanner.ps1', 'Invoke-AVUninstaller.ps1') {
         Check (-not (Has $selOff $s)) ('offline select never runs ' + $s)
     }

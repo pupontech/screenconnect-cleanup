@@ -9,15 +9,17 @@ rem  Requires explicit confirmation before starting when AC power is disconnecte
 rem  Pure ASCII, no BOM.
 rem
 rem  SPLIT (offline / online halves). With no flag this is the full pipeline,
-rem  unchanged. The wrapper launchers pass one flag:
+rem  unchanged. Technicians start one of the two launchers, which pass one flag:
 rem    --offline  START-HERE-OFFLINE.bat  cleanup that needs NO internet: preflight,
 rem               snapshots, detection, removal, persistence review, diff, local
-rem               report. No downloads, no scanners, no upload.
+rem               report. No downloads, no scanners, no upload. Shown as steps 1-7.
+rem               It asks whether any ScreenConnect should be KEPT (same as --select).
 rem    --online   START-HERE-ONLINE.bat   everything that needs internet: stage the
 rem               scanners, run KVRT/ESET/Malwarebytes, AV uninstall, share the
 rem               report. Continues the run folder the offline half left behind.
-rem    --stage    STAGE-TOOLS-ONLINE.bat  downloads only (run on a connected PC and
-rem               carry the folder to the client PC).
+rem               Shown as steps 1-4.
+rem  Flags with no launcher of their own: --stage (downloads only) and --select
+rem  (pick instances to keep without being asked).
 rem ============================================================================
 
 rem ---- Capture our own path/args BEFORE enabling delayed expansion --------
@@ -175,33 +177,40 @@ set "POWER_REPAIR_RAN=0"
 
 echo.
 echo  ============================================================
+if /i "!SCC_PHASE!"=="OFFLINE" goto :banner_offline
+if /i "!SCC_PHASE!"=="ONLINE" goto :banner_online
 echo   SCREENCONNECT CLEANUP - guided run
 echo   Steps 1-4 and 8-9 run automatically. Step 5 asks ONE typed
 echo   confirmation before removal. Ctrl+C aborts.
 echo.
 echo   1 toolpack  2 preflight  3 snapshot  4 detect  5 remove
 echo   6 scanners  7 AV uninstall  8 diff  9 report
+goto :banner_done
+:banner_offline
+echo   SCREENCONNECT CLEANUP - OFFLINE (no internet needed)
+echo   Runs by itself except Step 4, which asks ONE typed
+echo   confirmation before removal. Ctrl+C aborts.
+echo.
+echo   1 preflight  2 before snapshot  3 detect  4 remove
+echo   5 persistence  6 after snapshot + diff  7 report
+echo.
+echo   Nothing is downloaded or uploaded. Afterwards, once the PC is
+echo   online, run START-HERE-ONLINE.bat for the virus scans.
+goto :banner_done
+:banner_online
+echo   SCREENCONNECT CLEANUP - ONLINE (needs internet)
+echo   Run this after START-HERE-OFFLINE.bat, once the PC is online.
+echo   Ctrl+C aborts.
+echo.
+echo   1 download scanners  2 virus scans  3 AV uninstall  4 share report
+:banner_done
 echo  ============================================================
-if /i "!SCC_PHASE!"=="OFFLINE" (
-    echo   OFFLINE HALF: nothing is downloaded or uploaded. Skipped here:
-    echo   tool/scanner staging, antivirus scans, AV uninstall, report share.
-    echo   Do those later with START-HERE-ONLINE.bat once the PC is online.
-)
-if /i "!SCC_PHASE!"=="ONLINE" (
-    echo   ONLINE HALF: stages scanners, runs the antivirus scans and AV
-    echo   uninstall, then shares the report from the offline-half run.
-    echo   Skipped here: preflight, snapshots, detection, removal, persistence.
-)
 echo.
 
 rem ---- Step 1: tool pack + scanner staging (internet) -------------------------
-echo  STEP 1/9: Tool pack + KVRT/ESET staging (Malwarebytes fallback at Step 6)
-if "!SCC_DO_STAGE!"=="1" goto :step1_stage
-echo     [i] Skipped in the offline half: staging downloads need internet.
-echo         The guided cleanup itself does not use the Sysinternals pack.
-echo         Scanners are staged by START-HERE-ONLINE.bat or STAGE-TOOLS-ONLINE.bat.
-goto :step1_done
-:step1_stage
+if "!SCC_DO_STAGE!"=="0" goto :step1_done
+if /i "!SCC_PHASE!"=="ONLINE" echo  STEP 1/4: Download the tool pack and the KVRT/ESET scanners
+if /i not "!SCC_PHASE!"=="ONLINE" echo  STEP 1/9: Tool pack + KVRT/ESET staging (Malwarebytes fallback at Step 6)
 if exist "!SCC_DP0!tools\Get-ToolPack.ps1" (
     powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!tools\Get-ToolPack.ps1" -Quiet
     powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!tools\Get-ToolPack.ps1" -Verify
@@ -220,7 +229,8 @@ if "!SCC_DO_PRE!"=="0" goto :after_pre
 
 rem ---- Step 2: preflight (ALWAYS runs - owner directive 2026-08-28) ---------
 echo.
-echo  STEP 2/9: Preflight
+if /i "!SCC_PHASE!"=="OFFLINE" echo  STEP 1/7: Preflight
+if /i not "!SCC_PHASE!"=="OFFLINE" echo  STEP 2/9: Preflight
 set "SCC_PRE_ARGS="
 if "!SCC_DO_STAGE!"=="0" set "SCC_PRE_ARGS=-SkipToolPack"
 powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!preflight.ps1" -WorkingRoot "!SCC_RUN_ROOT!" !SCC_PRE_ARGS!
@@ -228,7 +238,8 @@ if errorlevel 1 goto :preflight_failed
 
 rem ---- Step 3: BEFORE snapshot -----------------------------------------------
 echo.
-echo  STEP 3/9: Before snapshot
+if /i "!SCC_PHASE!"=="OFFLINE" echo  STEP 2/7: Before snapshot
+if /i not "!SCC_PHASE!"=="OFFLINE" echo  STEP 3/9: Before snapshot
 powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!collect-snapshot.ps1" -Label before -OutFile "!SCC_RUN_ROOT!\snapshot_before.json" -Quiet
 if errorlevel 1 goto :before_snapshot_failed
 if exist "!SCC_RUN_ROOT!\snapshot_before.json" (
@@ -239,7 +250,8 @@ if exist "!SCC_RUN_ROOT!\snapshot_before.json" (
 
 rem ---- Step 4: detection -----------------------------------------------------
 echo.
-echo  STEP 4/9: Remote-access detection
+if /i "!SCC_PHASE!"=="OFFLINE" echo  STEP 3/7: Remote-access detection
+if /i not "!SCC_PHASE!"=="OFFLINE" echo  STEP 4/9: Remote-access detection
 powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!detect-remote-access.ps1" -All -NoPause -NoZip -NoReportShare -OutRoot "!SCC_RUN_ROOT!\detect" -TranscriptCopyDir "!SCC_RUN_ROOT!"
 if errorlevel 1 goto :detection_failed
 set "FINDINGS_JSON="
@@ -251,15 +263,20 @@ for /f "delims=" %%D in ('dir /b /ad /o-d "!SCC_RUN_ROOT!\detect\*_*" 2^>nul') d
     )
 )
 if not defined FINDINGS_JSON (
-    echo     [i] No findings.json found - steps 5 and 9 need it.
+    echo     [i] No findings.json found - removal and the report need it.
 ) else (
     echo     [i] Latest findings: !FINDINGS_JSON!
 )
 
 rem ---- Step 5: REMOVE (single typed confirmation) -----------------------------
 echo.
-echo  STEP 5/9: Review/remove ScreenConnect
+if /i "!SCC_PHASE!"=="OFFLINE" echo  STEP 4/7: Review/remove ScreenConnect
+if /i not "!SCC_PHASE!"=="OFFLINE" echo  STEP 5/9: Review/remove ScreenConnect
 set "SCC_REVIEW_ARGS="
+rem Offline half: ask whether any instance is supposed to stay (the customer's own
+rem support agent, for example). y = select mode; Enter = remove all, as before.
+rem Written without "defined": a contract test reads the first FINDINGS_JSON check as the review block.
+if /i "!SCC_PHASE!"=="OFFLINE" if not "!SCC_SELECT!"=="1" if not "!FINDINGS_JSON!"=="" call :ask_keep
 if "!SCC_SELECT!"=="1" (
     set "SCC_REVIEW_ARGS=-SelectKeep"
     echo    SELECT MODE: you first mark the legitimate instances to KEEP, then one
@@ -289,11 +306,13 @@ if exist "!SCC_DP0!Invoke-ReviewAndRemove.ps1" (
 rem ---- Step 6: antivirus scans (internet) - online half only ---------------------
 if "!SCC_DO_SCAN!"=="0" goto :scanners_skipped_phase
 echo.
-echo  STEP 6/9: Antivirus scans (attended)
+if /i "!SCC_PHASE!"=="ONLINE" echo  STEP 2/4: Antivirus scans (attended)
+if /i not "!SCC_PHASE!"=="ONLINE" echo  STEP 6/9: Antivirus scans (attended)
 echo    Each scanner opens visibly. Complete it, then return here.
 
 echo.
-echo    -- 6a: KVRT --
+if /i "!SCC_PHASE!"=="ONLINE" echo    -- 2a: KVRT --
+if /i not "!SCC_PHASE!"=="ONLINE" echo    -- 6a: KVRT --
 set /p GO="    Launch KVRT? [Y/n] "
 if /i not "%GO%"=="n" (
     if exist "!SCC_DP0!tools\AV\KVRT.exe" (
@@ -306,7 +325,8 @@ if /i not "%GO%"=="n" (
 set GO=
 
 echo.
-echo    -- 6b: ESET Online Scanner --
+if /i "!SCC_PHASE!"=="ONLINE" echo    -- 2b: ESET Online Scanner --
+if /i not "!SCC_PHASE!"=="ONLINE" echo    -- 6b: ESET Online Scanner --
 set /p GO="    Launch ESET Online Scanner? [Y/n] "
 if /i not "%GO%"=="n" (
     if exist "!SCC_DP0!tools\AV\esetonlinescanner.exe" (
@@ -320,7 +340,8 @@ set GO=
 
 rem ---- Step 6c: Malwarebytes (winget, then official offline fallback) -----
 echo.
-echo    -- 6c: Malwarebytes --
+if /i "!SCC_PHASE!"=="ONLINE" echo    -- 2c: Malwarebytes --
+if /i not "!SCC_PHASE!"=="ONLINE" echo    -- 6c: Malwarebytes --
 set /p GO="    Install and launch Malwarebytes now? [Y/n] "
 if /i "%GO%"=="n" goto :skip_6c
 if not exist "!SCC_RUN_ROOT!\logs" mkdir "!SCC_RUN_ROOT!\logs"
@@ -332,15 +353,13 @@ set GO=
 goto :after_scanners
 
 :scanners_skipped_phase
-echo.
-echo  STEP 6/9: Antivirus scans - skipped in the offline half (they need internet)
-echo    After the PC is online again, run START-HERE-ONLINE.bat.
 
 :after_scanners
 rem ---- Step 6d: mandatory persistence scan/review after AV scanners -----------
 if "!SCC_DO_PERSIST!"=="0" goto :after_persist
 echo.
-echo  STEP 6d/9: Persistence inventory and review
+if /i "!SCC_PHASE!"=="OFFLINE" echo  STEP 5/7: Persistence inventory and review
+if /i not "!SCC_PHASE!"=="OFFLINE" echo  STEP 6d/9: Persistence inventory and review
 rem Offline half only: the final inventory write timed out at the default 60 s on the first real PC, so give it more room.
 set "SCC_PERSIST_ARGS="
 if /i "!SCC_PHASE!"=="OFFLINE" set "SCC_PERSIST_ARGS=-InventorySectionTimeoutSeconds 240 -InventoryTotalTimeoutSeconds 600"
@@ -353,7 +372,8 @@ if not "!PERSIST_RC!"=="0" (
 
 rem ---- Step 6e: open the review windows for the technician ----------------------
 echo.
-echo  STEP 6e/9: Open review windows (no changes made)
+if /i "!SCC_PHASE!"=="OFFLINE" echo  STEP 5b/7: Open review windows (no changes made)
+if /i not "!SCC_PHASE!"=="OFFLINE" echo  STEP 6e/9: Open review windows (no changes made)
 echo    Opens the evidence + startup folders, Services and Task Scheduler so you
 echo    can inspect what the persistence scan flagged. Nothing is changed here.
 set /p OPENREVIEW="    Open the review windows now? [Y/n] "
@@ -367,7 +387,8 @@ set OPENREVIEW=
 rem ---- Step 7: Uninstall installed AV (attended) - online half / full run ------
 if "!SCC_DO_AVU!"=="0" goto :after_avu
 echo.
-echo  STEP 7/9: Uninstall third-party AV (attended)
+if /i "!SCC_PHASE!"=="ONLINE" echo  STEP 3/4: Uninstall third-party AV (attended)
+if /i not "!SCC_PHASE!"=="ONLINE" echo  STEP 7/9: Uninstall third-party AV (attended)
 echo    Malwarebytes uses winget; other AV uninstallers open for you.
 echo    Never silent-uninstalls - uninstallers open for you to drive.
 echo    Defender is excluded. Enter skips.
@@ -385,7 +406,8 @@ if /i "!SCC_PHASE!"=="ONLINE" goto :online_share
 
 rem ---- Step 8: AFTER snapshot + diff ------------------------------------------
 echo.
-echo  STEP 8/9: Optional power-options repair + after snapshot/diff
+if /i "!SCC_PHASE!"=="OFFLINE" echo  STEP 6/7: Optional power-options repair + after snapshot/diff
+if /i not "!SCC_PHASE!"=="OFFLINE" echo  STEP 8/9: Optional power-options repair + after snapshot/diff
 echo    The repair is opt-in. Managed devices may need administrator approval.
 set "GO="
 set /p GO="    Repair missing power options now? [y/N] "
@@ -410,7 +432,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!collect-snapshot.p
 if errorlevel 1 echo     [WARN] After-snapshot exited with errorlevel %errorlevel%
 rem Only diff when the baseline from this run actually exists.
 if not exist "!SCC_RUN_ROOT!\snapshot_before.json" (
-    echo     [WARN] No snapshot_before.json - step 3 was skipped, so there is
+    echo     [WARN] No snapshot_before.json - the before snapshot was skipped, so there is
     echo         nothing to diff against. Skipping the diff.
 ) else (
     if not exist "!SCC_RUN_ROOT!\snapshot_after.json" (
@@ -430,7 +452,8 @@ if not exist "!SCC_RUN_ROOT!\snapshot_before.json" (
 
 rem ---- Step 9: report + MicroBin share ----------------------------------------
 echo.
-echo  STEP 9/9: Report
+if /i "!SCC_PHASE!"=="OFFLINE" echo  STEP 7/7: Report (kept on this PC, not uploaded)
+if /i not "!SCC_PHASE!"=="OFFLINE" echo  STEP 9/9: Report
 set "SCC_KEPT_ARG="
 if exist "!SCC_RUN_ROOT!\kept-instances.json" set "SCC_KEPT_ARG=-KeptInstances "!SCC_RUN_ROOT!\kept-instances.json""
 if not defined FINDINGS_JSON (
@@ -532,6 +555,16 @@ set "SCC_RUN_ROOT="
 for /f "delims=" %%R in ('powershell -NoProfile -Command "$p=Join-Path 'C:\RIT-SCC' ($env:COMPUTERNAME + '-' + [guid]::NewGuid().ToString('N')); $null = New-Item -ItemType Directory -Path $p -Force; $p"') do set "SCC_RUN_ROOT=%%R"
 exit /b 0
 
+:ask_keep
+echo    Is any ScreenConnect on this PC SUPPOSED to be there, for example the
+echo    customer's own support agent? y = choose which ones to keep.
+echo    Enter = remove all of them.
+set "KEEPQ="
+set /p KEEPQ="    Keep any ScreenConnect? [y/N] "
+if /i "!KEEPQ!"=="y" set "SCC_SELECT=1"
+set "KEEPQ="
+exit /b 0
+
 :write_offline_marker
 if /i not "!SCC_PHASE!"=="OFFLINE" exit /b 0
 powershell -NoProfile -ExecutionPolicy Bypass -File "!SCC_DP0!tools\Write-PhaseMarker.ps1" -RunRoot "!SCC_RUN_ROOT!" -Phase offline -FindingsJson "!FINDINGS_JSON!" -ExitCode !PIPE_RC!
@@ -573,7 +606,7 @@ exit /b 0
 
 :online_share
 echo.
-echo  STEP 9/9 (online half): Share the report
+echo  STEP 4/4: Share the report
 set "SCC_REPORT_ARG="
 if exist "!SCC_RUN_ROOT!\report.html" set "SCC_REPORT_ARG=-ReportHtml "!SCC_RUN_ROOT!\report.html""
 if "!SCC_SCANNER_ONLY!"=="1" (

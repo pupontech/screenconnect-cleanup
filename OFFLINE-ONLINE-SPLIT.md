@@ -8,13 +8,16 @@ internet?**
 
 | Launcher | Half | Needs internet? | What it does |
 |---|---|---|---|
-| `START-HERE-OFFLINE.bat` | 1 - cleanup | **No. Nothing is downloaded or uploaded.** | preflight, before snapshot, detection, ScreenConnect removal (one typed confirmation), persistence review, optional power-options repair, after snapshot + diff, local report + package |
-| `START-HERE-ONLINE.bat` | 2 - scan + share | **Yes** | stages KVRT / ESET (and the tool pack), runs the attended scanners (KVRT, ESET, Malwarebytes), optional AV uninstall, shares the sanitized report |
-| `STAGE-TOOLS-ONLINE.bat` | prep | **Yes**, download only | fetches the scanners and tool pack into this folder so it can be carried to a PC with no connection |
-| `START-HERE.bat` | both | Yes | the original full run, **unchanged** - every step in the original order |
+| `START-HERE-OFFLINE.bat` | 1 - cleanup (steps 1-7) | **No. Nothing is downloaded or uploaded.** | preflight, before snapshot, detection, ScreenConnect removal (one typed confirmation), persistence review, optional power-options repair, after snapshot + diff, local report + package |
+| `START-HERE-ONLINE.bat` | 2 - scan + share (steps 1-4) | **Yes** | stages KVRT / ESET (and the tool pack), runs the attended scanners (KVRT, ESET, Malwarebytes), optional AV uninstall, shares the sanitized report |
 
-Each launcher self-elevates once (UAC), except `STAGE-TOOLS-ONLINE.bat`, which
-needs no admin rights.
+Only these two launchers ship in the deploy zip. Each self-elevates once (UAC).
+Each half numbers only its own steps: the offline screen shows 1-7, the online
+screen 1-4, and neither lists the other half's steps as "skipped".
+`START-HERE.bat` is the engine both call; run on its own (no flag) it is still
+the original full run, unchanged, with its 1-9 numbering. It also still accepts
+`--stage` (download only, no admin) and `--select` (see below), which no longer
+have launchers of their own.
 
 ## Typical jobs
 
@@ -29,9 +32,9 @@ scam victim's PC with an active remote session):
 `START-HERE-OFFLINE.bat`. The package `connectwise-report.zip` and `report.html`
 stay in the run folder under `C:\RIT-SCC\`. Nothing is shared.
 
-**Preparing a USB stick or a folder for a no-connection job:** on a connected PC
-run `STAGE-TOOLS-ONLINE.bat`, then copy the whole folder. It prints which of
-`KVRT.exe`, `esetonlinescanner.exe` and the tool pack are ready.
+**Preparing a USB stick or a folder for a no-connection job:** nothing to
+prepare - the offline half needs no downloads. (`START-HERE.bat --stage` from a
+command prompt still downloads the scanners and tool pack into the folder.)
 
 ## How the two halves hand over
 
@@ -62,7 +65,7 @@ that run folder.
   timestamp-named zip in the same folder (the existing one is never overwritten).
 - **Malwarebytes** is still installed when its step runs (winget, then the
   official installer download), so it belongs to the online half. It is not
-  pre-staged by `STAGE-TOOLS-ONLINE.bat`.
+  pre-staged by `START-HERE.bat --stage`.
 - **KVRT and the ESET Online Scanner are online scanners.** They fetch fresh
   databases when they start, so they are in the online half on purpose.
 - **AV uninstall** (attended, default No) is in the online half, after the
@@ -72,21 +75,22 @@ that run folder.
   *require* it and failed without it. The offline half now runs preflight with
   `-SkipToolPack`, so a PC that never had the pack still gets through (the master
   log says `[SKIPPED] tool pack check`). The full run and the online half are
-  unchanged. `STAGE-TOOLS-ONLINE.bat` still fetches the pack so `sc-cleanup.ps1
+  unchanged. `START-HERE.bat --stage` still fetches the pack so `sc-cleanup.ps1
   -offline` has what it needs.
 
 ## Keeping legitimate ScreenConnect instances (select mode)
 
 Some PCs have a ScreenConnect that is supposed to be there (the customer's own
-support agent, for example). The normal launchers remove **every** detected
-instance after one typed `y`. Two extra launchers let you choose first:
+support agent, for example). By default every detected instance is removed after
+one typed `y`. `START-HERE-OFFLINE.bat` asks first, at Step 4:
 
-| Launcher | Same as | Difference |
-|---|---|---|
-| `START-HERE-SELECT.bat` | `START-HERE.bat` (full run, needs internet) | Step 5 asks which instances to keep |
-| `START-HERE-OFFLINE-SELECT.bat` | `START-HERE-OFFLINE.bat` (no internet) | Step 5 asks which instances to keep |
+    Keep any ScreenConnect? [y/N]
 
-In Step 5 every detected instance is listed with a number, its identifier, relay
+Enter (or anything but `y`) keeps the default: remove all. `y` switches to select
+mode. The question is only asked when detection found something. (The full run
+does not ask; `START-HERE.bat --select` turns select mode on without asking.)
+
+In select mode every detected instance is listed with a number, its identifier, relay
 host and port, service name and state, session type, signature, and install date.
 The relay host is the main legit-or-not clue: a host you do not recognize is a
 reason to remove it. Then:
@@ -107,7 +111,7 @@ files, service and registry entries are left exactly as they are.
 - **Scripted use:** `Invoke-ReviewAndRemove.ps1 -KeepIdentifier <id>[,<id>]` skips the
   question. An identifier that matches no detected instance stops the run with exit 2
   and removes nothing (a typo must never become "remove it").
-- **The normal launchers did not change.** Remove-all stays the default.
+- **Remove-all stays the default.** Only a typed `y` to the keep question changes it.
 
 What select mode does **not** do:
 
@@ -140,7 +144,7 @@ runner; nothing about `sc-cleanup.ps1` changed.
   default 60 s, so the result was Incomplete and the run exited 1. The cleanup
   itself was unaffected, but an Incomplete inventory cannot be called clean.
 - New: `START-HERE-OFFLINE.bat`, `START-HERE-ONLINE.bat`,
-  `STAGE-TOOLS-ONLINE.bat`, `tools\Write-PhaseMarker.ps1`,
+  `tools\Write-PhaseMarker.ps1`,
   `tools\Find-OfflineRun.ps1`, `tests\Test-PhaseSplit.ps1`.
 - Fixed on the way: the run-folder creation line piped `New-Item` to `Out-Null`
   with a caret-escaped pipe inside double quotes; cmd passes a caret inside

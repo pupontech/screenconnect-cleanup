@@ -37,8 +37,7 @@ def verify(path, version, commit):
             "Repair-PowerOptions.ps1", "PowerOptionsRepair.Core.psm1", "PowerOptionsRepair.Windows.psm1",
             "New-InvestigationReport.ps1", "Submit-ConnectWiseReport.ps1",
             "tools/Keep-Awake.ps1", "tools/Confirm-OnBattery.ps1",
-            "START-HERE-OFFLINE.bat", "START-HERE-ONLINE.bat", "STAGE-TOOLS-ONLINE.bat",
-            "START-HERE-SELECT.bat", "START-HERE-OFFLINE-SELECT.bat", "OFFLINE-ONLINE-SPLIT.md",
+            "START-HERE-OFFLINE.bat", "START-HERE-ONLINE.bat", "OFFLINE-ONLINE-SPLIT.md",
             "tools/Find-OfflineRun.ps1", "tools/Write-PhaseMarker.ps1",
             "README.md", "DEPLOY.md", "CHANGELOG.md", "docs/12-post-av-persistence.md",
         }
@@ -68,6 +67,10 @@ def verify(path, version, commit):
         batch = members["START-HERE.bat"]
         assert b"\n" not in batch.replace(b"\r\n", b""), "batch must have CRLF only"
         assert b"STEP 6d/9" in batch and b"Invoke-PersistenceScan.ps1" in batch
+        # Only the two technician launchers ship beside the engine.
+        launchers = sorted(n for n in members if n.endswith(".bat") and "/" not in n)
+        assert launchers == ["Run-DetectRemoteAccess.bat", "START-HERE-OFFLINE.bat",
+                             "START-HERE-ONLINE.bat", "START-HERE.bat"], launchers
         assert b"-PersistenceInventory" in batch and b"-PersistenceResult" in batch
         assert b"Get-SccPersistenceInventory" in members["Persistence.Inventory.psm1"]
         assert b"Invoke-SccPersistenceReview" in members["Persistence.Removal.psm1"]

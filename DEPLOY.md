@@ -31,12 +31,9 @@ tools\Get-ToolPack.ps1          <- downloader ONLY; do NOT copy tools\* exes
 tools\Get-AVTools.ps1           <- KVRT/ESET stager (Malwarebytes via winget since v1.7.3)
 tools\Keep-Awake.ps1            <- START-HERE-only system/display wake request, no installation
 tools\Confirm-OnBattery.ps1     <- confirms before an AC-unplugged guided run
-START-HERE.bat                  <- guided runner (full run); takes --offline / --online / --stage
-START-HERE-OFFLINE.bat          <- half 1: cleanup, no internet (see OFFLINE-ONLINE-SPLIT.md)
-START-HERE-ONLINE.bat           <- half 2: stage + scanners + share, needs internet
-STAGE-TOOLS-ONLINE.bat          <- download-only prep for a PC with no connection
-START-HERE-SELECT.bat           <- full run, but you pick which ScreenConnect instances to keep
-START-HERE-OFFLINE-SELECT.bat   <- offline half, same choice
+START-HERE-OFFLINE.bat          <- START HERE, half 1: cleanup, no internet (steps 1-7)
+START-HERE-ONLINE.bat           <- then half 2: scanners + AV uninstall + share, needs internet (steps 1-4)
+START-HERE.bat                  <- the engine both launchers call (no flag = original full run)
 tests\Test-KeepSelection.ps1     <- tests the keep/remove choice (real review script)
 tools\Write-PhaseMarker.ps1     <- offline half records that it finished (phase-offline.json)
 tools\Find-OfflineRun.ps1       <- online half finds that run
