@@ -8,7 +8,21 @@ Everything in this repo was built and verified off-box (Linux + PowerShell 7);
 
 ## 1. What to copy (and what not to)
 
-Copy these, and only these:
+**The release zip (from 1.8.12-gui-alpha.3 on) is laid out like this - copy the whole extracted folder:**
+
+```
+screenconnect-cleanup\
+  START-HERE-GUI.bat      <- the only file at the top: double-click it to open the window
+  files\                  <- everything else, exactly the list below (scripts, the console
+                             launchers START-HERE*.bat, gui\, tools\, docs\, VERSION, manifests)
+```
+
+The top `START-HERE-GUI.bat` (source: `packaging\START-HERE-GUI.bat`) only starts
+`files\START-HERE-GUI.bat`, which asks for administrator rights once. The console launchers still
+work from inside `files\` (`files\START-HERE-OFFLINE.bat`, `files\START-HERE-ONLINE.bat`). Extract the
+whole zip: the top launcher stops with a message when `files\` is missing.
+
+The files in `files\` are these, and only these:
 
 ``` 
 sc-cleanup.ps1                  <- top-level runner; you only ever launch this

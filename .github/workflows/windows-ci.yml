@@ -375,6 +375,10 @@ jobs:
         shell: powershell
         run: ./tests/gui/Test-GuiAsk.ps1
 
+      - name: GUI - package layout (top launcher in folders with parentheses)
+        shell: powershell
+        run: ./tests/gui/Test-GuiPackageLayout.ps1
+
       - name: GUI - launcher
         shell: powershell
         run: ./tests/gui/Test-GuiLauncher.ps1

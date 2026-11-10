@@ -114,7 +114,8 @@ you clean it, use the two halves instead:
 `START-HERE.bat` is the engine they call; started on its own it is still the
 original full run.
 
-**Preview: `START-HERE-GUI.bat`** opens a window instead of the console, with a
+**Preview: `START-HERE-GUI.bat`** (in the release zip, the only file at the top; everything else is
+in the `files\` folder next to it) opens a window instead of the console, with a
 toggle between *Offline* (no internet), *Online*, *Detect only* and *Stage tools*
 (no full run: that is Offline, then Online). It runs the same scripts, in the same order, and asks the same
 questions as the launchers above; each ScreenConnect instance is a card with its

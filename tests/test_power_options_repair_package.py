@@ -27,6 +27,9 @@ class PowerRepairPackageTests(unittest.TestCase):
             for name in ("Get-ToolPack.ps1", "Get-AVTools.ps1", "Keep-Awake.ps1", "Confirm-OnBattery.ps1",
                          "Find-OfflineRun.ps1", "Write-PhaseMarker.ps1", "RunRootSecurity.psm1"):
                 shutil.copyfile(repo / "tools" / name, source / "tools" / name)
+            # The package's top launcher and the window it opens.
+            shutil.copytree(repo / "packaging", source / "packaging")
+            shutil.copytree(repo / "gui", source / "gui")
             # The release builder requires genuine source provenance. Give the
             # isolated fixture its own commit rather than borrowing the real SHA.
             for command in (["git", "init", "-q"], ["git", "add", "."],
@@ -42,11 +45,15 @@ class PowerRepairPackageTests(unittest.TestCase):
                 self.assertIsNone(archive.testzip())
                 for name in ("Repair-PowerOptions.ps1", "PowerOptionsRepair.Core.psm1",
                              "PowerOptionsRepair.Windows.psm1"):
-                    member = "screenconnect-cleanup/" + name
+                    # Everything but the top START-HERE-GUI.bat lives in files/.
+                    member = "screenconnect-cleanup/files/" + name
                     self.assertIn(member, archive.namelist(), f"Required repair dependency not packaged: {name}")
                     self.assertEqual(hashlib.sha256(archive.read(member)).digest(),
                                      hashlib.sha256((repo / name).read_bytes()).digest())
                 self.assertFalse(any(name.lower().endswith((".exe", ".dll")) for name in archive.namelist()))
+                top = sorted(n[len("screenconnect-cleanup/"):] for n in archive.namelist()
+                             if "/" not in n[len("screenconnect-cleanup/"):])
+                self.assertEqual(top, ["START-HERE-GUI.bat"], "only the GUI launcher sits at the top of the package")
 
 
 if __name__ == "__main__":

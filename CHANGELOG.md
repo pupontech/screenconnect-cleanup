@@ -3,6 +3,20 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.12-gui-alpha.3] - 2026-11-10 - GUI alpha: package layout, only START-HERE-GUI.bat at the top (ALPHA)
+**ALPHA. Same code as 1.8.12-gui-alpha.2; only the zip layout changed. Owner live Windows acceptance
+still required (docs/14 section 12.4).**
+- The release zip now holds ONE file at the top, `START-HERE-GUI.bat`; everything else (scripts, the
+  console launchers, `gui\`, `tools\`, docs, VERSION, BUILD-INFO.txt, SHA256SUMS.txt) is in `files\`
+  in the repository's own relative layout. The top launcher (source `packaging\START-HERE-GUI.bat`)
+  only starts `files\START-HERE-GUI.bat`; it uses the START-HERE-OFFLINE.bat hand-over pattern (no
+  `( )` block), so a folder such as "screenconnect-cleanup (1)" works, and it stops with a clear
+  message when `files\` was not extracted. The repository layout is unchanged.
+- `make-deploy-bundle.sh` and `tests\verify_deploy_zip.py` follow the new layout (the verifier also
+  requires that nothing but the launcher sits at the top and compares it byte for byte with
+  `packaging\START-HERE-GUI.bat`); `tests\test_power_options_repair_package.py` updated; new
+  `tests\gui\Test-GuiPackageLayout.ps1` (runs the top launcher in folders with spaces and parentheses).
+
 ## [1.8.12-gui-alpha.2] - 2026-11-10 - GUI alpha: REMOVE-gate safety fix, restyle (ALPHA)
 **ALPHA. Replaces 1.8.12-gui-alpha.1, which must not be used (the typed REMOVE was not enforced).
 Owner live Windows acceptance still required (docs/14 section 12.4).**
