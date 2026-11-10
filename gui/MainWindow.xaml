@@ -2,7 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Name="Win" Title="ScreenConnect Cleanup" Width="1120" Height="760" MinWidth="920" MinHeight="640"
         WindowStartupLocation="CenterScreen" FontFamily="Segoe UI" FontSize="13"
-        UseLayoutRounding="True" SnapsToDevicePixels="True" TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True" SnapsToDevicePixels="True"
         Background="{DynamicResource Brush.Background}" Foreground="{DynamicResource Brush.Foreground}">
   <Window.Resources>
     <!-- ===================================================================================
@@ -294,16 +294,19 @@
     </Style>
   </Window.Resources>
 
-  <Grid Margin="16">
+  <Grid x:Name="RootGrid" Margin="16,16,16,8">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
       <RowDefinition Height="10"/>
-      <RowDefinition Height="170"/>
+      <!-- The console row and the step-list column are named: the script narrows them on small or
+           heavily scaled screens (compact layout). -->
+      <RowDefinition x:Name="RowConsole" Height="170" MinHeight="70"/>
+      <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
     <!-- header -->
-    <Border Grid.Row="0" Style="{StaticResource Card}" Margin="0,0,0,12" Padding="18,12">
+    <Border x:Name="HeaderCard" Grid.Row="0" Style="{StaticResource Card}" Margin="0,0,0,12" Padding="18,12">
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*"/>
@@ -325,7 +328,7 @@
     <!-- middle: stepper | panel -->
     <Grid Grid.Row="1">
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="268"/>
+        <ColumnDefinition x:Name="ColStepper" Width="268"/>
         <ColumnDefinition Width="14"/>
         <ColumnDefinition Width="*"/>
       </Grid.ColumnDefinitions>
@@ -390,10 +393,21 @@
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
           </Grid.RowDefinitions>
-          <Border Grid.Row="0" Style="{StaticResource Card}" Padding="16,12">
+          <Border x:Name="StatusCard" Grid.Row="0" Style="{StaticResource Card}" Padding="16,12">
             <StackPanel>
               <TextBlock x:Name="StatusTitle" Style="{StaticResource Text.Heading}" Text=""/>
-              <TextBlock x:Name="StatusDetail" Style="{StaticResource Text.Muted}" Margin="0,3,0,8" Text=""/>
+              <TextBlock x:Name="StatusDetail" Margin="0,3,0,8" Text="">
+                <TextBlock.Style>
+                  <Style TargetType="TextBlock" BasedOn="{StaticResource Text.Muted}">
+                    <Style.Triggers>
+                      <!-- An empty status line takes no room (matters on short screens). -->
+                      <Trigger Property="Text" Value="">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                      </Trigger>
+                    </Style.Triggers>
+                  </Style>
+                </TextBlock.Style>
+              </TextBlock>
               <ProgressBar x:Name="Busy" IsIndeterminate="False" Minimum="0" Maximum="1" Value="0"/>
             </StackPanel>
           </Border>
@@ -443,5 +457,10 @@
                  TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
       </Grid>
     </Border>
+
+    <!-- footer -->
+    <TextBlock Grid.Row="4" HorizontalAlignment="Center" Margin="0,8,0,0" FontSize="11.5" Foreground="{DynamicResource Brush.Subtle}">
+      <Run Text="Brought to you by "/><Hyperlink x:Name="LinkRubinIt" NavigateUri="https://rubinit.net" Foreground="{DynamicResource Brush.Primary}">Rubinit.net</Hyperlink><Run Text=" in conjunction with "/><Hyperlink x:Name="LinkPupontech" NavigateUri="https://pupontech.com" Foreground="{DynamicResource Brush.Primary}">pupontech.com</Hyperlink>
+    </TextBlock>
   </Grid>
 </Window>

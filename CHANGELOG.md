@@ -3,6 +3,18 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.12-gui-alpha.4] - 2026-11-10 - GUI alpha: screen scaling and footer (ALPHA)
+**ALPHA. Same engine and safety behaviour as 1.8.12-gui-alpha.3; window display changes only. Owner live
+Windows acceptance still required (docs/14 section 12.4).**
+- The window is now per-monitor DPI aware (sharp text at 125% / 150% and on mixed-scale monitors; it
+  was bitmap-stretched before), opens no larger than the screen's work area, and switches to a compact
+  layout on small screens (narrower step list below 1000 wide; shorter console and tighter header below
+  660 high), so a 1366x768 laptop at 150% shows the cards, the action buttons and the console.
+  Text formatting is chosen for the monitor's scale. Details: docs/14 section 12.8.
+- Footer: "Brought to you by Rubinit.net in conjunction with pupontech.com" with links to
+  https://rubinit.net and https://pupontech.com (open only when clicked).
+- `Test-GuiWindow.ps1`: 13 new checks (small and full-size windows, DPI mode, text mode, footer links).
+
 ## [1.8.12-gui-alpha.3] - 2026-11-10 - GUI alpha: package layout, only START-HERE-GUI.bat at the top (ALPHA)
 **ALPHA. Same code as 1.8.12-gui-alpha.2; only the zip layout changed. Owner live Windows acceptance
 still required (docs/14 section 12.4).**

@@ -619,6 +619,29 @@ Deliberately not changed, with the reason:
   `-SelfTest` now builds both REMOVE confirmations for real (not shown) and checks the gate against
   wrong spellings, extra spaces and a cleared box, in both themes.
 
+### 12.8 Screen scaling, and the footer (2026-11-10)
+
+- **Per-monitor DPI.** `powershell.exe` starts DPI-unaware and WPF would make it only system-aware,
+  so on a second monitor with a different scale (or after a scale change) Windows stretched the
+  window as a bitmap and the text went blurry. `Start-CleanupGui.ps1` now calls
+  `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` and sets the `DoNotScaleForDpiChanges=false`
+  AppContext switch **before** WPF loads; WPF then re-renders sharply at each monitor's scale.
+  `-SelfTest` prints the mode (`dpi=per-monitor v2`).
+- **Fits the screen.** The window opens at 1120x760 or the work area (minus the taskbar), whichever
+  is smaller; its minimum size never exceeds the screen. On a 1366x768 laptop at 150% the work area is
+  about 910x480 device-independent pixels.
+- **Compact layout.** Below 1000 wide the step list narrows (268 to 212); below 660 high the console
+  shrinks (170 to 88) and the header, status card and margins tighten. Switched live on resize.
+- **Text.** `Ideal` text formatting above 100% scale (smooth glyphs), `Display` at 100% (crisp
+  pixel-snapped). Re-chosen when the window moves to a monitor with another scale.
+- **Footer**: "Brought to you by Rubinit.net in conjunction with pupontech.com", links to
+  https://rubinit.net and https://pupontech.com. Opened only when clicked (handed to Explorer, so the
+  default browser opens it); nothing opens on its own.
+- **Tests.** `Test-GuiWindow.ps1` runs Detect at `-TestSize 910x480` (compact both ways, 212 / 88)
+  and `1120x760` (roomy, 268 / 170), checks the DPI mode, the text mode for the scale and the footer
+  links. `-TestSize` and `-RenderScale` are test hooks, honoured only in a non-elevated window, like the
+  others. Offscreen renders at 125% and 150% were inspected; a real scaled laptop is still item 4 of 12.4.
+
 ### 12.4 Not testable by an agent - the owner, on a real PC (add to `docs/09`)
 
 **Everything below is still open.** The window, the removal path and the online half have been

@@ -91,7 +91,7 @@ function Remove-Comments {
 function Invoke-Window {
     # Runs one window session. $Answers is the hashtable of canned dialog answers. Reuses $Harness when given
     # (the Online half must see the Offline half's run folder).
-    param([string]$Name, [string]$ModeName, [hashtable]$Answers, $Harness = $null, [switch]$RealReview = $true, [switch]$RepairWritesResult, [hashtable]$Stubs)
+    param([string]$Name, [string]$ModeName, [hashtable]$Answers, $Harness = $null, [switch]$RealReview = $true, [switch]$RepairWritesResult, [hashtable]$Stubs, [string[]]$ExtraArgs = @())
     $h = $Harness
     if (-not $h) {
         $h = New-Harness $Name ''
@@ -110,9 +110,9 @@ function Invoke-Window {
     $env:SCC_TRACE = $trace; $env:SCC_GUI_TEST = '1'; $env:SCC_GUI_TEST_ANSWERS = $ansFile
     try {
         # The REAL gui script from this checkout (the harness copy of it is a stub); only -ToolRoot is the stubbed engine.
-        $p = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -PassThru -WindowStyle Minimized -ArgumentList @(
+        $p = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -PassThru -WindowStyle Minimized -ArgumentList (@(
             '-NoLogo', '-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $guiPath + '"'),
-            '-ToolRoot', ('"' + $h.Dir + '"'), '-RitRoot', ('"' + $h.Rit + '"'), '-AllowNotElevated', '-AutoStart', '-Mode', $ModeName, '-ResultPath', ('"' + $resultFile + '"'))
+            '-ToolRoot', ('"' + $h.Dir + '"'), '-RitRoot', ('"' + $h.Rit + '"'), '-AllowNotElevated', '-AutoStart', '-Mode', $ModeName, '-ResultPath', ('"' + $resultFile + '"')) + $ExtraArgs)
         $done = $p.WaitForExit(240000)
         if (-not $done) { try { $p.Kill() } catch { } }
     } finally { Remove-Item Env:\SCC_GUI_TEST, Env:\SCC_GUI_TEST_ANSWERS -ErrorAction SilentlyContinue }
@@ -179,6 +179,32 @@ try {
     Check (-not $xaml.Contains('RbFull') -and $guiCode -notmatch "'Full'\s*=|Tag = 'Full'") 'the window offers no Full run (it is Offline then Online)'
     $full = & (Join-Path $PSHOME 'powershell.exe') -NoProfile -STA -ExecutionPolicy Bypass -File $guiPath -AllowNotElevated -AutoStart -Mode Full -ResultPath (Join-Path $work 'full-refused.json') 2>&1
     Check ($LASTEXITCODE -eq 2 -and ($full | Out-String) -match 'unsupported mode') 'asking the window for -Mode Full is refused before anything runs'
+
+    # ---------------------------------------------------------------- screen scaling and footer
+    Write-Host 'Screen scaling (per-monitor DPI, fits the work area, compact on small screens) and the footer' -ForegroundColor Cyan
+    Check ($guiPs.IndexOf('SetProcessDpiAwarenessContext') -ge 0 -and $guiPs.IndexOf('SetProcessDpiAwarenessContext') -lt $guiPs.IndexOf('Add-Type -AssemblyName PresentationFramework')) 'per-monitor DPI awareness is switched on before WPF loads (otherwise text is bitmap-stretched and blurry)'
+    Check ($txt -match 'dpi=per-monitor v2') 'the self-test window runs per-monitor v2 DPI aware'
+    Check ($guiCode -match 'SystemParameters\]::WorkArea') 'the window size comes from the screen work area, never larger than the screen'
+    Check ($xaml -match 'x:Name="LinkRubinIt"[^>]*NavigateUri="https://rubinit\.net"' -and $xaml -match 'x:Name="LinkPupontech"[^>]*NavigateUri="https://pupontech\.com"') 'the footer links to https://rubinit.net and https://pupontech.com'
+    Check ($xaml -match 'Brought to you by' -and $xaml -match 'in conjunction with') 'the footer reads "Brought to you by Rubinit.net in conjunction with pupontech.com"'
+    Check ($guiCode -match 'add_RequestNavigate') 'the footer links open in the browser'
+    $small = Invoke-Window 'scale-small' 'Detect' @{} -ExtraArgs @('-TestSize', '910x480')
+    if (-not $small.State) { Check $false 'the small-screen window wrote its result file' }
+    else {
+        $s = $small.State
+        Check ($s.DpiMode -eq 'per-monitor v2') ('the running window is per-monitor v2 (' + $s.DpiMode + ')')
+        Check ($s.CompactWidth -and $s.CompactHeight) 'a 910x480 window switches to the compact layout in both directions'
+        Check ([int]$s.StepperWidth -eq 212 -and [int]$s.ConsoleHeight -eq 88) ('compact: narrower step list (212) and shorter console (88): ' + $s.StepperWidth + ' / ' + $s.ConsoleHeight)
+        Check ([int]$s.WindowWidth -le 910 -and [int]$s.WindowHeight -le 480) ('the window keeps the requested small size: ' + $s.WindowWidth + 'x' + $s.WindowHeight)
+    }
+    $big = Invoke-Window 'scale-big' 'Detect' @{} -ExtraArgs @('-TestSize', '1120x760')
+    if (-not $big.State) { Check $false 'the full-size window wrote its result file' }
+    else {
+        $s = $big.State
+        Check (-not $s.CompactWidth -and -not $s.CompactHeight) 'a 1120x760 window uses the roomy layout'
+        Check ([int]$s.StepperWidth -eq 268 -and [int]$s.ConsoleHeight -eq 170) ('roomy: step list 268, console 170: ' + $s.StepperWidth + ' / ' + $s.ConsoleHeight)
+        Check ($s.TextMode -eq $(if ([double]$s.DpiScale -gt 1.01) { 'Ideal' } else { 'Display' })) ('text mode matches the scale (' + $s.DpiScale + ' -> ' + $s.TextMode + ')')
+    }
 
     # ---------------------------------------------------------------- Offline: keep one, type REMOVE
     Write-Host 'Offline half: keep one instance, confirm removal by typing REMOVE' -ForegroundColor Cyan

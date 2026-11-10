@@ -40,7 +40,11 @@ param(
     # Light or dark design tokens; System follows the Windows app-mode setting.
     [ValidateSet('System', 'Light', 'Dark')][string]$Theme = 'System',
     # Builds the real dialogs without showing them and checks the typed-word gate and the design tokens.
-    [switch]$SelfTest
+    [switch]$SelfTest,
+    # Test hooks (non-elevated test windows only): open at this size in device-independent pixels, e.g.
+    # 910x480 = a 1366x768 laptop at 150%, and render -RenderPng at this scale (1.5 = 150%).
+    [string]$TestSize = '',
+    [double]$RenderScale = 1.0
 )
 
 Set-StrictMode -Version 2.0
@@ -57,6 +61,21 @@ if ([Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
     & (Join-Path $PSHOME 'powershell.exe') @again
     exit $LASTEXITCODE
 }
+
+# ---- screen scaling ------------------------------------------------------------------------------
+# powershell.exe starts DPI-unaware and WPF then makes it only "system aware": sharp on the monitor the
+# PC signed in with, but bitmap-stretched (blurry) on a monitor with a different scale, or after the
+# scale was changed without signing out. So, BEFORE WPF loads: ask Windows for per-monitor awareness
+# (v2) and tell WPF to re-lay itself out when the window moves to another DPI. Either step failing just
+# leaves the window system aware, as it was.
+$script:DpiMode = 'system (WPF default)'
+try {
+    if (-not ('SccGuiDpi' -as [type])) {
+        Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class SccGuiDpi { [DllImport("user32.dll", SetLastError = true)] public static extern bool SetProcessDpiAwarenessContext(IntPtr value); }'
+    }
+    [AppContext]::SetSwitch('Switch.System.Windows.DoNotScaleForDpiChanges', $false)
+    if ([SccGuiDpi]::SetProcessDpiAwarenessContext([IntPtr](-4))) { $script:DpiMode = 'per-monitor v2' }
+} catch { }
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 Import-Module (Join-Path $PSScriptRoot 'Gui.Core.psm1') -Force
@@ -78,7 +97,8 @@ $ui = @{}
 $controlNames = 'TitleText', 'InfoText', 'RunText', 'BtnOpenRitRoot', 'BtnOpenRunHeader', 'StepperHost', 'StartPanel',
 'RbOffline', 'RbOnline', 'RbDetect', 'RbStage', 'BtnStart', 'PriorRunsText',
 'RunPanel', 'StatusTitle', 'StatusDetail', 'Busy', 'Banner', 'BannerText', 'ReviewBar', 'ReviewSummary', 'BtnReviewContinue',
-'CardsHost', 'BtnOpenReport', 'BtnOpenRun', 'BtnRestart', 'BtnNewRun', 'BtnCopy', 'BtnOpenLog', 'ConsoleBox'
+'CardsHost', 'BtnOpenReport', 'BtnOpenRun', 'BtnRestart', 'BtnNewRun', 'BtnCopy', 'BtnOpenLog', 'ConsoleBox',
+'RowConsole', 'ColStepper', 'LinkRubinIt', 'LinkPupontech', 'RootGrid', 'HeaderCard', 'StatusCard'
 $missing = @()
 foreach ($n in $controlNames) {
     $c = $win.FindName($n)
@@ -124,7 +144,7 @@ if ($script:TestHooksAllowed -and $env:SCC_GUI_TEST -eq '1' -and $env:SCC_GUI_TE
     $script:TestAnswers = [IO.File]::ReadAllText($env:SCC_GUI_TEST_ANSWERS) | ConvertFrom-Json
 }
 $script:TestMode = ($null -ne $script:TestAnswers) -and $script:TestHooksAllowed
-if (-not $script:TestHooksAllowed) { $HoldSeconds = 0; $RenderPng = '' }
+if (-not $script:TestHooksAllowed) { $HoldSeconds = 0; $RenderPng = ''; $TestSize = ''; $RenderScale = 1.0 }
 $startMode = $(if ($Mode) { $Mode } else { 'Detect' })
 if (-not $script:ModeLabels.ContainsKey($startMode)) {
     Write-Host ('Unknown or unsupported mode for this window: ' + $startMode + ' (use Offline, Online, Detect or Stage).') -ForegroundColor Red
@@ -325,6 +345,7 @@ function New-DialogWindow {
     foreach ($k in @($win.Resources.Keys)) { $w.Resources[$k] = $win.Resources[$k] }
     $w.Background = Get-Brush 'Background'; $w.Foreground = Get-Brush 'Foreground'
     $w.FontFamily = $win.FontFamily; $w.FontSize = $win.FontSize
+    [System.Windows.Media.TextOptions]::SetTextFormattingMode($w, [System.Windows.Media.TextOptions]::GetTextFormattingMode($win))
     $sp = New-Object System.Windows.Controls.StackPanel
     $sp.Margin = New-Object System.Windows.Thickness(22, 18, 22, 18)
     $head = New-Object System.Windows.Controls.TextBlock
@@ -886,7 +907,8 @@ function Complete-Run {
         # Test hook: render THIS window's own visual tree to a PNG (never a screen capture).
         try {
             $win.UpdateLayout()
-            $rtb = New-Object System.Windows.Media.Imaging.RenderTargetBitmap ([int]$win.ActualWidth), ([int]$win.ActualHeight), 96, 96, ([System.Windows.Media.PixelFormats]::Pbgra32)
+            $rs = [Math]::Max(1.0, $RenderScale)
+            $rtb = New-Object System.Windows.Media.Imaging.RenderTargetBitmap ([int]($win.ActualWidth * $rs)), ([int]($win.ActualHeight * $rs)), (96 * $rs), (96 * $rs), ([System.Windows.Media.PixelFormats]::Pbgra32)
             $rtb.Render($win)
             $enc = New-Object System.Windows.Media.Imaging.PngBitmapEncoder
             $enc.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($rtb))
@@ -1004,6 +1026,11 @@ function Write-ResultFile {
             RunRoot = $script:Session.RunRoot; FindingsJson = $script:Session.FindingsJson
             ConsoleChars = $ui.ConsoleBox.Text.Length; OpenReportEnabled = [bool]$ui.BtnOpenReport.IsEnabled
             RestartVisible = ($ui.BtnRestart.Visibility -eq 'Visible')
+            DpiMode = $script:DpiMode; DpiScale = $script:DpiScale
+            WindowWidth = $win.ActualWidth; WindowHeight = $win.ActualHeight
+            CompactWidth = [bool]$script:Compact.Width; CompactHeight = [bool]$script:Compact.Height
+            StepperWidth = $ui.ColStepper.ActualWidth; ConsoleHeight = $ui.RowConsole.ActualHeight
+            TextMode = [string][System.Windows.Media.TextOptions]::GetTextFormattingMode($win)
             StartPanelVisible = ($ui.StartPanel.Visibility -eq 'Visible'); RunPanelVisible = ($ui.RunPanel.Visibility -eq 'Visible')
             KeepIdentifiers = @($script:Session.Answers['KeepIdentifiers'])
             ShareUrl = $script:ShareUrl
@@ -1123,7 +1150,7 @@ if ($SelfTest) {
         $enc = New-Object System.Windows.Media.Imaging.PngBitmapEncoder; $enc.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($rtb))
         $fs = [IO.File]::Create($RenderPng); $enc.Save($fs); $fs.Close()
     }
-    if ($fails.Count -eq 0) { Write-Host ('SELFTEST_OK tokens=' + $light.Count + ' theme=' + $script:ThemeName); exit 0 }
+    if ($fails.Count -eq 0) { Write-Host ('SELFTEST_OK tokens=' + $light.Count + ' theme=' + $script:ThemeName + ' dpi=' + $script:DpiMode); exit 0 }
     $fails | ForEach-Object { Write-Host ('SELFTEST_FAIL ' + $_) }
     exit 1
 }
@@ -1207,7 +1234,63 @@ $win.add_Closing({
         $e.Handled = $true
     })
 
+# ---- fit the screen ---------------------------------------------------------------------------------
+# A 1366x768 laptop at 150% has about 910x480 device-independent pixels of work area: a fixed
+# 1120x760 window (minimum 920x640) would hang off the screen. So the window is sized to the work area
+# of the screen it opens on, and below 1000 wide / 660 high it switches to a compact layout (narrower
+# step list, shorter console). A console height the technician dragged is kept until the window
+# crosses the threshold again.
+$script:Compact = @{ Width = $null; Height = $null }
+$script:DpiScale = 1.0
+function Set-WindowFitToScreen {
+    $wa = [System.Windows.SystemParameters]::WorkArea
+    $w = [Math]::Min(1120, $wa.Width - 16); $h = [Math]::Min(760, $wa.Height - 16)
+    if ($TestSize -match '^(\d+)x(\d+)$') { $w = [double]$Matches[1]; $h = [double]$Matches[2] }
+    $win.MinWidth = [Math]::Min(760, $w); $win.MinHeight = [Math]::Min(460, $h)
+    $win.Width = $w; $win.Height = $h
+}
+function Update-CompactLayout {
+    $narrow = ($win.ActualWidth -gt 0 -and $win.ActualWidth -lt 1000)
+    $short = ($win.ActualHeight -gt 0 -and $win.ActualHeight -lt 660)
+    if ($script:Compact.Width -ne $narrow) {
+        $ui.ColStepper.Width = New-Object System.Windows.GridLength $(if ($narrow) { 212 } else { 268 })
+        $script:Compact.Width = $narrow
+    }
+    if ($script:Compact.Height -ne $short) {
+        # Short screens: tighter outer margin, header and status card, and a shorter console, so the
+        # findings and the buttons under them keep room.
+        $ui.RowConsole.Height = New-Object System.Windows.GridLength $(if ($short) { 88 } else { 170 })
+        $ui.RootGrid.Margin = $(if ($short) { New-Object System.Windows.Thickness(10, 8, 10, 4) } else { New-Object System.Windows.Thickness(16, 16, 16, 8) })
+        $ui.HeaderCard.Padding = $(if ($short) { New-Object System.Windows.Thickness(14, 6, 14, 6) } else { New-Object System.Windows.Thickness(18, 12, 18, 12) })
+        $ui.HeaderCard.Margin = $(if ($short) { New-Object System.Windows.Thickness(0, 0, 0, 8) } else { New-Object System.Windows.Thickness(0, 0, 0, 12) })
+        $ui.TitleText.FontSize = $(if ($short) { 16 } else { 19 })
+        $ui.StatusCard.Padding = $(if ($short) { New-Object System.Windows.Thickness(14, 6, 14, 8) } else { New-Object System.Windows.Thickness(16, 12, 16, 12) })
+        $script:Compact.Height = $short
+    }
+}
+function Update-TextMode {
+    # Display text is sharpest at 100%; at higher scales Ideal text looks better. Follows the monitor.
+    try { $script:DpiScale = [System.Windows.Media.VisualTreeHelper]::GetDpi($win).DpiScaleX } catch { $script:DpiScale = 1.0 }
+    $mode = $(if ($script:DpiScale -gt 1.01) { 'Ideal' } else { 'Display' })
+    [System.Windows.Media.TextOptions]::SetTextFormattingMode($win, $mode)
+}
+Set-WindowFitToScreen
+$win.add_SizeChanged({ Update-CompactLayout })
+$win.add_DpiChanged({ Update-TextMode })
+
+# Footer links open in the technician's normal browser: handed to Explorer, so the browser does not
+# inherit this window's administrator rights.
+foreach ($link in $ui.LinkRubinIt, $ui.LinkPupontech) {
+    $link.add_RequestNavigate({
+            param($s, $e)
+            try { Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $e.Uri.AbsoluteUri + '"') } catch { }
+            $e.Handled = $true
+        })
+}
+
 $win.add_Loaded({
+        Update-TextMode
+        Update-CompactLayout
         $timer.Start()
         if ($script:AutoStart) { Start-Run $startMode }
     })
