@@ -94,7 +94,7 @@ if (-not $isAdmin -and -not $AllowNotElevated) {
 $xamlText = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'MainWindow.xaml'))
 $win = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader ([xml]$xamlText)))
 $ui = @{}
-$controlNames = 'TitleText', 'InfoText', 'RunText', 'BtnOpenRitRoot', 'BtnOpenRunHeader', 'StepperHost', 'StartPanel',
+$controlNames = 'TitleText', 'InfoText', 'RunText', 'BtnOpenRitRoot','StepperHost', 'StartPanel',
 'RbOffline', 'RbOnline', 'RbDetect', 'RbStage', 'BtnStart', 'PriorRunsText',
 'RunPanel', 'StatusTitle', 'StatusDetail', 'Busy', 'Banner', 'BannerText', 'ReviewBar', 'ReviewSummary', 'BtnReviewContinue',
 'CardsHost', 'BtnOpenReport', 'BtnOpenRun', 'BtnRestart', 'BtnNewRun', 'BtnCopy', 'BtnOpenLog', 'ConsoleBox',
@@ -673,9 +673,11 @@ function Update-HeaderButtons {
     # The folder that holds every run (C:\RIT-SCC). The window never creates it; a run does.
     $ritExists = Test-Path -LiteralPath $RitRoot -PathType Container
     $ui.BtnOpenRitRoot.IsEnabled = [bool]$ritExists
-    $ui.BtnOpenRitRoot.ToolTip = $(if ($ritExists) { 'Every run''s folder lives here: ' + $RitRoot } else { $RitRoot + ' does not exist yet - it is created by the first run on this PC' })
+    $ritTip = $RitRoot + ' is where this tool keeps its work on this PC. Every run gets its own folder in it ' +
+        '(named after the PC) holding the logs, the before and after snapshots, what was found, the report, ' +
+        'and anything removed (moved there, never deleted). The offline and online halves share one run folder.'
+    $ui.BtnOpenRitRoot.ToolTip = $(if ($ritExists) { $ritTip } else { $ritTip + "`n`n" + $RitRoot + ' does not exist yet - the first run on this PC creates it.' })
     $has = ($script:Session -and $script:Session.RunRoot -and (Test-Path -LiteralPath $script:Session.RunRoot))
-    $ui.BtnOpenRunHeader.IsEnabled = [bool]$has
     $ui.BtnOpenRun.IsEnabled = [bool]$has
     $ui.BtnOpenLog.IsEnabled = [bool]($script:LogPath -and (Test-Path -LiteralPath $script:LogPath))
     $rep = $false
@@ -1183,7 +1185,6 @@ $ui.BtnRestart.add_Click({
         if ($ans -eq 'Yes') { Start-Process -FilePath 'cmd.exe' -ArgumentList '/d /c "shutdown /r /t 0 /f"' }
     })
 $ui.BtnOpenRitRoot.add_Click({ if (Test-Path -LiteralPath $RitRoot -PathType Container) { Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $RitRoot + '"') } })
-$ui.BtnOpenRunHeader.add_Click({ if ($script:Session -and $script:Session.RunRoot) { Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $script:Session.RunRoot + '"') } })
 $ui.BtnOpenRun.add_Click({ if ($script:Session -and $script:Session.RunRoot) { Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $script:Session.RunRoot + '"') } })
 $ui.BtnOpenReport.add_Click({ if ($script:Session) { $r = (Get-GuiReportInfo -RunRoot $script:Session.RunRoot); if ($r.ReportExists) { Start-Process -FilePath $r.ReportPath } } })
 $ui.BtnOpenLog.add_Click({ if ($script:LogPath -and (Test-Path -LiteralPath $script:LogPath)) { Start-Process -FilePath 'notepad.exe' -ArgumentList ('"' + $script:LogPath + '"') } })

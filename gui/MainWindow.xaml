@@ -318,9 +318,8 @@
           <TextBlock x:Name="RunText" Style="{StaticResource Text.Muted}" Margin="0,2,0,0" Text="Run folder: none yet" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-          <Button x:Name="BtnOpenRitRoot" Style="{StaticResource Button.Secondary}" Content="Open RIT-SCC folder" IsEnabled="False"
-                  ToolTip="Every run's folder lives here (C:\RIT-SCC)" ToolTipService.ShowOnDisabled="True"/>
-          <Button x:Name="BtnOpenRunHeader" Style="{StaticResource Button.Secondary}" Margin="0" Content="Open run folder" IsEnabled="False"/>
+          <Button x:Name="BtnOpenRitRoot" Style="{StaticResource Button.Secondary}" Margin="0" Content="Open RIT-SCC folder" IsEnabled="False"
+                  ToolTip="Every run's folder lives here (C:\RIT-SCC)" ToolTipService.ShowOnDisabled="True" ToolTipService.ShowDuration="20000"/>
         </StackPanel>
       </Grid>
     </Border>
