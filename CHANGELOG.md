@@ -3,6 +3,12 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.12-offline-alpha.1] - 2026-11-10 - alpha testing build
+**ALPHA. Same code as 1.8.12-beta.1-offline.3, renamed for field testing. Not an upstream release.**
+Not yet run end to end on a real PC (real UAC, detection/removal, scanners, share,
+offline-then-online on one machine). Persistence inventory still times out at the final
+write on some PCs (upstream issue).
+
 ## [1.8.12-beta.1-offline.3] - 2026-11-10 - split hardening (review findings)
 **Not an upstream release. Owner live Windows acceptance required.**
 - Security: the offline half creates its run folder already LOCKED (owner and
