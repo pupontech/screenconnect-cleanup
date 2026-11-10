@@ -40,6 +40,8 @@ cp "$SRC/tools/Confirm-OnBattery.ps1" "$D/tools/"
 # Offline/online split: the run finder and phase marker are required by START-HERE.bat.
 cp "$SRC/tools/Find-OfflineRun.ps1" "$D/tools/"
 cp "$SRC/tools/Write-PhaseMarker.ps1" "$D/tools/"
+# Locks the offline run folder; Find-OfflineRun.ps1 trusts only locked folders.
+cp "$SRC/tools/RunRootSecurity.psm1" "$D/tools/"
 
 # Optional tool-pack downloader/stager scripts. Copy when present, warn when not.
 missing_tools=""

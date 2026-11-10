@@ -22,7 +22,7 @@ function Check([bool]$Ok, [string]$Name) {
 $work = Join-Path $env:TEMP ('scc-keep-' + [guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $work -Force
 
-function New-Findings([string]$Dir) {
+function New-Findings([string]$Dir, [switch]$Empty) {
     $null = New-Item -ItemType Directory -Path $Dir -Force
     $mk = {
         param($id, $relay, $dir)
@@ -46,14 +46,15 @@ function New-Findings([string]$Dir) {
         }
         OtherTargets = @()
     }
+    if ($Empty) { $doc.ScreenConnect.Instances = @() }
     $path = Join-Path $Dir 'findings.json'
     $doc | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $path -Encoding UTF8
     return $path
 }
 
-function Invoke-Review([string]$Name, [string[]]$Switches, [string]$Stdin) {
+function Invoke-Review([string]$Name, [string[]]$Switches, [string]$Stdin, [switch]$NoInstances) {
     $dir = Join-Path $work $Name
-    $findings = New-Findings (Join-Path $dir 'detect\RUN_1')
+    $findings = New-Findings (Join-Path $dir 'detect\RUN_1') -Empty:$NoInstances
     $wd = Join-Path $dir 'wd'
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = 'powershell.exe'
@@ -122,6 +123,28 @@ try {
 
     $r = Invoke-Review 'eof' @('-SelectKeep') ''
     Check ($r.Exit -eq 0 -and -not $r.Timeout -and $null -eq $r.Plan) 'empty stdin: ends without hanging or removing'
+
+    Write-Host 'Offline launcher (-AskKeep): "Keep any?" only when something was found' -ForegroundColor Cyan
+    $r = Invoke-Review 'ask-enter' @('-AskKeep') "`ny`n"
+    Check ($r.Out -match 'Keep any ScreenConnect\?') '-AskKeep with instances: asks "Keep any?"'
+    Check ($r.Out -match '\[2\] bbbb2222bbbb2222' -and $r.Out -match 'support\.customer\.example:8041') '-AskKeep: shows the numbered list with relay host:port before asking'
+    Check ($r.Plan.Decision -eq 'ALL_REMOVE' -and @($r.Plan.ScreenConnectInstances).Count -eq 3) '-AskKeep, Enter: removes all 3 (default unchanged)'
+    Check ($null -eq $r.Kept -and $r.Out -notmatch 'Numbers to KEEP') '-AskKeep, Enter: no picker, no kept-instances.json'
+    Check ($r.Out -match 'Remove all detected ScreenConnect instances\?') '-AskKeep, Enter: the original remove-all prompt'
+
+    $r = Invoke-Review 'ask-yes' @('-AskKeep') "y`n2`ny`n"
+    Check ($r.Out -match 'Numbers to KEEP') '-AskKeep, y: switches to the picker'
+    Check ($r.Plan.Decision -eq 'PARTIAL_REMOVE' -and (Ids $r.Plan.KeptScreenConnectInstances) -eq 'bbbb2222bbbb2222') '-AskKeep, y then 2: keeps 2, removes 1 and 3'
+
+    $r = Invoke-Review 'ask-eof' @('-AskKeep') ''
+    Check ($r.Exit -eq 0 -and -not $r.Timeout -and $null -eq $r.Plan) '-AskKeep, empty stdin: ends without hanging or removing'
+
+    $r = Invoke-Review 'ask-none' @('-AskKeep') "`n" -NoInstances
+    Check ($r.Exit -eq 0 -and $r.Out -match 'nothing to remove') '-AskKeep, nothing found: says nothing to remove'
+    Check ($r.Out -notmatch 'Keep any ScreenConnect') '-AskKeep, nothing found: the question is NOT asked'
+
+    $r = Invoke-Review 'ask-select' @('-AskKeep', '-SelectKeep') "2`ny`n"
+    Check ($r.Out -notmatch 'Keep any ScreenConnect' -and (Ids $r.Plan.KeptScreenConnectInstances) -eq 'bbbb2222bbbb2222') '-AskKeep with -SelectKeep: no extra question, straight to the picker'
 
     Write-Host 'Select mode, non-interactive (-KeepIdentifier)' -ForegroundColor Cyan
     $r = Invoke-Review 'byid' @('-KeepIdentifier', 'BBBB2222BBBB2222') "y`n"

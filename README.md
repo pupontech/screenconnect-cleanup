@@ -104,11 +104,12 @@ you clean it, use the two halves instead:
 
 - **`START-HERE-OFFLINE.bat`** - the cleanup, shown as steps 1-7: preflight,
   snapshots, detection, removal, persistence review, diff, local report.
-  Downloads and uploads nothing. Before removal it asks whether any ScreenConnect
-  is supposed to stay (Enter = remove all).
-- **`START-HERE-ONLINE.bat`** - the part that needs internet, shown as steps 1-4:
-  download and run the scanners (KVRT, ESET, Malwarebytes), optional AV uninstall,
-  share the report.
+  Downloads and uploads nothing. When ScreenConnect is found it asks whether any of
+  it is supposed to stay (Enter = remove all).
+- **`START-HERE-ONLINE.bat`** - the part that needs internet, shown as steps 1-5:
+  download and run the scanners (KVRT, ESET, Malwarebytes), check persistence again
+  after the scans, optional AV uninstall, share the report. It only continues an
+  offline run whose folder is still locked to administrators.
 
 These are the only two launchers in the deploy zip. `START-HERE.bat` is the
 engine they call; started on its own it is still the original full run.

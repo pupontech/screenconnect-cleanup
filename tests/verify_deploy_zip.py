@@ -38,7 +38,7 @@ def verify(path, version, commit):
             "New-InvestigationReport.ps1", "Submit-ConnectWiseReport.ps1",
             "tools/Keep-Awake.ps1", "tools/Confirm-OnBattery.ps1",
             "START-HERE-OFFLINE.bat", "START-HERE-ONLINE.bat", "OFFLINE-ONLINE-SPLIT.md",
-            "tools/Find-OfflineRun.ps1", "tools/Write-PhaseMarker.ps1",
+            "tools/Find-OfflineRun.ps1", "tools/Write-PhaseMarker.ps1", "tools/RunRootSecurity.psm1",
             "README.md", "DEPLOY.md", "CHANGELOG.md", "docs/12-post-av-persistence.md",
         }
         assert required <= members.keys(), sorted(required - members.keys())

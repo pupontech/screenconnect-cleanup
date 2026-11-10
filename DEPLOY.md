@@ -32,11 +32,12 @@ tools\Get-AVTools.ps1           <- KVRT/ESET stager (Malwarebytes via winget sin
 tools\Keep-Awake.ps1            <- START-HERE-only system/display wake request, no installation
 tools\Confirm-OnBattery.ps1     <- confirms before an AC-unplugged guided run
 START-HERE-OFFLINE.bat          <- START HERE, half 1: cleanup, no internet (steps 1-7)
-START-HERE-ONLINE.bat           <- then half 2: scanners + AV uninstall + share, needs internet (steps 1-4)
+START-HERE-ONLINE.bat           <- then half 2: scanners + persistence re-check + AV uninstall + share, needs internet (steps 1-5)
 START-HERE.bat                  <- the engine both launchers call (no flag = original full run)
 tests\Test-KeepSelection.ps1     <- tests the keep/remove choice (real review script)
 tools\Write-PhaseMarker.ps1     <- offline half records that it finished (phase-offline.json)
-tools\Find-OfflineRun.ps1       <- online half finds that run
+tools\Find-OfflineRun.ps1       <- online half finds that run (only if its folder is still locked)
+tools\RunRootSecurity.psm1      <- creates the locked offline run folder and checks it
 OFFLINE-ONLINE-SPLIT.md         <- how the two halves work and what is unverified
 docs\                           <- optional but recommended (work log + roadmap)
 DEPLOY.md                       <- this file

@@ -25,7 +25,7 @@ class PowerRepairPackageTests(unittest.TestCase):
                     shutil.copyfile(item, source / item.name)
             (source / "tools").mkdir()
             for name in ("Get-ToolPack.ps1", "Get-AVTools.ps1", "Keep-Awake.ps1", "Confirm-OnBattery.ps1",
-                         "Find-OfflineRun.ps1", "Write-PhaseMarker.ps1"):
+                         "Find-OfflineRun.ps1", "Write-PhaseMarker.ps1", "RunRootSecurity.psm1"):
                 shutil.copyfile(repo / "tools" / name, source / "tools" / name)
             # The release builder requires genuine source provenance. Give the
             # isolated fixture its own commit rather than borrowing the real SHA.

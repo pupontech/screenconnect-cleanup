@@ -9,11 +9,11 @@ internet?**
 | Launcher | Half | Needs internet? | What it does |
 |---|---|---|---|
 | `START-HERE-OFFLINE.bat` | 1 - cleanup (steps 1-7) | **No. Nothing is downloaded or uploaded.** | preflight, before snapshot, detection, ScreenConnect removal (one typed confirmation), persistence review, optional power-options repair, after snapshot + diff, local report + package |
-| `START-HERE-ONLINE.bat` | 2 - scan + share (steps 1-4) | **Yes** | stages KVRT / ESET (and the tool pack), runs the attended scanners (KVRT, ESET, Malwarebytes), optional AV uninstall, shares the sanitized report |
+| `START-HERE-ONLINE.bat` | 2 - scan + share (steps 1-5) | **Yes** | stages KVRT / ESET (and the tool pack), runs the attended scanners (KVRT, ESET, Malwarebytes), optional AV uninstall, shares the sanitized report |
 
 Only these two launchers ship in the deploy zip. Each self-elevates once (UAC).
 Each half numbers only its own steps: the offline screen shows 1-7, the online
-screen 1-4, and neither lists the other half's steps as "skipped".
+screen 1-5, and neither lists the other half's steps as "skipped".
 `START-HERE.bat` is the engine both call; run on its own (no flag) it is still
 the original full run, unchanged, with its 1-9 numbering. It also still accepts
 `--stage` (download only, no admin) and `--select` (see below), which no longer
@@ -37,6 +37,22 @@ prepare - the offline half needs no downloads. (`START-HERE.bat --stage` from a
 command prompt still downloads the scanners and tool pack into the folder.)
 
 ## How the two halves hand over
+
+**Only locked run folders are continued.** `C:\RIT-SCC` inherits "Authenticated
+Users: Modify" from `C:\`, so anything running as a normal user could create or
+edit run folders there - including the intruder this tool is removing, during the
+hours between the two halves. The offline half therefore creates its run folder
+already locked (Administrators/SYSTEM write, Users read only, no inheritance;
+`tools\RunRootSecurity.psm1`). The online half continues a run only when its folder
+is still locked, is not a junction or symlink, and its `findings.json` lies on a real
+path inside it. Any other folder is skipped with a visible "Not continuing ..." line.
+Runs made by builds before offline.3 were never locked and cannot be continued.
+
+**The online half checks persistence again after the scanners**, as the full run
+does (a scanner can remove or reveal startup items). That second pass goes to
+`after-scans\persistence` (the offline results are never overwritten); the report is
+rebuilt from it as `report-after-scans.html`, and that is what gets shared. The
+offline `report.html` stays as it was.
 
 When the offline half finishes it writes `phase-offline.json` into its run
 folder (`C:\RIT-SCC\<PC>-<id>`). The online half looks for the newest such
@@ -82,12 +98,13 @@ that run folder.
 
 Some PCs have a ScreenConnect that is supposed to be there (the customer's own
 support agent, for example). By default every detected instance is removed after
-one typed `y`. `START-HERE-OFFLINE.bat` asks first, at Step 4:
+one typed `y`. When `START-HERE-OFFLINE.bat` finds ScreenConnect, Step 4 lists the
+instances (numbered, with relay host:port) and asks first:
 
     Keep any ScreenConnect? [y/N]
 
 Enter (or anything but `y`) keeps the default: remove all. `y` switches to select
-mode. The question is only asked when detection found something. (The full run
+mode. Nothing found = no question. (The full run
 does not ask; `START-HERE.bat --select` turns select mode on without asking.)
 
 In select mode every detected instance is listed with a number, its identifier, relay

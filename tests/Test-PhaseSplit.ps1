@@ -67,6 +67,11 @@ switch ($leaf) {
     }
     'preflight.ps1' { $null = New-Item -ItemType Directory -Path (Join-Path (ArgAfter '-WorkingRoot') 'HOST-20260101') -Force }   # like the real one: creates a folder under the run root
     'collect-snapshot.ps1' { '{}' | Set-Content -LiteralPath (ArgAfter '-OutFile') }
+    'Invoke-PersistenceScan.ps1' {
+        $pd = Join-Path (ArgAfter '-WorkDir') 'persistence'
+        $null = New-Item -ItemType Directory -Path $pd -Force
+        foreach ($n in 'inventory.json', 'removal.json', 'result.json') { '{"stub":true}' | Set-Content -LiteralPath (Join-Path $pd $n) }
+    }
     'New-InvestigationReport.ps1' { '<html></html>' | Set-Content -LiteralPath (ArgAfter '-OutputPath') }
 }
 exit 0
@@ -107,6 +112,19 @@ function New-Harness {
     $find = Join-Path $dir 'tools\Find-OfflineRun.ps1'
     $txt = [IO.File]::ReadAllText($find).Replace("C:\RIT-SCC", $ritRoot)
     [IO.File]::WriteAllText($find, $txt)
+    # The real run-folder lock, but trusting the (non-elevated) test account instead of
+    # BUILTIN\Administrators, which this test cannot set as owner. Throwaway copy only.
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $sec = Join-Path $dir 'tools\RunRootSecurity.psm1'
+    $txt = [IO.File]::ReadAllText($sec)
+    $pairs = @(
+        @("`$script:SccTrustedWriterSids = @('S-1-5-32-544', 'S-1-5-18')", "`$script:SccTrustedWriterSids = @('$me', 'S-1-5-32-544', 'S-1-5-18')"),
+        @("`$script:SccRunRootOwnerSid = 'S-1-5-32-544'", "`$script:SccRunRootOwnerSid = '$me'"))
+    foreach ($pair in $pairs) {
+        if (-not $txt.Contains($pair[0])) { throw ('Test-PhaseSplit: RunRootSecurity.psm1 line not found: ' + $pair[0]) }
+        $txt = $txt.Replace($pair[0], $pair[1])
+    }
+    [IO.File]::WriteAllText($sec, $txt)
     # staged scanners so the launch prompts have something to launch
     $av = Join-Path $dir 'tools\AV'
     $null = New-Item -ItemType Directory -Path $av -Force
@@ -209,29 +227,60 @@ try {
     }
     Check (-not ($off.Out -match 'STEP \d+[a-e]?/9')) 'offline shows no 1-9 step numbers'
     Check (-not ($off.Out -match '(?i)skipped in the offline half|Tool pack \+ KVRT|Antivirus scans|Uninstall third-party AV|1 toolpack')) 'offline does not list the online steps as skipped'
-    Check ($off.Out -match 'Keep any ScreenConnect\? \[y/N\]') 'offline asks whether to keep any ScreenConnect'
+    $revOffArgs = @($off.Trace | Where-Object { $_ -like 'Invoke-ReviewAndRemove.ps1|*' })[0]
+    Check ($revOffArgs -like '*-AskKeep*' -and $revOffArgs -notlike '*-SelectKeep*') 'offline review gets -AskKeep (asks "Keep any?" only when instances are found)'
+    Check (-not ($off.Out -match 'Keep any ScreenConnect')) 'the launcher itself no longer asks the keep question'
+    # Fix 1: the run folder the online half will continue is created locked.
+    $acl = Get-Acl -LiteralPath $runs[0].FullName
+    Check ($acl.AreAccessRulesProtected) 'offline run folder is created locked (no inherited C:\RIT-SCC permissions)'
+    $usersWrite = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | Where-Object { $_.IdentityReference.Value -in @('S-1-5-32-545', 'S-1-5-11', 'S-1-1-0') -and ([int64]$_.FileSystemRights -band 0x50050156) -ne 0 })
+    Check ($usersWrite.Count -eq 0) 'offline run folder gives Users / Authenticated Users / Everyone no write access'
 
     # ------------------------------------------------------------------ ONLINE (continues that run)
     Write-Host 'ONLINE half (continuing the offline run)' -ForegroundColor Cyan
+    # Fix 1: an intruder running as the user plants a newer "finished offline run" with
+    # its own findings. It is not locked, so the online half must refuse it.
+    $fake = Join-Path $h.Rit ($env:COMPUTERNAME + '-' + ('f' * 32))
+    $null = New-Item -ItemType Directory -Path (Join-Path $fake 'detect\X') -Force
+    $fakeFindings = Join-Path $fake 'detect\X\findings.json'
+    '{"fake":true}' | Set-Content -LiteralPath $fakeFindings
+    $fakeMarker = [ordered]@{ SchemaVersion = 1; Phase = 'offline'; FindingsJson = $fakeFindings }
+    ($fakeMarker | ConvertTo-Json) | Set-Content -LiteralPath (Join-Path $fake 'phase-offline.json')
+    (Get-Item -LiteralPath (Join-Path $fake 'phase-offline.json')).LastWriteTimeUtc = [DateTime]::UtcNow.AddHours(1)
     $on = Invoke-Launcher $h 'START-HERE-ONLINE.bat' $answersFull 'online'
+    Check ($on.Out -match 'Not continuing .*' + [regex]::Escape(('f' * 32))) 'online refuses the planted, unlocked run folder and says why'
+    Check (@($on.Trace | Where-Object { $_ -like ('*' + $fake + '*') }).Count -eq 0) 'nothing in the online half touches the planted folder'
+    Remove-Item -LiteralPath $fake -Recurse -Force
     Check (-not $on.Timeout) 'online launcher finished (no hang)'
     Check ((CountOf $on 'Get-ToolPack.ps1') -eq 2) 'online stages the tool pack (download + verify)'
     Check (Has $on 'Get-AVTools.ps1') 'online stages the AV scanners'
     Check ((CountOf $on 'Invoke-GUIScanner.ps1') -eq 3) 'online launches all three scanners'
-    foreach ($s in 'preflight.ps1', 'collect-snapshot.ps1', 'detect-remote-access.ps1', 'Invoke-ReviewAndRemove.ps1', 'Invoke-PersistenceScan.ps1', 'diff-snapshots.ps1', 'New-InvestigationReport.ps1') {
+    foreach ($s in 'preflight.ps1', 'collect-snapshot.ps1', 'detect-remote-access.ps1', 'Invoke-ReviewAndRemove.ps1', 'diff-snapshots.ps1') {
         Check (-not (Has $on $s)) ('online does not repeat ' + $s)
     }
+    # Fix 2: persistence check again AFTER the scans, in its own folder, then a rebuilt report.
+    $perOn = @($on.Trace | Where-Object { $_ -like 'Invoke-PersistenceScan.ps1|*' })
+    Check ($perOn.Count -eq 1 -and $perOn[0] -like ('*-WorkDir ' + $runs[0].FullName + '\after-scans *') -and $perOn[0] -like '*-InventorySectionTimeoutSeconds 240*') 'online runs the persistence check again, into after-scans, with the longer limits'
+    $scanIdx = [array]::IndexOf($on.Trace, @($on.Trace | Where-Object { $_ -like 'Invoke-GUIScanner.ps1|*' })[-1])
+    $perIdx = [array]::IndexOf($on.Trace, $perOn[0])
+    $avuIdx = [array]::IndexOf($on.Trace, @($on.Trace | Where-Object { $_ -like 'Invoke-AVUninstaller.ps1|*' } | Select-Object -First 1))
+    Check ($perIdx -gt $scanIdx) 'online persistence check runs after the last scanner'
+    Check (Test-Path -LiteralPath (Join-Path $runs[0].FullName 'persistence\result.json')) 'the offline persistence results are left in place'
+    $repOn = @($on.Trace | Where-Object { $_ -like 'New-InvestigationReport.ps1|*' })
+    Check ($repOn.Count -eq 1 -and $repOn[0] -like '*after-scans\persistence\result.json*' -and $repOn[0] -like '*-OutputPath*report-after-scans.html*') 'online rebuilds the report from the after-scans persistence results'
+    Check (Test-Path -LiteralPath (Join-Path $runs[0].FullName 'report.html')) 'the offline report.html is kept'
     $submitOn = @($on.Trace | Where-Object { $_ -like 'Submit-ConnectWiseReport.ps1|*' })
     Check ($submitOn.Count -eq 1) 'online shares the report once'
     if ($submitOn.Count -eq 1) {
         Check ($submitOn[0] -notlike '*-NoUpload*') 'online share is a real upload (no -NoUpload)'
         Check ($submitOn[0] -like ('*' + $runs[0].FullName + '*findings.json*')) 'online share uses the offline run findings.json'
+        Check ($submitOn[0] -like '*-ReportHtml *report-after-scans.html*' -and $submitOn[0] -like '*-PersistenceResult *after-scans\persistence\result.json*') 'online shares the after-scans report and persistence results'
     }
     Check (@(Get-ChildItem -LiteralPath $h.Rit -Directory).Count -eq 1) 'online continued the same run folder (no new one)'
     Check (Test-Path -LiteralPath (Join-Path $runs[0].FullName 'phase-online.json')) 'online wrote phase-online.json'
     Check ($on.Out -match 'SCREENCONNECT CLEANUP - ONLINE') 'online banner names the online run'
     Check ($on.Out.Contains('-- 2a: KVRT --') -and $on.Out.Contains('-- 2c: Malwarebytes --') -and -not $on.Out.Contains('-- 6a:')) 'online scanner sub-steps are 2a-2c'
-    foreach ($s in 'STEP 1/4: Download the tool pack', 'STEP 2/4: Antivirus scans', 'STEP 3/4: Uninstall third-party AV', 'STEP 4/4: Share the report') {
+    foreach ($s in 'STEP 1/5: Download the tool pack', 'STEP 2/5: Antivirus scans', 'STEP 3/5: Persistence check again, after the scans', 'STEP 3b/5: Open review windows', 'STEP 4/5: Uninstall third-party AV', 'STEP 5/5: Share the report') {
         Check ($on.Out.Contains($s)) ('online shows "' + $s + '"')
     }
     Check (-not ($on.Out -match 'STEP \d+[a-e]?/9')) 'online shows no 1-9 step numbers'
@@ -244,6 +293,7 @@ try {
     Check ((CountOf $on2 'Invoke-GUIScanner.ps1') -eq 3) 'scanner-only run still launches the three scanners'
     Check (-not (Has $on2 'Submit-ConnectWiseReport.ps1')) 'scanner-only run shares nothing'
     Check ($on2.Out -match 'scanner-only') 'scanner-only run says so'
+    Check ((CountOf $on2 'Invoke-PersistenceScan.ps1') -eq 1) 'scanner-only run still checks persistence after the scans'
 
     # ------------------------------------------------------------------ STAGE
     Write-Host 'STAGE (download only)' -ForegroundColor Cyan
@@ -276,6 +326,7 @@ try {
     $perFull = @($full.Trace | Where-Object { $_ -like 'Invoke-PersistenceScan.ps1|*' })[0]
     Check ($perFull -notlike '*Timeout*') 'full run keeps the default persistence timeouts'
     $pfSrc = [IO.File]::ReadAllText((Join-Path $ToolRoot 'preflight.ps1'))
+    Check ((Get-Acl -LiteralPath (@(Get-ChildItem -LiteralPath $h4.Rit -Directory)[0].FullName)).AreAccessRulesProtected -eq $false) 'full run folder is created exactly as before (not locked)'
     Check (($pfSrc -match '\[switch\]\$SkipToolPack') -and ($pfSrc -match 'if \(\$SkipToolPack\)')) 'preflight.ps1 declares -SkipToolPack and branches on it before the pack check'
 
     if ($OriginalBat) {
@@ -295,7 +346,7 @@ try {
     # ------------------------------------------------------------------ SELECT mode (keep chosen ScreenConnect instances)
     Write-Host 'SELECT mode' -ForegroundColor Cyan
     $revOff = @($off.Trace | Where-Object { $_ -like 'Invoke-ReviewAndRemove.ps1|*' })[0]
-    Check ($revOff -notlike '*-SelectKeep*') 'offline with Enter at the keep question removes all (no select mode)'
+    Check ($revOff -notlike '*-SelectKeep*') 'offline does not force select mode (the review asks first)'
     Check ($submitFull -ne $null -and (@($full.Trace | Where-Object { $_ -like 'Invoke-ReviewAndRemove.ps1|*' })[0]) -notlike '*-SelectKeep*') 'plain full run does not use select mode'
     $h6 = New-Harness 'selfull' ''
     $selFull = Invoke-Launcher $h6 (New-FlagWrapper $h6 'select-wrapper.bat' '--select') $answersFull 'selfull'
@@ -303,22 +354,11 @@ try {
     Check ((@($selFull.Trace | Where-Object { $_ -like 'Invoke-ReviewAndRemove.ps1|*' })[0]) -like '*-SelectKeep*') 'START-HERE.bat --select runs the review in select mode'
     Check ((Has $selFull 'Get-ToolPack.ps1') -and (Has $selFull 'Invoke-GUIScanner.ps1')) 'START-HERE.bat --select is still the full run (stages + scanners)'
     Check ($selFull.Out -match 'SELECT MODE') 'START-HERE.bat --select says it is in select mode at Step 5'
-    $h7 = New-Harness 'seloff' ''
-    # The offline half's first prompt is the keep question: answer y.
-    $selOff = Invoke-Launcher $h7 'START-HERE-OFFLINE.bat' (@('y') + $answersFull) 'seloff'
-    Check (-not $selOff.Timeout) 'offline with y at the keep question finished (no hang)'
-    Check ((@($selOff.Trace | Where-Object { $_ -like 'Invoke-ReviewAndRemove.ps1|*' })[0]) -like '*-SelectKeep*') 'offline with y at the keep question runs the review in select mode'
-    Check ($selOff.Out -match 'SELECT MODE') 'offline select says it is in select mode at Step 4'
+    Check ((@($full.Trace | Where-Object { $_ -like 'Invoke-ReviewAndRemove.ps1|*' })[0]) -notlike '*-AskKeep*') 'full run never asks the keep question'
     $shipped = @(Get-ChildItem -LiteralPath $ToolRoot -Filter 'START-HERE*.bat' -File | ForEach-Object { $_.Name } | Sort-Object)
     $want = @('START-HERE-OFFLINE.bat', 'START-HERE-ONLINE.bat', 'START-HERE.bat') | Sort-Object
     Check (($shipped -join ',') -eq ($want -join ',')) ('only the two launchers beside the engine (' + ($shipped -join ', ') + ')')
     Check (-not (Test-Path -LiteralPath (Join-Path $ToolRoot 'STAGE-TOOLS-ONLINE.bat'))) 'STAGE-TOOLS-ONLINE.bat is gone'
-    foreach ($s in 'Get-ToolPack.ps1', 'Get-AVTools.ps1', 'Invoke-GUIScanner.ps1', 'Invoke-AVUninstaller.ps1') {
-        Check (-not (Has $selOff $s)) ('offline select never runs ' + $s)
-    }
-    $subSel = @($selOff.Trace | Where-Object { $_ -like 'Submit-ConnectWiseReport.ps1|*' })[0]
-    Check ($subSel -like '*-NoUpload*') 'offline select still builds the package with -NoUpload'
-
     Write-Host 'Static checks' -ForegroundColor Cyan
     $bat = [IO.File]::ReadAllText((Join-Path $ToolRoot 'START-HERE.bat'))
     Check ($bat.Contains('$env:SCC_PHASE_ARG')) 'UAC relaunch carries the phase flag'

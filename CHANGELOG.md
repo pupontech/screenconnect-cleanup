@@ -3,6 +3,27 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.12-beta.1-offline.3] - 2026-11-10 - split hardening (review findings)
+**Not an upstream release. Owner live Windows acceptance required.**
+- Security: the offline half creates its run folder already LOCKED (owner and
+  write = Administrators/SYSTEM, Users read only, no inheritance from C:\RIT-SCC,
+  which gives Authenticated Users Modify). The online half continues a run only
+  while its folder is still locked, not a junction, and findings.json sits on a
+  real path inside it; anything else is skipped with a visible reason. Before this,
+  anything running as the user could plant or edit the "finished offline run" the
+  elevated online half then shared. New `tools/RunRootSecurity.psm1`. Runs made by
+  older builds are never locked, so they can no longer be continued.
+- The online half runs the persistence check again AFTER the scanners (as the full
+  run does), into `after-scans\persistence` (the offline results are never
+  overwritten), with the 240 s / 600 s limits, opens its review windows, rebuilds the
+  report as `report-after-scans.html` and shares that. The offline `report.html`
+  is kept unchanged. The online half is now steps 1-5.
+- The keep question moved into `Invoke-ReviewAndRemove.ps1 -AskKeep`: asked only
+  when ScreenConnect instances were actually found (offline.2 asked on every
+  offline run, because findings.json always exists), after the numbered list with
+  relay host:port. Enter = remove all, as before.
+- The full run is unchanged: plain run folder, persistence once, no keep question.
+
 ## [1.8.12-beta.1-offline.2] - 2026-11-10 - two launchers, own step numbers
 **Not an upstream release. Owner live Windows acceptance required.**
 - The deploy zip has only two launchers: `START-HERE-OFFLINE.bat` and

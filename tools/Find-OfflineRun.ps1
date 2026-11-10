@@ -4,9 +4,13 @@
   Used by START-HERE-ONLINE.bat so the online half continues the run the
   offline half already produced instead of starting over.
 
-  A run qualifies when its folder is <Root>\<COMPUTERNAME>-<guid> and it holds
+  A run qualifies when its folder is <Root>\<COMPUTERNAME>-<guid>, it holds
   phase-offline.json (written by Write-PhaseMarker.ps1 when the offline half
-  finished). The newest qualifying marker wins.
+  finished), and the folder is still LOCKED the way the offline half created it
+  (tools\RunRootSecurity.psm1: administrators-only write, protected ACL, trusted
+  owner, not a junction). C:\RIT-SCC itself is writable by normal users, so a
+  folder that is not locked could have been made or edited by anything running as
+  the user; it is skipped with a visible note. The newest qualifying marker wins.
 
   Output (stdout, exactly one line, or nothing when no run qualifies):
       <run root>|<findings.json path, or NONE when that run had no findings>
@@ -25,6 +29,7 @@ $ErrorActionPreference = 'Stop'
 
 try {
     if (-not (Test-Path -LiteralPath $Root -PathType Container)) { exit 0 }
+    Import-Module -Force (Join-Path $PSScriptRoot 'RunRootSecurity.psm1')
 
     $candidates = New-Object System.Collections.ArrayList
     foreach ($dir in @(Get-ChildItem -LiteralPath $Root -Directory -ErrorAction Stop)) {
@@ -32,6 +37,13 @@ try {
         if (($dir.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
         $markerPath = Join-Path $dir.FullName 'phase-offline.json'
         if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) { continue }
+        $why = ''
+        if (-not (Test-SccRunRootTrusted -RunRoot $dir.FullName -Reason ([ref]$why))) {
+            [Console]::Error.WriteLine(('    [i] Not continuing ' + $dir.FullName + ': ' + $why + '.'))
+            [Console]::Error.WriteLine('        Runs from older builds are never locked; only runs made by this build can be continued.')
+            continue
+        }
+        if (((Get-Item -LiteralPath $markerPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
         [void]$candidates.Add([pscustomobject]@{
             Dir    = $dir.FullName
             Marker = $markerPath
@@ -55,7 +67,16 @@ try {
             if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
                 $full = [IO.Path]::GetFullPath($candidate)
                 $rootFull = [IO.Path]::GetFullPath($newest.Dir).TrimEnd('\') + '\'
-                if ($full.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)) { $findings = $full }
+                if ($full.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)) {
+                    # Every folder between the run root and findings.json must be a real folder.
+                    $ok = $true
+                    $cur = $full
+                    while ($cur.Length -gt $rootFull.Length) {
+                        if (((Get-Item -LiteralPath $cur -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { $ok = $false; break }
+                        $cur = Split-Path -Parent $cur
+                    }
+                    if ($ok) { $findings = $full }
+                }
             }
         }
     } catch {

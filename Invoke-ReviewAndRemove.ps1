@@ -22,7 +22,8 @@
   ScreenConnect instances. There is no per-instance selection and no second
   confirmation prompt - the single y/N answer below is the only removal prompt.
 
-  OPT-IN EXCEPTION (-SelectKeep / -KeepIdentifier, "select" launchers only): the
+  OPT-IN EXCEPTION (-SelectKeep / -KeepIdentifier, or -AskKeep from the offline
+  launcher, which first asks "Keep any?" and only when instances were found): the
   technician first marks the instances that are LEGITIMATE and must stay installed
   (for example the customer's own ScreenConnect support agent). Kept instances are
   never put in the plan, so the removal engine never sees them; the rest still go
@@ -60,7 +61,11 @@ param(
     # Non-interactive form of the same choice: Identifier values to keep. An
     # identifier that matches no detected instance stops the run (a typo must
     # never turn into "remove it").
-    [string[]]$KeepIdentifier
+    [string[]]$KeepIdentifier,
+
+    # Offline launcher: when instances WERE found, first ask "Keep any?" (y = select
+    # mode, anything else = remove all as before). Never asked when nothing was found.
+    [switch]$AskKeep
 )
 
 Set-StrictMode -Version 2.0
@@ -195,6 +200,8 @@ if ($instances.Count -eq 0) {
 }
 
 $selectMode = ([bool]$SelectKeep) -or (@($KeepIdentifier | Where-Object { $_ }).Count -gt 0)
+# -AskKeep shows the numbered, detailed list up front so the answer is an informed one.
+$detailedList = $selectMode -or [bool]$AskKeep
 
 Write-Line ""
 Write-Line ("Found " + $instances.Count + " ScreenConnect instance(s).") 'White'
@@ -202,16 +209,16 @@ $listNumber = 0
 foreach ($inst in $instances) {
     $listNumber++
     $id = Get-InstanceIdentifier $inst $listNumber
-    if ($selectMode) { Write-Line ("    [" + $listNumber + "] " + $id) 'White' } else { Write-Line ("    - " + $id) 'Gray' }
+    if ($detailedList) { Write-Line ("    [" + $listNumber + "] " + $id) 'White' } else { Write-Line ("    - " + $id) 'Gray' }
     $installDir = Get-Prop $inst 'InstallDir'
     if ($installDir) { Write-Line ("        Install directory: " + $installDir) 'Gray' }
     $relayHost = Get-Prop $inst 'RelayHost'
     if ($relayHost) {
         $relayPort = Get-Prop $inst 'RelayPort'
-        if ($selectMode -and $relayPort) { $relayHost = ([string]$relayHost + ':' + [string]$relayPort) }
+        if ($detailedList -and $relayPort) { $relayHost = ([string]$relayHost + ':' + [string]$relayPort) }
         Write-Line ("        Relay host: " + $relayHost) 'Gray'
     }
-    if ($selectMode) {
+    if ($detailedList) {
         $svcName = Get-Prop $inst 'ServiceName'
         if ($svcName) {
             $svcState = Get-Prop $inst 'ServiceState'
@@ -228,6 +235,17 @@ foreach ($inst in $instances) {
         $created = Get-Prop $inst 'InstallDirCreatedUtc'
         if ($created) { Write-Line ("        Installed (folder created, UTC): " + $created) 'Gray' }
     }
+}
+
+# --- Offline launcher: is any of them supposed to be there? -----------------------
+# Only reached when instances were found. y/yes = select mode; anything else (Enter,
+# n, end of input) = remove all, exactly as without -AskKeep.
+if ($AskKeep -and -not $selectMode) {
+    Write-Line ""
+    Write-Line "Is any of these SUPPOSED to be there, for example the customer's own support agent?" 'Cyan'
+    Write-Host 'Keep any ScreenConnect? y = choose which ones to keep, Enter = remove all [y/N]' -NoNewline
+    $askKeepAnswer = Read-Host
+    if (([string]$askKeepAnswer).Trim() -match '^(?i:y|yes)$') { $selectMode = $true }
 }
 
 # --- Select mode: which instances are legitimate and stay -----------------------
