@@ -20,6 +20,7 @@ param(
     [string]$PersistenceRemoval,
     [string]$PersistenceResult,
     [string]$PowerOptionsRepair,
+    [string]$KeptInstances,
     [switch]$ScannersSkipped,
     [switch]$PassThru
 )
@@ -600,8 +601,31 @@ if ($null -eq $scResult) {
     $scSectionHtml = "<section id='screenconnect'><h2>ScreenConnect instances</h2><p class='ok-line'>None found. No ScreenConnect / ConnectWise Control service, process, install directory, or uninstall entry was detected on this machine.</p></section>"
 } else {
     $cards = ''
-    foreach ($inst in $scInstances) { $cards += (Build-InstanceHtml $inst) }
-    $scSectionHtml = "<section id='screenconnect'><h2>ScreenConnect instances ($scCount)</h2>$cards</section>"
+    # Instances the technician marked legitimate in select mode (kept-instances.json): shown, but labelled KEPT.
+    $keptKeys = @{}
+    if ($KeptInstances -and (Test-Path -LiteralPath $KeptInstances)) {
+        try {
+            $keptDoc = (Get-Content -LiteralPath $KeptInstances -Raw) | ConvertFrom-Json
+            foreach ($ki in @(Get-Items (Get-Prop $keptDoc 'Kept'))) {
+                $kid = Get-Prop $ki 'Identifier'
+                if (-not $kid) { $kid = Get-Prop $ki 'Key' }
+                if ($kid) { $keptKeys[[string]$kid] = $true }
+            }
+        } catch { }
+    }
+    $keptShown = 0
+    foreach ($inst in $scInstances) {
+        $iid = Get-Prop $inst 'Identifier'
+        if (-not $iid) { $iid = Get-Prop $inst 'Key' }
+        if ($iid -and $keptKeys.ContainsKey([string]$iid)) {
+            $keptShown++
+            $cards += "<p class='warn-line'><strong>KEPT:</strong> the technician marked this instance as legitimate and left it installed. It was not removed or modified.</p>"
+        }
+        $cards += (Build-InstanceHtml $inst)
+    }
+    $keptNote = ''
+    if ($keptShown -gt 0) { $keptNote = " - $keptShown kept as legitimate" }
+    $scSectionHtml = "<section id='screenconnect'><h2>ScreenConnect instances ($scCount$keptNote)</h2>$cards</section>"
 }
 
 # ---------------------------------------------------------------------------

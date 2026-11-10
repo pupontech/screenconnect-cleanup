@@ -96,6 +96,27 @@ twice) detects the existing install and launches it instead of erroring.
 
 ---
 
+## Running part of it offline
+
+`START-HERE.bat` (the full run) goes online in its first step and again at the
+end. For a PC with no connection, or one you want cut off from the network while
+you clean it, use the two halves instead:
+
+- **`START-HERE-OFFLINE.bat`** - the cleanup: preflight, snapshots, detection,
+  removal, persistence review, diff, local report. Downloads and uploads nothing.
+- **`START-HERE-ONLINE.bat`** - the part that needs internet: stage and run the
+  scanners (KVRT, ESET, Malwarebytes), optional AV uninstall, share the report.
+- **`STAGE-TOOLS-ONLINE.bat`** - download-only prep, to run on a connected PC
+  before carrying the folder to the client.
+- **`START-HERE-SELECT.bat`** / **`START-HERE-OFFLINE-SELECT.bat`** - the full run / the
+  offline half, but Step 5 first asks which ScreenConnect instances to keep as
+  legitimate (the other launchers remove all of them).
+
+Details, hand-over between the halves, and what is not yet verified on a real PC:
+[OFFLINE-ONLINE-SPLIT.md](OFFLINE-ONLINE-SPLIT.md).
+
+---
+
 ## The problem this solves
 
 Finding ScreenConnect on a PC is trivial — it installs a named service in a named

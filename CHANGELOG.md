@@ -3,6 +3,56 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [Unreleased] - offline / online split (local modification of 1.8.12-beta.1)
+**Not an upstream release. Owner live Windows acceptance required.**
+- Launcher guards for the split are written so an unset flag means the full run:
+  `if "!SCC_DO_X!"=="0"` instead of `if not ... =="1"`, and the argument loop
+  has no `if defined SCC_ARGS` wrapper. No change in a real run; it keeps the
+  upstream fixtures (Test-LauncherElevationBound, test_persistence_workflow) that
+  replay only part of the launcher working unmodified.
+- `START-HERE.bat` takes `--offline`, `--online` and `--stage` (no argument = the
+  full run, call-for-call identical to 1.8.12-beta.1 in the stub test). New
+  launchers `START-HERE-OFFLINE.bat`, `START-HERE-ONLINE.bat` and
+  `STAGE-TOOLS-ONLINE.bat` pass them.
+- Offline half: preflight, snapshots, detection, removal, persistence review,
+  diff, local report with `Submit-ConnectWiseReport.ps1 -NoUpload`. It never runs
+  tool/scanner staging, the scanners, AV uninstall or the share, and writes
+  `phase-offline.json` when it finishes.
+- Online half: stages scanners, runs them, optional AV uninstall, then shares the
+  offline run's report (`Find-OfflineRun.ps1` picks the run; with none it does a
+  scanner-only run and shares nothing). Writes `phase-online.json`.
+- The phase flag travels as a command-line argument through the UAC relaunch
+  (`-ArgumentList ('--elevation-attempted ' + $env:SCC_PHASE_ARG)`); the loop
+  guard now reads a parsed flag instead of only the first argument.
+- Fix: the run-folder creation line piped `New-Item` to `Out-Null` with a
+  caret-escaped pipe inside double quotes (the caret reaches PowerShell
+  literally, so `New-Item` failed and the folder only appeared as a side effect
+  of preflight). Now a `:new_run_root` routine without a pipe.
+- New: select mode. `START-HERE-SELECT.bat` / `START-HERE-OFFLINE-SELECT.bat` (flag
+  `--select`, which also survives the UAC relaunch) make Step 5 ask which detected
+  ScreenConnect instances to KEEP as legitimate before the single remove prompt.
+  `Invoke-ReviewAndRemove.ps1` gains `-SelectKeep` and `-KeepIdentifier`; kept instances
+  are left out of `plan.json` (decision `PARTIAL_REMOVE`, the engine already supported
+  it), recorded in `kept-instances.json`, and labelled KEPT in the report
+  (`New-InvestigationReport.ps1 -KeptInstances`). The default remove-all behavior of
+  the other launchers is unchanged. `tests/Test-KeepSelection.ps1` (35 checks) runs the
+  real review script and report; a dry run of the real `remove-screenconnect.ps1`
+  confirmed it processes only the non-kept instances.
+- Fix (first real-PC test): `preflight.ps1` hard-failed on the missing Sysinternals
+  tool pack, which the offline half never downloads. New `-SkipToolPack` switch,
+  passed by the offline half only; the full run still requires the pack.
+- Fix (second real-PC test): the persistence inventory's final write timed out at the
+  default 60 s section limit (result Incomplete, exit 1). The offline half now passes
+  `-InventorySectionTimeoutSeconds 240 -InventoryTotalTimeoutSeconds 600`; the full run
+  keeps the defaults. Cause of the slowness not confirmed (the write is one large
+  ConvertTo-Json); if it still times out, the serializer needs fixing, not the limit.
+- New: `tools/Write-PhaseMarker.ps1`, `tools/Find-OfflineRun.ps1`,
+  `tests/Test-PhaseSplit.ps1` (79 checks, stubbed, no admin, no network),
+  `OFFLINE-ONLINE-SPLIT.md`.
+- Not covered: the real UAC relaunch with the phase flag, a run with the network
+  actually disabled, the upstream `tests/ci/*` contract tests and
+  `make-deploy-bundle.sh` (neither was in this folder).
+
 ## [1.8.12-beta.1] - 2026-10-23
 **BETA - optional power-options repair; owner live Windows acceptance required.**
 - Based on v1.8.11; retains recent-restore-point handling, attended Malwarebytes

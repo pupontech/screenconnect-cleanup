@@ -22,6 +22,14 @@
   ScreenConnect instances. There is no per-instance selection and no second
   confirmation prompt - the single y/N answer below is the only removal prompt.
 
+  OPT-IN EXCEPTION (-SelectKeep / -KeepIdentifier, "select" launchers only): the
+  technician first marks the instances that are LEGITIMATE and must stay installed
+  (for example the customer's own ScreenConnect support agent). Kept instances are
+  never put in the plan, so the removal engine never sees them; the rest still go
+  through the same single y/N prompt. The kept ones are recorded in the plan
+  (KeptScreenConnectInstances) and in kept-instances.json for the report. Without
+  those switches this script behaves exactly as before.
+
   PS 5.1 compatible. Pure ASCII, no BOM.
   Exit codes: 0 = ok (including "nothing to do"), 1 = removal reported failure.
 #>
@@ -44,7 +52,15 @@ param(
     [switch]$Yes,
 
     # Review and write plan.json, but never call the remover.
-    [switch]$WhatIfOnly
+    [switch]$WhatIfOnly,
+
+    # Select mode: ask which instances to KEEP as legitimate before the remove prompt.
+    [switch]$SelectKeep,
+
+    # Non-interactive form of the same choice: Identifier values to keep. An
+    # identifier that matches no detected instance stops the run (a typo must
+    # never turn into "remove it").
+    [string[]]$KeepIdentifier
 )
 
 Set-StrictMode -Version 2.0
@@ -114,6 +130,36 @@ function Get-JsonItems {
     return , @($Value)
 }
 
+function ConvertTo-KeepIndexes {
+    # Parses the "which to keep" answer. Blank = keep none, A/ALL = keep all,
+    # otherwise a list of 1-based numbers. Anything else is rejected (never guessed).
+    param([string]$Text, [int]$Count)
+    $t = ([string]$Text).Trim()
+    if ($t -eq '') { return [pscustomobject]@{ Ok = $true; Indexes = @(); Message = '' } }
+    if ($t -match '^(?i:a|all)$') { return [pscustomobject]@{ Ok = $true; Indexes = @(1..$Count); Message = '' } }
+    $picked = New-Object System.Collections.Generic.List[int]
+    foreach ($tok in @($t -split '[,\s;]+' | Where-Object { $_ -ne '' })) {
+        if ($tok -notmatch '^\d{1,4}$') {
+            return [pscustomobject]@{ Ok = $false; Indexes = @(); Message = ("'" + $tok + "' is not a number from the list.") }
+        }
+        $v = [int]$tok
+        if ($v -lt 1 -or $v -gt $Count) {
+            return [pscustomobject]@{ Ok = $false; Indexes = @(); Message = ($v.ToString() + ' is not in the list (1-' + $Count + ').') }
+        }
+        if (-not $picked.Contains($v)) { [void]$picked.Add($v) }
+    }
+    $sorted = @($picked.ToArray() | Sort-Object)
+    return [pscustomobject]@{ Ok = $true; Indexes = $sorted; Message = '' }
+}
+
+function Get-InstanceIdentifier {
+    param($Instance, [int]$Number)
+    $id = Get-Prop $Instance 'Identifier'
+    if (-not $id) { $id = Get-Prop $Instance 'Key' }
+    if (-not $id) { $id = '(unidentified)' }
+    return [string]$id
+}
+
 # --- Locate findings.json ---------------------------------------------------
 if (-not $FindingsJson) {
     if (-not (Test-Path -LiteralPath $ScanRoot)) {
@@ -148,17 +194,107 @@ if ($instances.Count -eq 0) {
     exit 0
 }
 
+$selectMode = ([bool]$SelectKeep) -or (@($KeepIdentifier | Where-Object { $_ }).Count -gt 0)
+
 Write-Line ""
 Write-Line ("Found " + $instances.Count + " ScreenConnect instance(s).") 'White'
+$listNumber = 0
 foreach ($inst in $instances) {
-    $id = Get-Prop $inst 'Identifier'
-    if (-not $id) { $id = Get-Prop $inst 'Key' }
-    if (-not $id) { $id = '(unidentified)' }
-    Write-Line ("    - " + $id) 'Gray'
+    $listNumber++
+    $id = Get-InstanceIdentifier $inst $listNumber
+    if ($selectMode) { Write-Line ("    [" + $listNumber + "] " + $id) 'White' } else { Write-Line ("    - " + $id) 'Gray' }
     $installDir = Get-Prop $inst 'InstallDir'
     if ($installDir) { Write-Line ("        Install directory: " + $installDir) 'Gray' }
     $relayHost = Get-Prop $inst 'RelayHost'
-    if ($relayHost) { Write-Line ("        Relay host: " + $relayHost) 'Gray' }
+    if ($relayHost) {
+        $relayPort = Get-Prop $inst 'RelayPort'
+        if ($selectMode -and $relayPort) { $relayHost = ([string]$relayHost + ':' + [string]$relayPort) }
+        Write-Line ("        Relay host: " + $relayHost) 'Gray'
+    }
+    if ($selectMode) {
+        $svcName = Get-Prop $inst 'ServiceName'
+        if ($svcName) {
+            $svcState = Get-Prop $inst 'ServiceState'
+            Write-Line ("        Service: " + $svcName + $(if ($svcState) { ' (' + $svcState + ')' } else { '' })) 'Gray'
+        }
+        $sessionType = Get-Prop $inst 'SessionType'
+        if ($sessionType) { Write-Line ("        Session type: " + $sessionType) 'Gray' }
+        $fileInfo = Get-Prop $inst 'File'
+        if ($fileInfo) {
+            $sigStatus = Get-Prop $fileInfo 'SignatureStatus'
+            $sigSubject = Get-Prop $fileInfo 'SignerSubject'
+            if ($sigStatus -or $sigSubject) { Write-Line ("        Signature: " + $sigStatus + $(if ($sigSubject) { ' - ' + $sigSubject } else { '' })) 'Gray' }
+        }
+        $created = Get-Prop $inst 'InstallDirCreatedUtc'
+        if ($created) { Write-Line ("        Installed (folder created, UTC): " + $created) 'Gray' }
+    }
+}
+
+# --- Select mode: which instances are legitimate and stay -----------------------
+$removeInstances = @($instances)
+$keptInstances = @()
+if ($selectMode) {
+    $keepIdx = @()
+    $explicit = @($KeepIdentifier | Where-Object { $_ })
+    if ($explicit.Count -gt 0) {
+        $unmatched = @()
+        foreach ($want in $explicit) {
+            $hit = $false
+            for ($i = 0; $i -lt $instances.Count; $i++) {
+                if ((Get-InstanceIdentifier $instances[$i] ($i + 1)) -ieq [string]$want) { $hit = $true; if ($keepIdx -notcontains ($i + 1)) { $keepIdx += ($i + 1) } }
+            }
+            if (-not $hit) { $unmatched += [string]$want }
+        }
+        if ($unmatched.Count -gt 0) {
+            Write-Line ("ERROR: -KeepIdentifier value(s) match no detected instance: " + ($unmatched -join ', ')) 'Red'
+            Write-Line "Nothing was removed. Check the identifiers above and run again." 'Red'
+            exit 2
+        }
+    } else {
+        Write-Line ""
+        Write-Line "SELECT MODE: mark the instances that are LEGITIMATE and should stay installed." 'Cyan'
+        Write-Line "Check the relay host and the signature first. A relay host you do not recognize is a reason to remove it." 'Yellow'
+        do {
+            Write-Host 'Numbers to KEEP (e.g. 1,3), A = keep all, Enter = keep none:' -NoNewline
+            $answer = Read-Host
+            $parsed = ConvertTo-KeepIndexes -Text ([string]$answer) -Count $instances.Count
+            if (-not $parsed.Ok) { Write-Line ("  " + $parsed.Message) 'Red' }
+        } while (-not $parsed.Ok)
+        $keepIdx = @($parsed.Indexes)
+    }
+    $keptInstances = @(for ($i = 0; $i -lt $instances.Count; $i++) { if ($keepIdx -contains ($i + 1)) { $instances[$i] } })
+    $removeInstances = @(for ($i = 0; $i -lt $instances.Count; $i++) { if ($keepIdx -notcontains ($i + 1)) { $instances[$i] } })
+    Write-Line ""
+    Write-Line ("KEEP   (stays installed, not touched): " + $keptInstances.Count) 'Green'
+    foreach ($k in $keptInstances) { Write-Line ("    = " + (Get-InstanceIdentifier $k 0)) 'Green' }
+    Write-Line ("REMOVE (quarantined, never deleted):   " + $removeInstances.Count) 'Yellow'
+    foreach ($r in $removeInstances) { Write-Line ("    - " + (Get-InstanceIdentifier $r 0)) 'Yellow' }
+}
+
+function Save-KeptInstances {
+    param([string]$Dir)
+    if ($keptInstances.Count -eq 0) { return }
+    if (-not (Test-Path -LiteralPath $Dir)) { $null = New-Item -ItemType Directory -Path $Dir -Force }
+    $keptDoc = [ordered]@{
+        SchemaVersion = 1
+        ComputerName  = $env:COMPUTERNAME
+        GeneratedUtc  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        Note          = 'ScreenConnect instances the technician marked as legitimate and left installed. Not removed, not modified.'
+        Kept          = $keptInstances
+    }
+    $keptDoc | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $Dir 'kept-instances.json') -Encoding UTF8 -NoNewline
+}
+
+# The work folder is needed early in select mode (everything kept = no removal, but a record is still written).
+if (-not $WorkDir) {
+    $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
+    $WorkDir = Join-Path 'C:\RIT-SCC' ($env:COMPUTERNAME + '-' + $stamp)
+}
+if ($selectMode -and $removeInstances.Count -eq 0) {
+    Save-KeptInstances -Dir $WorkDir
+    Write-Line ""
+    Write-Line "Every detected instance was kept - nothing to remove. Recorded in kept-instances.json." 'Green'
+    exit 0
 }
 
 # --- Confirmation -----------------------------------------------------------
@@ -166,11 +302,16 @@ foreach ($inst in $instances) {
 # Every ScreenConnect instance in the current findings is a removal candidate;
 # a single y answers for all of them. Files are quarantined, never deleted.
 Write-Line ""
-Write-Line ($instances.Count.ToString() + " ScreenConnect instance(s) will be removed on 'y'.") 'Yellow'
-Write-Line "Files are quarantined, never deleted. Type y to remove all detected instances."
+if ($selectMode) {
+    Write-Line ($removeInstances.Count.ToString() + " ScreenConnect instance(s) will be removed on 'y' (" + $keptInstances.Count + " kept).") 'Yellow'
+    Write-Line "Files are quarantined, never deleted. Type y to remove the instances that are NOT kept."
+} else {
+    Write-Line ($instances.Count.ToString() + " ScreenConnect instance(s) will be removed on 'y'.") 'Yellow'
+    Write-Line "Files are quarantined, never deleted. Type y to remove all detected instances."
+}
 # Emit the prompt text explicitly: with redirected stdin (CI, piped runs),
 # Read-Host does not echo the prompt on Windows PowerShell 5.1.
-Write-Host 'Remove all detected ScreenConnect instances? [y/N]' -NoNewline
+if ($selectMode) { Write-Host 'Remove the instances that are NOT kept? [y/N]' -NoNewline } else { Write-Host 'Remove all detected ScreenConnect instances? [y/N]' -NoNewline }
 $confirmed = $false
 do {
     $c = Read-Host
@@ -185,10 +326,6 @@ if (-not $confirmed) {
 }
 
 # --- Write the plan ---------------------------------------------------------
-if (-not $WorkDir) {
-    $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
-    $WorkDir = Join-Path 'C:\RIT-SCC' ($env:COMPUTERNAME + '-' + $stamp)
-}
 $freeGb = Get-AvailableDiskSpace -Path $WorkDir
 if ($freeGb -lt 0) {
     Write-Line ("Could not determine free disk space for {0}; continuing with a warning." -f $WorkDir) 'Yellow'
@@ -203,6 +340,7 @@ if (-not (Test-Path -LiteralPath $WorkDir)) {
 
 $decision = 'ALL_REMOVE'
 if ($instances.Count -eq 0) { $decision = 'KEEP_ALL' }
+elseif ($keptInstances.Count -gt 0) { $decision = 'PARTIAL_REMOVE' }
 
 $planPath = Join-Path $WorkDir 'plan.json'
 $sourceFindingsHash = (Get-FileHash -LiteralPath $FindingsJson -Algorithm SHA256 -ErrorAction Stop).Hash
@@ -216,8 +354,10 @@ $plan = [ordered]@{
     SourceFindings          = $FindingsJson
     SourceFindingsSha256    = $sourceFindingsHash
     RemovalConfirmed        = $true
-    ScreenConnectInstances  = $instances
+    ScreenConnectInstances  = $removeInstances
 }
+if ($selectMode) { $plan['KeptScreenConnectInstances'] = $keptInstances }
+Save-KeptInstances -Dir $WorkDir
 $plan | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $planPath -Encoding UTF8 -NoNewline
 Write-Line ""
 Write-Line ("Plan written: " + $planPath) 'Cyan'

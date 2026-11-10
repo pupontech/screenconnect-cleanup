@@ -5,3 +5,5 @@
 !Get-AVTools.ps1
 !Keep-Awake.ps1
 !Confirm-OnBattery.ps1
+!Find-OfflineRun.ps1
+!Write-PhaseMarker.ps1

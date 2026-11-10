@@ -40,6 +40,10 @@ param(
     # Path to Get-ToolPack.ps1 (default: tools\ next to this script)
     [string]$ToolPackPath,
 
+    # Do not require the Sysinternals tool pack (the offline half of the guided
+    # runner never downloads it, and no guided step uses it)
+    [switch]$SkipToolPack,
+
     # Internal: run the built-in selftest (safe on any OS, mutates nothing)
     [switch]$SelfTest
 )
@@ -537,7 +541,10 @@ if (-not (Test-Path $toolPackScript)) {
     $alt = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'tools/Get-ToolPack.ps1'
     if (Test-Path $alt) { $toolPackScript = $alt }
 }
-if (Test-ToolPack -ScriptPath $toolPackScript) {
+if ($SkipToolPack) {
+    Write-Stage 'Tool pack check skipped (-SkipToolPack): not needed for the offline half.'
+    "[SKIPPED] tool pack check (-SkipToolPack)" | Out-File $masterLog -Append -Encoding ascii
+} elseif (Test-ToolPack -ScriptPath $toolPackScript) {
     "[OK] tool pack verified" | Out-File $masterLog -Append -Encoding ascii
 } else {
     Write-StageFail 'Tool pack incomplete. Build it first: powershell -ExecutionPolicy Bypass -File tools\Get-ToolPack.ps1'
