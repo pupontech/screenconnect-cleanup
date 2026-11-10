@@ -3,8 +3,11 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
-## [Unreleased] - offline / online split (local modification of 1.8.12-beta.1)
+## [1.8.12-beta.1-offline.1] - 2026-11-10 - offline / online split (testing build on top of 1.8.12-beta.1)
 **Not an upstream release. Owner live Windows acceptance required.**
+- Deploy ZIP now packages the split launchers, `OFFLINE-ONLINE-SPLIT.md`,
+  `tools/Find-OfflineRun.ps1` and `tools/Write-PhaseMarker.ps1` (bundler, ZIP
+  verifier and package fixture updated).
 - Launcher guards for the split are written so an unset flag means the full run:
   `if "!SCC_DO_X!"=="0"` instead of `if not ... =="1"`, and the argument loop
   has no `if defined SCC_ARGS` wrapper. No change in a real run; it keeps the

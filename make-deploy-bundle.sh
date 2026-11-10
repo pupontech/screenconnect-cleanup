@@ -22,6 +22,8 @@ mkdir -p "$D/tools"
 for f in sc-cleanup.ps1 preflight.ps1 collect-snapshot.ps1 diff-snapshots.ps1 \
          detect-remote-access.ps1 remove-screenconnect.ps1 install-latest.ps1 \
          Invoke-ReviewAndRemove.ps1 Invoke-GUIScanner.ps1 Get-ScannerFindings.ps1 Get-MalwarebytesDownloadDiagnostics.ps1 Invoke-AVUninstaller.ps1 Run-DetectRemoteAccess.bat START-HERE.bat \
+         START-HERE-OFFLINE.bat START-HERE-ONLINE.bat STAGE-TOOLS-ONLINE.bat \
+         START-HERE-SELECT.bat START-HERE-OFFLINE-SELECT.bat OFFLINE-ONLINE-SPLIT.md \
          targets.json New-InvestigationReport.ps1 Submit-ConnectWiseReport.ps1 \
          Invoke-PersistenceScan.ps1 Invoke-PersistenceInventoryWorker.ps1 Show-PersistenceReview.ps1 Persistence.Inventory.psm1 Persistence.Removal.psm1 \
          SystemRestore.psm1 \
@@ -36,6 +38,9 @@ done
 # Keep-awake and battery-confirmation helpers are required by START-HERE.bat.
 cp "$SRC/tools/Keep-Awake.ps1" "$D/tools/"
 cp "$SRC/tools/Confirm-OnBattery.ps1" "$D/tools/"
+# Offline/online split: the run finder and phase marker are required by START-HERE.bat.
+cp "$SRC/tools/Find-OfflineRun.ps1" "$D/tools/"
+cp "$SRC/tools/Write-PhaseMarker.ps1" "$D/tools/"
 
 # Optional tool-pack downloader/stager scripts. Copy when present, warn when not.
 missing_tools=""

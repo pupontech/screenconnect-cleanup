@@ -37,6 +37,9 @@ def verify(path, version, commit):
             "Repair-PowerOptions.ps1", "PowerOptionsRepair.Core.psm1", "PowerOptionsRepair.Windows.psm1",
             "New-InvestigationReport.ps1", "Submit-ConnectWiseReport.ps1",
             "tools/Keep-Awake.ps1", "tools/Confirm-OnBattery.ps1",
+            "START-HERE-OFFLINE.bat", "START-HERE-ONLINE.bat", "STAGE-TOOLS-ONLINE.bat",
+            "START-HERE-SELECT.bat", "START-HERE-OFFLINE-SELECT.bat", "OFFLINE-ONLINE-SPLIT.md",
+            "tools/Find-OfflineRun.ps1", "tools/Write-PhaseMarker.ps1",
             "README.md", "DEPLOY.md", "CHANGELOG.md", "docs/12-post-av-persistence.md",
         }
         assert required <= members.keys(), sorted(required - members.keys())
