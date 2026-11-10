@@ -72,6 +72,22 @@ switch ($leaf) {
 exit 0
 '@
 
+function Disable-ReportOpen {
+    # The launcher opens report.html in the browser and selects it in Explorer.
+    # In this test those are throwaway stub reports under %TEMP%: never open them.
+    # Fail loudly if the lines move, so the test cannot silently start opening windows again.
+    param([string]$Text)
+    $openers = @(
+        @('explorer /select,"!SCC_RUN_ROOT!/report.html"', 'echo [test] report.html would be selected in Explorer'),
+        @('start "" "!SCC_RUN_ROOT!/report.html"', 'echo [test] report.html would be opened')
+    )
+    foreach ($pair in $openers) {
+        if (-not $Text.Contains($pair[0])) { throw ('Test-PhaseSplit: report opener not found in START-HERE.bat: ' + $pair[0]) }
+        $Text = $Text.Replace($pair[0], $pair[1])
+    }
+    return $Text
+}
+
 function New-Harness {
     param([string]$Name, [string]$BatPath)
     $dir = Join-Path $work $Name
@@ -102,11 +118,13 @@ function New-Harness {
         $raw = $raw.Replace('{exit 0}else{exit 1}', '{exit 0}else{exit 0}').Replace('C:\RIT-SCC', $ritRoot)
         # The report copy goes to the Desktop: point it at a temp folder, never the real one.
         $raw = $raw.Replace("[Environment]::GetFolderPath('Desktop')", "'" + $deskDir + "'")
+        if ($b.Name -eq 'START-HERE.bat') { $raw = Disable-ReportOpen $raw }
         [IO.File]::WriteAllText($b.FullName, $raw, [Text.Encoding]::ASCII)
     }
     if ($BatPath) {
         # baseline: the ORIGINAL START-HERE.bat, patched the same way
         $raw = [IO.File]::ReadAllText($BatPath).Replace('{exit 0}else{exit 1}', '{exit 0}else{exit 0}').Replace('C:\RIT-SCC', $ritRoot).Replace("[Environment]::GetFolderPath('Desktop')", "'" + $deskDir + "'")
+        $raw = Disable-ReportOpen $raw
         [IO.File]::WriteAllText((Join-Path $dir 'START-HERE.bat'), $raw, [Text.Encoding]::ASCII)
     }
     return [pscustomobject]@{ Dir = $dir; Rit = $ritRoot }
@@ -183,6 +201,7 @@ try {
         Check ([string]$m.FindingsJson -like '*findings.json') 'marker records the findings.json path'
     }
     Check ($off.Out -match 'OFFLINE HALF FINISHED') 'offline prints the next-step banner'
+    Check (([regex]::Matches($off.Out, 'report\.html would be opened')).Count -eq 1) 'offline opens exactly one report (the final report.html of this run)'
     # Offline screen: its own steps 1-7 only, nothing about the online half's steps.
     Check ($off.Out -match 'SCREENCONNECT CLEANUP - OFFLINE') 'offline banner names the offline run'
     foreach ($s in 'STEP 1/7: Preflight', 'STEP 2/7: Before snapshot', 'STEP 3/7: Remote-access detection', 'STEP 4/7: Review/remove ScreenConnect', 'STEP 5/7: Persistence inventory and review', 'STEP 5b/7: Open review windows', 'STEP 6/7: Optional power-options repair', 'STEP 7/7: Report') {
