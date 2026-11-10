@@ -1,6 +1,7 @@
 """Verify an immutable deploy ZIP; never execute packaged production code."""
 import argparse
 import hashlib
+import json
 import re
 import stat
 import subprocess
@@ -39,6 +40,7 @@ def verify(path, version, commit):
             "tools/Keep-Awake.ps1", "tools/Confirm-OnBattery.ps1",
             "START-HERE-OFFLINE.bat", "START-HERE-ONLINE.bat", "OFFLINE-ONLINE-SPLIT.md",
             "tools/Find-OfflineRun.ps1", "tools/Write-PhaseMarker.ps1", "tools/RunRootSecurity.psm1",
+            "START-HERE-GUI.bat", "gui/Gui.Core.psm1", "gui/Start-CleanupGui.ps1", "gui/MainWindow.xaml", "gui/steps.json",
             "README.md", "DEPLOY.md", "CHANGELOG.md", "docs/12-post-av-persistence.md",
         }
         assert required <= members.keys(), sorted(required - members.keys())
@@ -62,15 +64,23 @@ def verify(path, version, commit):
             original = subprocess.check_output(["git", "show", commit + ":" + name], cwd=source_root)
             assert data == original, "source byte mismatch: " + name
         for name, data in members.items():
-            if name.endswith((".ps1", ".psm1", ".psd1", ".bat")):
+            if name.endswith((".ps1", ".psm1", ".psd1", ".bat", ".xaml")) or name == "gui/steps.json":
                 assert not data.startswith(b"\xef\xbb\xbf") and all(byte < 128 for byte in data), name
         batch = members["START-HERE.bat"]
         assert b"\n" not in batch.replace(b"\r\n", b""), "batch must have CRLF only"
         assert b"STEP 6d/9" in batch and b"Invoke-PersistenceScan.ps1" in batch
-        # Only the two technician launchers ship beside the engine.
+        # Only the technician launchers ship beside the engine: the guided runner, its two halves
+        # and the GUI window launcher (a front end over the same scripts, docs/14).
         launchers = sorted(n for n in members if n.endswith(".bat") and "/" not in n)
-        assert launchers == ["Run-DetectRemoteAccess.bat", "START-HERE-OFFLINE.bat",
+        assert launchers == ["Run-DetectRemoteAccess.bat", "START-HERE-GUI.bat", "START-HERE-OFFLINE.bat",
                              "START-HERE-ONLINE.bat", "START-HERE.bat"], launchers
+        gui_batch = members["START-HERE-GUI.bat"]
+        assert b"\n" not in gui_batch.replace(b"\r\n", b""), "GUI launcher must have CRLF only"
+        assert b"gui\\Start-CleanupGui.ps1" in gui_batch and b"-STA" in gui_batch
+        # The window is a third front end, never a third engine: no engine logic ships in gui/.
+        assert b"Register-ObjectEvent" not in members["gui/Start-CleanupGui.ps1"]
+        assert b"RunspaceFactory" not in members["gui/Start-CleanupGui.ps1"]
+        json.loads(members["gui/steps.json"].decode("ascii"))
         assert b"-PersistenceInventory" in batch and b"-PersistenceResult" in batch
         assert b"Get-SccPersistenceInventory" in members["Persistence.Inventory.psm1"]
         assert b"Invoke-SccPersistenceReview" in members["Persistence.Removal.psm1"]

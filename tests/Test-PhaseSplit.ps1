@@ -356,8 +356,9 @@ try {
     Check ($selFull.Out -match 'SELECT MODE') 'START-HERE.bat --select says it is in select mode at Step 5'
     Check ((@($full.Trace | Where-Object { $_ -like 'Invoke-ReviewAndRemove.ps1|*' })[0]) -notlike '*-AskKeep*') 'full run never asks the keep question'
     $shipped = @(Get-ChildItem -LiteralPath $ToolRoot -Filter 'START-HERE*.bat' -File | ForEach-Object { $_.Name } | Sort-Object)
-    $want = @('START-HERE-OFFLINE.bat', 'START-HERE-ONLINE.bat', 'START-HERE.bat') | Sort-Object
-    Check (($shipped -join ',') -eq ($want -join ',')) ('only the two launchers beside the engine (' + ($shipped -join ', ') + ')')
+    # START-HERE-GUI.bat is the window front end (docs/14); it is covered by tests\gui\, not by this harness.
+    $want = @('START-HERE-GUI.bat', 'START-HERE-OFFLINE.bat', 'START-HERE-ONLINE.bat', 'START-HERE.bat') | Sort-Object
+    Check (($shipped -join ',') -eq ($want -join ',')) ('only the two launchers beside the engine, plus the GUI launcher (' + ($shipped -join ', ') + ')')
     Check (-not (Test-Path -LiteralPath (Join-Path $ToolRoot 'STAGE-TOOLS-ONLINE.bat'))) 'STAGE-TOOLS-ONLINE.bat is gone'
     Write-Host 'Static checks' -ForegroundColor Cyan
     $bat = [IO.File]::ReadAllText((Join-Path $ToolRoot 'START-HERE.bat'))

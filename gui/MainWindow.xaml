@@ -1,0 +1,162 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Name="Win" Title="ScreenConnect Cleanup" Width="1100" Height="740" MinWidth="900" MinHeight="620"
+        WindowStartupLocation="CenterScreen" FontFamily="Segoe UI" FontSize="13"
+        UseLayoutRounding="True" SnapsToDevicePixels="True" Background="#FFFFFF">
+  <Window.Resources>
+    <Style x:Key="Primary" TargetType="Button">
+      <Setter Property="Padding" Value="18,8"/>
+      <Setter Property="Margin" Value="0,6,8,6"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Background" Value="#1F6F43"/>
+      <Setter Property="Foreground" Value="#FFFFFF"/>
+      <Setter Property="BorderBrush" Value="#175432"/>
+    </Style>
+    <Style x:Key="Plain" TargetType="Button">
+      <Setter Property="Padding" Value="12,5"/>
+      <Setter Property="Margin" Value="0,4,8,4"/>
+    </Style>
+    <Style x:Key="ModeRadio" TargetType="RadioButton">
+      <Setter Property="Margin" Value="0,0,0,2"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="FontSize" Value="14"/>
+    </Style>
+  </Window.Resources>
+  <Grid Margin="12">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="8"/>
+      <RowDefinition Height="160"/>
+    </Grid.RowDefinitions>
+
+    <!-- header -->
+    <Border Grid.Row="0" Background="#F1F4F7" BorderBrush="#D3DAE1" BorderThickness="1" Padding="12,8" Margin="0,0,0,10">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <StackPanel Grid.Column="0">
+          <TextBlock x:Name="TitleText" FontSize="18" FontWeight="SemiBold" Text="ScreenConnect Cleanup"/>
+          <TextBlock x:Name="InfoText" Foreground="#4A5560" Margin="0,2,0,0" Text=""/>
+          <TextBlock x:Name="RunText" Foreground="#4A5560" Margin="0,2,0,0" Text="Run folder: none yet" TextTrimming="CharacterEllipsis"/>
+        </StackPanel>
+        <Button x:Name="BtnOpenRunHeader" Grid.Column="1" Style="{StaticResource Plain}" Content="Open run folder" IsEnabled="False" VerticalAlignment="Center"/>
+      </Grid>
+    </Border>
+
+    <!-- middle: stepper | panel -->
+    <Grid Grid.Row="1">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="250"/>
+        <ColumnDefinition Width="12"/>
+        <ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+
+      <Border Grid.Column="0" BorderBrush="#D3DAE1" BorderThickness="1" Padding="8">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" FontWeight="SemiBold" Margin="2,0,0,6" Text="Steps"/>
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="StepperHost"/>
+          </ScrollViewer>
+        </DockPanel>
+      </Border>
+
+      <Grid Grid.Column="2">
+        <!-- start panel: the offline / online toggle -->
+        <ScrollViewer x:Name="StartPanel" VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="4">
+            <TextBlock FontSize="16" FontWeight="SemiBold" Text="Which part do you want to run?"/>
+            <TextBlock TextWrapping="Wrap" Margin="0,6,0,10" Foreground="#4A5560"
+                       Text="This window runs the same steps as START-HERE.bat, one at a time, and asks you the same questions. Removal always needs your own confirmation."/>
+            <Border BorderBrush="#D3DAE1" BorderThickness="1" Padding="12,10" Margin="0,0,0,8">
+              <StackPanel>
+                <RadioButton x:Name="RbOffline" GroupName="Mode" IsChecked="True" Style="{StaticResource ModeRadio}" Content="Offline - cleanup, no internet needed"/>
+                <TextBlock TextWrapping="Wrap" Margin="22,0,0,0" Foreground="#4A5560"
+                           Text="Preflight, before snapshot, detection, removal (you choose what to keep, then confirm), persistence review, after snapshot and diff, local report. Downloads and uploads nothing."/>
+              </StackPanel>
+            </Border>
+            <Border BorderBrush="#D3DAE1" BorderThickness="1" Padding="12,10" Margin="0,0,0,8">
+              <StackPanel>
+                <RadioButton x:Name="RbOnline" GroupName="Mode" Style="{StaticResource ModeRadio}" Content="Online - scanners and sharing (needs internet)"/>
+                <TextBlock TextWrapping="Wrap" Margin="22,0,0,0" Foreground="#4A5560"
+                           Text="Downloads the scanners, runs KVRT, ESET and Malwarebytes, optional antivirus uninstall, shares the report. Continues the offline run for this PC when there is one."/>
+              </StackPanel>
+            </Border>
+            <Border BorderBrush="#D3DAE1" BorderThickness="1" Padding="12,10" Margin="0,0,0,8">
+              <StackPanel>
+                <RadioButton x:Name="RbDetect" GroupName="Mode" Style="{StaticResource ModeRadio}" Content="Detect only - nothing is changed"/>
+                <TextBlock TextWrapping="Wrap" Margin="22,0,0,0" Foreground="#4A5560"
+                           Text="Preflight, before snapshot, detection and the report. Nothing is removed, quarantined or uninstalled."/>
+              </StackPanel>
+            </Border>
+            <Border BorderBrush="#D3DAE1" BorderThickness="1" Padding="12,10" Margin="0,0,0,8">
+              <StackPanel>
+                <RadioButton x:Name="RbStage" GroupName="Mode" Style="{StaticResource ModeRadio}" Content="Stage tools only - download for later (needs internet)"/>
+                <TextBlock TextWrapping="Wrap" Margin="22,0,0,0" Foreground="#4A5560"
+                           Text="Downloads the tool pack and the scanners into this folder, so the offline half can run on a PC with no connection. No run folder is created."/>
+              </StackPanel>
+            </Border>
+            <Button x:Name="BtnStart" Style="{StaticResource Primary}" Content="Start" HorizontalAlignment="Left"/>
+            <TextBlock x:Name="PriorRunsText" TextWrapping="Wrap" Margin="0,10,0,0" Foreground="#4A5560" Text=""/>
+          </StackPanel>
+        </ScrollViewer>
+
+        <!-- run panel -->
+        <Grid x:Name="RunPanel" Visibility="Collapsed">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <StackPanel Grid.Row="0" Margin="4,0,4,0">
+            <TextBlock x:Name="StatusTitle" FontSize="16" FontWeight="SemiBold" Text=""/>
+            <TextBlock x:Name="StatusDetail" Foreground="#4A5560" Margin="0,2,0,6" Text=""/>
+            <ProgressBar x:Name="Busy" Height="6" IsIndeterminate="False" Minimum="0" Maximum="1" Value="0"/>
+          </StackPanel>
+          <Border x:Name="Banner" Grid.Row="1" Margin="4,10,4,0" Padding="10,8" BorderThickness="1" BorderBrush="#D3DAE1" Background="#F1F4F7" Visibility="Collapsed">
+            <TextBlock x:Name="BannerText" TextWrapping="Wrap" Text=""/>
+          </Border>
+          <Border x:Name="ReviewBar" Grid.Row="2" Margin="4,10,4,0" Padding="10,8" BorderThickness="1" BorderBrush="#B8C2CC" Background="#FFFFFF" Visibility="Collapsed">
+            <DockPanel>
+              <Button x:Name="BtnReviewContinue" DockPanel.Dock="Right" Style="{StaticResource Primary}" Content="Continue" Margin="12,0,0,0"/>
+              <TextBlock x:Name="ReviewSummary" TextWrapping="Wrap" VerticalAlignment="Center" Text=""/>
+            </DockPanel>
+          </Border>
+          <ScrollViewer Grid.Row="3" Margin="4,10,4,0" VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="CardsHost"/>
+          </ScrollViewer>
+          <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="4,6,4,0">
+            <Button x:Name="BtnOpenReport" Style="{StaticResource Plain}" Content="Open report" IsEnabled="False"/>
+            <Button x:Name="BtnOpenRun" Style="{StaticResource Plain}" Content="Open run folder" IsEnabled="False"/>
+            <Button x:Name="BtnRestart" Style="{StaticResource Plain}" Content="Restart this PC..." Visibility="Collapsed"/>
+            <Button x:Name="BtnNewRun" Style="{StaticResource Plain}" Content="Start over" Visibility="Collapsed"/>
+          </StackPanel>
+        </Grid>
+      </Grid>
+    </Grid>
+
+    <GridSplitter Grid.Row="2" HorizontalAlignment="Stretch" Height="6" Background="#D3DAE1"/>
+
+    <!-- console -->
+    <Grid Grid.Row="3">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+      </Grid.RowDefinitions>
+      <DockPanel Grid.Row="0" Margin="0,4,0,4">
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+          <Button x:Name="BtnCopy" Style="{StaticResource Plain}" Content="Copy" Margin="0,0,8,0"/>
+          <Button x:Name="BtnOpenLog" Style="{StaticResource Plain}" Content="Open log" Margin="0" IsEnabled="False"/>
+        </StackPanel>
+        <TextBlock FontWeight="SemiBold" VerticalAlignment="Center" Text="Console output (live)"/>
+      </DockPanel>
+      <TextBox x:Name="ConsoleBox" Grid.Row="1" IsReadOnly="True" FontFamily="Consolas" FontSize="12"
+               Background="#101418" Foreground="#D6DEE6" TextWrapping="NoWrap"
+               VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
+    </Grid>
+  </Grid>
+</Window>

@@ -355,6 +355,34 @@ jobs:
             ${{ runner.temp }}/scc-verified-package/screenconnect-cleanup-v*.zip.sha256
           if-no-files-found: error
 
+      # GUI front end (docs/14-gui-architecture.md). Windows PowerShell 5.1 only: WPF and the 5.1
+      # redirected-stdin behaviour are what these prove. The live-window test
+      # (tests/gui/Test-GuiWindow.ps1) needs an interactive desktop and is run by hand, like
+      # tests/Test-PhaseSplit.ps1.
+      - name: GUI - artifact readers
+        shell: powershell
+        run: ./tests/gui/Test-GuiArtifactReaders.ps1
+
+      - name: GUI - prompt contract against the engine
+        shell: powershell
+        run: ./tests/gui/Test-GuiPromptContract.ps1
+
+      - name: GUI - prompt handling with real child processes
+        shell: powershell
+        run: ./tests/gui/Test-GuiPromptHandling.ps1
+
+      - name: GUI - questions the window asks (Ask mechanism)
+        shell: powershell
+        run: ./tests/gui/Test-GuiAsk.ps1
+
+      - name: GUI - launcher
+        shell: powershell
+        run: ./tests/gui/Test-GuiLauncher.ps1
+
+      - name: GUI - call parity with START-HERE.bat (acceptance)
+        shell: powershell
+        run: ./tests/gui/Test-GuiCallParity.ps1
+
       - name: Relay and bulk-export unit tests
         shell: pwsh
         run: python -m unittest relay.test_report_relay relay.test_export_iocs -v

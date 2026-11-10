@@ -203,6 +203,8 @@ function Invoke-SccPersistenceReview {
                 $r=$candidates[$i]
                 Write-Host ("[{0}] {1}`n    Target: {2}`n    Command: {3}`n    Reason: {4}" -f ($i+1),(ConvertTo-SccDisplayText $r.Kind),(ConvertTo-SccDisplayText $r.Target),(ConvertTo-SccDisplayText $r.Command),(ConvertTo-SccDisplayText $r.Reason))
             }
+            # With redirected stdin (the GUI) Windows PowerShell 5.1 does not print Read-Host's own prompt, so echo it; interactively Read-Host prints it itself.
+            if ([Console]::IsInputRedirected) { Write-Host 'Enter comma-separated candidate indices' -NoNewline }
             $answer=Read-Host 'Enter comma-separated candidate indices'
             if ($null -eq $answer -or [string]$answer -notmatch '^\s*[1-9][0-9]*(?:\s*,\s*[1-9][0-9]*)*\s*$') { throw 'Invalid selection.' }
             $nums=New-Object System.Collections.ArrayList
@@ -213,6 +215,7 @@ function Invoke-SccPersistenceReview {
             $selected=@($nums | ForEach-Object { $candidates[$_-1] })
             Write-Host 'Exact selected targets:'
             foreach ($r in $selected) { Write-Host ("  {0} | {1}`n      Command: {2}`n      Reason: {3}" -f (ConvertTo-SccDisplayText $r.Kind),(ConvertTo-SccDisplayText $r.Target),(ConvertTo-SccDisplayText $r.Command),(ConvertTo-SccDisplayText $r.Reason)) }
+            if ([Console]::IsInputRedirected) { Write-Host 'Type REMOVE to confirm these exact targets' -NoNewline }
             $confirm=Read-Host 'Type REMOVE to confirm these exact targets'
             if ($confirm -cne 'REMOVE') { $selected=@(); $status='Declined' } else { $status='Completed' }
         } catch { $selected=@(); $status='Declined'; [void]$errors.Add("Selection declined: $($_.Exception.Message)") }

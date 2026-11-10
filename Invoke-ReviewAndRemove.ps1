@@ -254,6 +254,20 @@ $keptInstances = @()
 if ($selectMode) {
     $keepIdx = @()
     $explicit = @($KeepIdentifier | Where-Object { $_ })
+    # powershell -File passes "-KeepIdentifier a,b" as the ONE string "a,b" (it does not build
+    # an array), and a second space-separated value is lost. So a value that matches no
+    # identifier as a whole is split on commas. An exact whole match always wins, so an
+    # identifier that itself contains a comma still works. Each part must still match.
+    $wanted = @()
+    foreach ($w in $explicit) {
+        $wholeHit = $false
+        for ($i = 0; $i -lt $instances.Count; $i++) {
+            if ((Get-InstanceIdentifier $instances[$i] ($i + 1)) -ieq [string]$w) { $wholeHit = $true }
+        }
+        if ($wholeHit -or ([string]$w).IndexOf(',') -lt 0) { $wanted += [string]$w }
+        else { foreach ($part in ([string]$w -split ',')) { $t = $part.Trim(); if ($t) { $wanted += $t } } }
+    }
+    $explicit = @($wanted)
     if ($explicit.Count -gt 0) {
         $unmatched = @()
         foreach ($want in $explicit) {

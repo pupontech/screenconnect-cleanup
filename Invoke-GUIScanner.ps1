@@ -216,6 +216,8 @@ function Invoke-MalwarebytesOfflineFallback {
         # Its exit is NOT proof that setup finished; keep this attended stage
         # parked until the technician confirms completion before looking for UI.
         Write-Host 'Finish the Malwarebytes installation in its own window. This step will not continue automatically.' -ForegroundColor Cyan
+        # With redirected stdin (the GUI) Windows PowerShell 5.1 does not print Read-Host's own prompt, so echo it; interactively Read-Host prints it itself.
+        if ([Console]::IsInputRedirected) { Write-Host 'When installation is finished, type DONE (anything else cancels this scanner step)' -NoNewline }
         $installConfirmation = Read-Host 'When installation is finished, type DONE (anything else cancels this scanner step)'
         if ($installConfirmation -notmatch '^\s*(?i:DONE)\s*$') {
             throw 'Malwarebytes installation was not confirmed; no attended scan was completed.'
@@ -251,6 +253,7 @@ function Invoke-MalwarebytesOfflineFallback {
         # mbam.exe may only activate an already-running GUI and exit immediately.
         # Do not mistake that handoff (or the tray lifetime) for a finished scan.
         Write-Host 'Finish the scan and any requested cleanup in Malwarebytes, then close its window.' -ForegroundColor Cyan
+        if ([Console]::IsInputRedirected) { Write-Host 'When the Malwarebytes scan is finished and its window is closed, type DONE (anything else cancels this scanner step)' -NoNewline }
         $scanConfirmation = Read-Host 'When the Malwarebytes scan is finished and its window is closed, type DONE (anything else cancels this scanner step)'
         if ($scanConfirmation -notmatch '^\s*(?i:DONE)\s*$') {
             throw 'Malwarebytes scan completion was not confirmed.'

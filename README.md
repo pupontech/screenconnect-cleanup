@@ -111,8 +111,17 @@ you clean it, use the two halves instead:
   after the scans, optional AV uninstall, share the report. It only continues an
   offline run whose folder is still locked to administrators.
 
-These are the only two launchers in the deploy zip. `START-HERE.bat` is the
-engine they call; started on its own it is still the original full run.
+`START-HERE.bat` is the engine they call; started on its own it is still the
+original full run.
+
+**Preview: `START-HERE-GUI.bat`** opens a window instead of the console, with a
+toggle between *Offline* (no internet), *Online*, *Detect only* and *Stage tools*
+(no full run: that is Offline, then Online). It runs the same scripts, in the same order, and asks the same
+questions as the launchers above; each ScreenConnect instance is a card with its
+relay host and a Remove / Keep choice (Remove by default), and removal needs you to
+type `REMOVE`. It is a front end over the same scripts, not a second
+implementation, and the batch launchers remain the fallback. Not yet accepted on a
+real PC: [docs/14-gui-architecture.md](docs/14-gui-architecture.md).
 
 Details, hand-over between the halves, and what is not yet verified on a real PC:
 [OFFLINE-ONLINE-SPLIT.md](OFFLINE-ONLINE-SPLIT.md).

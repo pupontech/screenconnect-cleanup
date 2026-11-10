@@ -3,6 +3,36 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.12-gui-alpha.1] - 2026-11-10 - GUI window (ALPHA, on top of 1.8.12-offline-alpha.1)
+**ALPHA. Not an upstream release. Owner live Windows acceptance required (docs/14 section 12.4). The
+removal path has been exercised only against stubs and the real review script with a stubbed remover -
+never a real removal. The console launchers are unchanged and remain the fallback.**
+- Also in this build, from the code review: test hooks only work in a window that is NOT elevated
+  (no unattended removal is possible); closing during a scan leaves the scanner open; removal, AV
+  uninstall and power repair lock the window while they run; the unknown-prompt box sends the
+  script's default when closed; a Results section (persistence findings, diff outcome, share link);
+  a failed scanner or share can be run again; steps outside the chosen mode say why.
+- New `START-HERE-GUI.bat` + `gui\`: a window over the same scripts `START-HERE.bat` runs
+  (same arguments, same order, each in its own child `powershell.exe`). The start panel toggles
+  Offline half / Online half / Detect only / Stage tools (no full run in the window: it would only
+  repeat Offline followed by Online; `START-HERE.bat` still does it). It asks the questions the
+  batch files ask: one card per ScreenConnect instance with a Remove (default) / Keep choice and
+  the relay host and port largest (no safe/suspicious labels); removal needs the typed word
+  `REMOVE` and then the script's own y/N; scanner choice, review windows, AV uninstall, power
+  repair and the Online half's "continue that run?" are dialogs. Closing any dialog sends the
+  refusing answer. Call-for-call identical to `START-HERE*.bat` (`tests\gui\Test-GuiCallParity.ps1`);
+  design and spike results: `docs/14-gui-architecture.md`.
+- `Invoke-GUIScanner.ps1` (2 prompts) and `Persistence.Removal.psm1` (2 prompts): when stdin is
+  redirected they now also print the `Read-Host` prompt text, which Windows PowerShell 5.1 omits
+  (`if ([Console]::IsInputRedirected) { Write-Host '<text>' -NoNewline }`). Interactive output and
+  the engine tests' `Read-Host` mocks are unchanged.
+- `Invoke-ReviewAndRemove.ps1`: `-KeepIdentifier a,b` now works through `powershell -File`
+  (it arrived as the single string `a,b` and matched nothing, so the run stopped with exit 2
+  and removed nothing). A value that matches no identifier as a whole is split on commas;
+  every part must still match. `Test-KeepSelection.ps1` +5 cases.
+- Zip: `START-HERE-GUI.bat` and the four `gui\` files are bundled and verified;
+  `tests\ci\Test-HouseRules.ps1` also checks `.xaml`; five GUI tests added to `windows-ci.yml`.
+
 ## [1.8.12-offline-alpha.1] - 2026-11-10 - alpha testing build
 **ALPHA. Same code as 1.8.12-beta.1-offline.3, renamed for field testing. Not an upstream release.**
 Not yet run end to end on a real PC (real UAC, detection/removal, scanners, share,

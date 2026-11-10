@@ -34,6 +34,8 @@ tools\Confirm-OnBattery.ps1     <- confirms before an AC-unplugged guided run
 START-HERE-OFFLINE.bat          <- START HERE, half 1: cleanup, no internet (steps 1-7)
 START-HERE-ONLINE.bat           <- then half 2: scanners + persistence re-check + AV uninstall + share, needs internet (steps 1-5)
 START-HERE.bat                  <- the engine both launchers call (no flag = original full run)
+START-HERE-GUI.bat              <- PREVIEW: opens the window with an Offline / Online / Detect / Stage toggle; needs the gui\ folder
+gui\                            <- Start-CleanupGui.ps1, Gui.Core.psm1, MainWindow.xaml, steps.json (docs\14-gui-architecture.md)
 tests\Test-KeepSelection.ps1     <- tests the keep/remove choice (real review script)
 tools\Write-PhaseMarker.ps1     <- offline half records that it finished (phase-offline.json)
 tools\Find-OfflineRun.ps1       <- online half finds that run (only if its folder is still locked)

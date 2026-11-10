@@ -155,6 +155,19 @@ try {
     Check ($r.Exit -eq 2) '-KeepIdentifier typo: exit 2'
     Check ($null -eq $r.Plan) '-KeepIdentifier typo: nothing written, so nothing can be removed'
 
+    # Spike S4 (GUI design, docs/14): powershell -File hands "a,b" over as ONE string, and a
+    # second space-separated value is lost, so the script splits a non-matching comma string.
+    $r = Invoke-Review 'two' @('-KeepIdentifier', 'aaaa1111aaaa1111,cccc3333cccc3333') "y`n"
+    Check ($r.Exit -eq 0 -and (Ids $r.Plan.KeptScreenConnectInstances) -eq 'aaaa1111aaaa1111,cccc3333cccc3333') '-KeepIdentifier a,b (one comma string) keeps both'
+    Check ((Ids $r.Plan.ScreenConnectInstances) -eq 'bbbb2222bbbb2222') '-KeepIdentifier a,b removes only the third'
+    $r = Invoke-Review 'twospace' @('-KeepIdentifier', '"AAAA1111AAAA1111, cccc3333cccc3333"') "y`n"
+    Check ((Ids $r.Plan.KeptScreenConnectInstances) -eq 'aaaa1111aaaa1111,cccc3333cccc3333') '-KeepIdentifier "a, b": spaces trimmed, case-insensitive'
+    $r = Invoke-Review 'onebad' @('-KeepIdentifier', 'aaaa1111aaaa1111,nosuchid') "y`n"
+    Check ($r.Exit -eq 2 -and $null -eq $r.Plan) '-KeepIdentifier with one unknown part: exit 2, nothing written'
+    Check ($r.Out -match 'nosuchid') '-KeepIdentifier unknown part is named in the error'
+    $r = Invoke-Review 'allthree' @('-KeepIdentifier', 'aaaa1111aaaa1111,bbbb2222bbbb2222,cccc3333cccc3333') "y`n"
+    Check ($r.Exit -eq 0 -and $null -eq $r.Plan -and @($r.Kept.Kept).Count -eq 3) '-KeepIdentifier naming all three: nothing to remove, all recorded as kept'
+
     Write-Host 'Plan the removal engine will receive' -ForegroundColor Cyan
     $r = Invoke-Review 'engine' @('-SelectKeep') "2`ny`n"
     $remover = Join-Path $ToolRoot 'remove-screenconnect.ps1'
