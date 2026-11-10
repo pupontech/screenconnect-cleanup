@@ -3,6 +3,13 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.12-gui-beta.1] - 2026-11-10 - GUI beta (Latest release)
+**BETA. Same code as 1.8.12-gui-alpha.5, promoted to beta and published as the Latest release on GitHub
+(replacing 1.8.12-beta.1 as the default download). Owner live Windows acceptance is still open
+(docs/14 section 12.4).**
+- Release zip layout: `START-HERE-GUI.bat` at the top, everything else (including the console launchers
+  `START-HERE-OFFLINE.bat` / `START-HERE-ONLINE.bat`) in `files\`.
+
 ## [1.8.12-gui-alpha.5] - 2026-11-10 - GUI alpha: header button (ALPHA)
 **ALPHA. Same engine and safety behaviour as 1.8.12-gui-alpha.4; one header button removed, hover text added.
 Owner live Windows acceptance still required (docs/14 section 12.4).**
