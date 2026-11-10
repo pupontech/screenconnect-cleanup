@@ -3,7 +3,9 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
-## [Unreleased] - GUI header
+## [1.8.12-gui-alpha.5] - 2026-11-10 - GUI alpha: header button (ALPHA)
+**ALPHA. Same engine and safety behaviour as 1.8.12-gui-alpha.4; one header button removed, hover text added.
+Owner live Windows acceptance still required (docs/14 section 12.4).**
 - The header keeps only "Open RIT-SCC folder" (top right); its duplicate "Open run folder" button is
   gone (the one with the results, next to Open report, stays). Hovering "Open RIT-SCC folder" now
   explains what the folder is: one folder per run, holding the logs, snapshots, findings, the report
