@@ -15,15 +15,22 @@ VER="$(tr -d '[:space:]' < "$SRC/VERSION" 2>/dev/null || echo dev)"
 OUT="${OUT_BASE}-v${VER}.zip"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
-D="$STAGE/screenconnect-cleanup"
+# Package layout: screenconnect-cleanup/START-HERE-GUI.bat is the only file at the top (a small
+# launcher, packaging/START-HERE-GUI.bat); everything else goes into screenconnect-cleanup/files/
+# in the repository's own relative layout, so the scripts find each other exactly as in the repo.
+PKG="$STAGE/screenconnect-cleanup"
+D="$PKG/files"
 mkdir -p "$D/tools"
 
 # Core scripts + docs (all required). Fail loudly if any are missing.
 for f in sc-cleanup.ps1 preflight.ps1 collect-snapshot.ps1 diff-snapshots.ps1 \
          detect-remote-access.ps1 remove-screenconnect.ps1 install-latest.ps1 \
          Invoke-ReviewAndRemove.ps1 Invoke-GUIScanner.ps1 Get-ScannerFindings.ps1 Get-MalwarebytesDownloadDiagnostics.ps1 Invoke-AVUninstaller.ps1 Run-DetectRemoteAccess.bat START-HERE.bat \
+         START-HERE-OFFLINE.bat START-HERE-ONLINE.bat START-HERE-GUI.bat OFFLINE-ONLINE-SPLIT.md \
          targets.json New-InvestigationReport.ps1 Submit-ConnectWiseReport.ps1 \
          Invoke-PersistenceScan.ps1 Invoke-PersistenceInventoryWorker.ps1 Show-PersistenceReview.ps1 Persistence.Inventory.psm1 Persistence.Removal.psm1 \
+         SystemRestore.psm1 \
+         Repair-PowerOptions.ps1 PowerOptionsRepair.Core.psm1 PowerOptionsRepair.Windows.psm1 \
          microbin-url.txt DEPLOY.md; do
   cp "$SRC/$f" "$D/"
 done
@@ -31,9 +38,21 @@ done
 [ -f "$SRC/CHANGELOG.md" ] && cp "$SRC/CHANGELOG.md" "$D/"
 [ -d "$SRC/docs" ] && cp -r "$SRC/docs" "$D/docs"
 
+# The GUI front end (START-HERE-GUI.bat): a window over the same scripts. All four files are required;
+# without them the launcher stops with a clear message and START-HERE.bat is unaffected.
+mkdir -p "$D/gui"
+for f in Gui.Core.psm1 Start-CleanupGui.ps1 MainWindow.xaml steps.json; do
+  cp "$SRC/gui/$f" "$D/gui/"
+done
+
 # Keep-awake and battery-confirmation helpers are required by START-HERE.bat.
 cp "$SRC/tools/Keep-Awake.ps1" "$D/tools/"
 cp "$SRC/tools/Confirm-OnBattery.ps1" "$D/tools/"
+# Offline/online split: the run finder and phase marker are required by START-HERE.bat.
+cp "$SRC/tools/Find-OfflineRun.ps1" "$D/tools/"
+cp "$SRC/tools/Write-PhaseMarker.ps1" "$D/tools/"
+# Locks the offline run folder; Find-OfflineRun.ps1 trusts only locked folders.
+cp "$SRC/tools/RunRootSecurity.psm1" "$D/tools/"
 
 # Optional tool-pack downloader/stager scripts. Copy when present, warn when not.
 missing_tools=""
@@ -56,15 +75,21 @@ if [ ! -f "$D/VERSION" ]; then
   cp "$SRC/VERSION" "$D/VERSION"
 fi
 
+# The one file at the top of the package: it only starts files\START-HERE-GUI.bat.
+cp "$SRC/packaging/START-HERE-GUI.bat" "$PKG/START-HERE-GUI.bat"
+
 "$PYTHON" - "$OUT" "$STAGE" "$SRC" "$VER" <<'PY'
 import sys, zipfile, os, hashlib, subprocess
 out, stage = sys.argv[1], sys.argv[2]
 src, version = sys.argv[3], sys.argv[4]
 bundle = os.path.join(stage, 'screenconnect-cleanup')
+files_dir = os.path.join(bundle, 'files')
 sha = subprocess.check_output(['git', '-C', src, 'rev-parse', 'HEAD'], text=True).strip()
 if len(sha) != 40:
     raise SystemExit('A full source commit is required for package provenance.')
-with open(os.path.join(bundle, 'BUILD-INFO.txt'), 'w', encoding='ascii', newline='\n') as f:
+# Build info and the manifest live in files/ with everything else; the manifest lists every
+# other file by its path in the package (START-HERE-GUI.bat, files/...).
+with open(os.path.join(files_dir, 'BUILD-INFO.txt'), 'w', encoding='ascii', newline='\n') as f:
     f.write('ScreenConnect Cleanup ' + version + '\nSource commit: ' + sha + '\n')
     f.write('Owner live Windows acceptance required. See CHANGELOG.md and DEPLOY.md.\n')
 members = []
@@ -76,7 +101,7 @@ for root, dirs, files in os.walk(bundle):
         with open(p, 'rb') as f:
             digest = hashlib.sha256(f.read()).hexdigest()
         members.append((relative, digest))
-with open(os.path.join(bundle, 'SHA256SUMS.txt'), 'w', encoding='ascii', newline='\n') as f:
+with open(os.path.join(files_dir, 'SHA256SUMS.txt'), 'w', encoding='ascii', newline='\n') as f:
     for relative, digest in sorted(members):
         f.write(digest + '  ' + relative + '\n')
 if os.path.exists(out):

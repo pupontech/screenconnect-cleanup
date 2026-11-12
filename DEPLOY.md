@@ -8,7 +8,21 @@ Everything in this repo was built and verified off-box (Linux + PowerShell 7);
 
 ## 1. What to copy (and what not to)
 
-Copy these, and only these:
+**The release zip (from 1.8.12-gui-alpha.3 on) is laid out like this - copy the whole extracted folder:**
+
+```
+screenconnect-cleanup\
+  START-HERE-GUI.bat      <- the only file at the top: double-click it to open the window
+  files\                  <- everything else, exactly the list below (scripts, the console
+                             launchers START-HERE*.bat, gui\, tools\, docs\, VERSION, manifests)
+```
+
+The top `START-HERE-GUI.bat` (source: `packaging\START-HERE-GUI.bat`) only starts
+`files\START-HERE-GUI.bat`, which asks for administrator rights once. The console launchers still
+work from inside `files\` (`files\START-HERE-OFFLINE.bat`, `files\START-HERE-ONLINE.bat`). Extract the
+whole zip: the top launcher stops with a message when `files\` is missing.
+
+The files in `files\` are these, and only these:
 
 ``` 
 sc-cleanup.ps1                  <- top-level runner; you only ever launch this
@@ -31,6 +45,16 @@ tools\Get-ToolPack.ps1          <- downloader ONLY; do NOT copy tools\* exes
 tools\Get-AVTools.ps1           <- KVRT/ESET stager (Malwarebytes via winget since v1.7.3)
 tools\Keep-Awake.ps1            <- START-HERE-only system/display wake request, no installation
 tools\Confirm-OnBattery.ps1     <- confirms before an AC-unplugged guided run
+START-HERE-OFFLINE.bat          <- START HERE, half 1: cleanup, no internet (steps 1-7)
+START-HERE-ONLINE.bat           <- then half 2: scanners + persistence re-check + AV uninstall + share, needs internet (steps 1-5)
+START-HERE.bat                  <- the engine both launchers call (no flag = original full run)
+START-HERE-GUI.bat              <- opens the window (the main way to run it, beta): Offline / Online / Detect / Stage; needs the gui\ folder
+gui\                            <- Start-CleanupGui.ps1, Gui.Core.psm1, MainWindow.xaml, steps.json (docs\14-gui-architecture.md)
+tests\Test-KeepSelection.ps1     <- tests the keep/remove choice (real review script)
+tools\Write-PhaseMarker.ps1     <- offline half records that it finished (phase-offline.json)
+tools\Find-OfflineRun.ps1       <- online half finds that run (only if its folder is still locked)
+tools\RunRootSecurity.psm1      <- creates the locked offline run folder and checks it
+OFFLINE-ONLINE-SPLIT.md         <- how the two halves work and what is unverified
 docs\                           <- optional but recommended (work log + roadmap)
 DEPLOY.md                       <- this file
 ```
@@ -241,6 +265,35 @@ credentials for the ConnectWise site to this tool.
 | `-MicroBinUrl <url>` | MicroBin paste-server base URL; overrides `microbin-url.txt` (never ConnectWise); posts a private read-only one-week paste of the sanitized report JSON |
 | `-MicroBinUploaderPasswordFile <path>` | MicroBin uploader password file, for servers that require one (environment fallback: `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD`) |
 | `-NoShare` | create the local sanitized package but do not share it (`Submit-ConnectWiseReport.ps1`: `-NoUpload`) |
+
+### Optional repair and restart
+
+The guided runner asks before repairing missing power options. The equivalent
+CLI opt-in is `-RepairPowerOptions`. The standalone helper can be previewed
+without changes:
+
+```powershell
+powershell -NoProfile -File .\Repair-PowerOptions.ps1 -Apply -WhatIf
+```
+
+For an owner-authorized live repair, run the helper elevated with `-Apply`, or
+opt in through the runner. Keep both `PowerOptionsRepair.*.psm1` modules beside
+it. Do not add `-ResetLocalGpo` unless the broader local-policy reset is wanted;
+do not override managed-device refusal without the policy administrator's
+permission. Save work before Explorer refresh. Custom power plans are backed up
+before replacement; button/lid defaults are Sleep, and hibernation uses disk.
+
+The local report shows action outcomes, backup paths and incomplete evidence.
+Repair evidence is local-only and not added to MicroBin's sanitized payload.
+After repair evidence exists and the report opens successfully, the runner may
+ask separately about rebooting. Default is No. Accepting invokes
+`shutdown /r /t 0 /f` through CMD and **can lose unsaved work**. The helper never
+reboots automatically. Domain/MDM/task persistence can restore restrictions;
+this repair does not certify malware removal. See [safety model](docs/06-safety-model.md).
+
+Windows owner acceptance remains required for actual registry, powercfg, LSA,
+policy reset, Explorer refresh, UAC and reboot behavior. Synthetic CI contracts
+are not live-system acceptance.
 
 ## 5. Before you trust it — outstanding live validation
 

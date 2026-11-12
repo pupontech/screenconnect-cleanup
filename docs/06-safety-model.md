@@ -62,6 +62,48 @@ registry export always blocks destructive removal. **Check System Restore is act
 enabled** — it frequently is not, and a silently-failed restore point is worse than
 none.
 
+Both entry points (`preflight.ps1` Stage 0 and `sc-cleanup.ps1` Stage 0) do this
+through one shared helper, `SystemRestore.psm1`, which:
+
+1. resolves the OS **system drive dynamically** (`SystemDrive` / `SystemRoot` /
+   `windir`, then the OS-reported `Win32_OperatingSystem.SystemDrive`); `C:` is never
+   assumed, no data path is used as a guess, and an unresolvable drive fails closed;
+2. runs `Enable-ComputerRestore -Drive <system> -ErrorAction Stop` **before**
+   `Checkpoint-Computer`. Enablement is ensured idempotently — the cmdlet is a no-op
+   on an already-enabled volume — because an empty restore-point list is **not**
+   proof that System Restore is off (no points may simply mean none were kept). When
+   no reliable enabled/disabled probe exists, the helper still enables;
+3. runs `Checkpoint-Computer -RestorePointType MODIFY_SETTINGS -ErrorAction Stop`;
+4. **reads the restore-point list back** and only reports `Created` when a new
+   sequence number appeared **that carries this run's description**, so a restore
+   point written concurrently by something else is never adopted as the rollback
+   point. An unreadable baseline list is not treated as empty: the step fails closed
+   before any restore API call. A non-throwing `Checkpoint-Computer` proves nothing:
+   Windows silently declines a checkpoint inside the restore-point frequency window
+   (default 24 h) and emits only a warning. That case is reported as
+   `SKIPPED (throttled)` with the newest existing point, and is recorded in
+   `master.log` as such — never as `Restore point: Created`;
+5. refuses before any restore call when the host cannot support the step: Windows
+   Server SKU (`UnsupportedServer`), an unelevated session (`NotElevated`), or a
+   System Restore policy that disables it (`PolicyBlocked`, read-only - policy is
+   never written or overridden);
+6. reports enable failures, creation errors and missing cmdlets
+   (`Enable-ComputerRestore` / `Checkpoint-Computer`) truthfully, with the `Status`
+   that failed.
+
+`RestorePointFailed` stays the fail-closed gate. A verified `Created` point permits
+continuation. `Throttled` also permits continuation only when the readable list
+confirms an existing point with a positive sequence number and a known creation
+time less than 24 hours old (never future-dated). This is logged as
+`SKIPPED (throttled)`, not `Created`; no frequency setting is changed. Missing,
+stale, unknown-time or unreadable points, enable failures, unavailable cmdlets,
+and unsupported hosts still block destructive Stage 4 unless the operator passed
+`-np`. The shared result's `CanContinue` carries this gate decision separately
+from `Success`, which remains false for a skipped creation. The helper deliberately makes
+**no** Group Policy change, **no** quota or retention change (`DiskPercent`,
+`MaxSize`), and **no** service or checkpoint-frequency change; those are machine
+policy the operator did not ask for.
+
 ### 5. Uninstall before surgery
 Always run the vendor's own uninstaller (from the registry `UninstallString` /
 `QuietUninstallString`, or `msiexec /x {ProductCode} /qn`) before touching services or
@@ -107,6 +149,37 @@ finite retention period. ConnectWise submission remains an operator-reviewed act
 its official reporting workflow unless a documented official API is verified.
 
 ---
+
+## Optional power-options repair (scripts only)
+
+`START-HERE.bat` offers a default-No repair before the after snapshot. The CLI
+requires `-RepairPowerOptions`; `-ResetLocalGpo` is a separate opt-in and
+`-AllowManagedDevice` is a separate authorization override. Both require the
+repair switch. These options do not enable the WPF cleanup workflow.
+
+The repair requires 64-bit administrator PowerShell on a Windows client edition.
+Server editions are refused, even if the main runner uses `-force`. Domain/MDM
+managed devices and unknown management state are refused unless explicitly
+allowed. Ask the policy administrator first: local edits cannot remove enforcing
+GPO, MDM, scheduled-task or other persistence.
+
+Affected registry keys are exported before editing. Power schemes and shutdown
+rights are backed up before changing them. Local GPO folders are not cleared
+unless separately requested and their backup verifies. This is not a replacement
+for a recoverable system backup. Custom power plans can be replaced, hibernation
+can allocate disk space, and power/sleep-button and lid actions are set to Sleep
+for AC and DC. Explorer is refreshed; save work first.
+
+A local `power-options-repair.json` records action outcomes and backup locations.
+`Completed` reports command outcomes, not proof that malware/persistence is gone
+or that the power menu is usable. Failures stay visible; optional repair evidence
+is included in the local HTML report, not added to the automatic sanitized share.
+
+The repair helper never reboots. A runner may offer a separate default-No reboot
+only after current-run repair evidence exists and the report successfully opens.
+Explicit consent invokes CMD `shutdown /r /t 0 /f`: **forced app closure can lose
+unsaved work**. Declining or closing the prompt never authorizes restart. Physical
+power-off is not a safe substitute for a Windows shutdown.
 
 ## Coding conventions
 

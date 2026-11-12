@@ -59,6 +59,20 @@ $rawAuxiliaryInstancePaths = ($remover.Contains("quarantine-hashes-' + `$Instanc
 Check 'instance IDs are sanitized before auxiliary filenames' ((-not $rawAuxiliaryInstancePaths) -and ($remover -match 'Get-SafeInstanceFileStem'))
 Check 'preflight native registry exports do not merge stderr under Stop' ($cleanup -notmatch '(?m)reg\.exe\s+export[^\r\n]*2>&1')
 Check 'no-restore-point flag does not waive registry export failure' (($cleanup -match '\$script:RegistryExportFailed') -and ($cleanup -match '\$script:RegistryExportFailed\s*-or') -and ($cleanup -match '\(\$script:RestorePointFailed\s*-and\s*-not\s*\$np\)'))
+$restore = Read-Source 'SystemRestore.psm1'
+Check 'preflight delegates the restore point to the shared helper' (($preflight -notmatch '(?m)^\s*Checkpoint-Computer\b') -and ($preflight -match 'Invoke-SccRestorePoint') -and ($preflight -match 'SystemRestore\.psm1'))
+Check 'direct runner delegates the restore point to the shared helper' (($cleanup -notmatch '(?m)^\s*Checkpoint-Computer\b') -and ($cleanup -match 'Invoke-SccRestorePoint') -and ($cleanup -match 'SystemRestore\.psm1'))
+Check 'shared helper enables System Restore before checkpointing' (($restore -match 'Enable-ComputerRestore -Drive \$resolvedDrive -ErrorAction Stop') -and ($restore.IndexOf('Enable-ComputerRestore -Drive') -lt $restore.IndexOf('Checkpoint-Computer -Description')))
+Check 'shared helper verifies a fresh restore point instead of trusting the checkpoint' (($restore -match 'Get-ComputerRestorePoint') -and ($restore -match 'SequenceNumber') -and ($restore -match 'notcontains'))
+Check 'shared helper never infers a disabled restore point from an empty history' (($restore -match 'StateBefore') -and ($restore -match 'Unknown') -and ($restore -cnotmatch 'Disabled'))
+# Comment lines legitimately NAME the settings the helper refuses to touch, so
+# this check looks at executable lines only.
+$restoreCode = ((($restore -split "`n") | Where-Object { $_ -notmatch '^\s*#' }) -join "`n")
+Check 'shared helper never writes Group Policy, quota, retention or service settings' ($restoreCode -notmatch '(?i)Set-ItemProperty|New-ItemProperty|Remove-ItemProperty|Set-Service|vssadmin|DiskPercent|MaxSize|sc\\.exe\\s+config')
+Check 'shared helper only READS a System Restore policy block' (($restoreCode -match 'Get-ItemProperty') -and ($restoreCode -match 'DisableSR'))
+Check 'shared helper resolves the OS system drive dynamically' (($restore -match 'Get-SccSystemRestoreDrive') -and ($restore -match 'env:SystemDrive') -and ($restore -cnotmatch 'C:\\'))
+Check 'a throttled checkpoint is recorded as skipped, never created' (($restore -match "'Throttled'") -and ($restore -match 'SKIPPED \(throttled\)'))
+Check 'the direct runner still skips the whole restore step with -np' (($cleanup -match '(?m)if \(-not \$np\)') -and ($cleanup -match 'Skipping System Restore point \(-np specified\)'))
 Check 'quarantine failure gates service and registry surgery' ($remover -match 'quarantineSucceeded')
 Check 'quarantine applies restrictive ACLs' ($remover -match 'Set-Acl')
 Check 'deferred quarantine is RebootPending' (($remover -match 'DeferredQuarantineInstanceIds') -and ($remover -match 'RebootPending') -and ($remover -match "Result 'Deferred'"))

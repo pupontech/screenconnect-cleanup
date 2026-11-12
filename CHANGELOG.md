@@ -3,6 +3,273 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [Unreleased] - README rewrite, one-liner installer fix
+- **Fix: the `irm ... | iex` one-liner failed on the GUI releases** ("Bundle missing VERSION"):
+  `install-latest.ps1` expected VERSION and START-HERE.bat at the top of the zip, which since
+  1.8.12-gui-alpha.3 holds only START-HERE-GUI.bat plus `files\`. It now recognises both layouts and
+  launches START-HERE-GUI.bat for the new one (START-HERE.bat for older releases). Tested against the
+  live v1.8.12-gui-beta.1 release (download, SHA-256 check, extract, same-version re-run).
+  The one-liner reads the script from `main`, so the fix reaches users once it is on `main`.
+- README rewritten around the window: getting it, the four choices, the usual job, the questions and
+  their defaults, what a run leaves behind, sharing, console launchers, what is not verified yet.
+  Three screenshots in `docs/images/` (rendered from the window itself, sample data).
+- `Start-CleanupGui.ps1`: the `-RenderPng` test hook can also render the start screen (non-elevated
+  only, like every hook). DEPLOY.md and OFFLINE-ONLINE-SPLIT.md no longer call the window a preview.
+
+## [1.8.12-gui-beta.1] - 2026-11-10 - GUI beta (Latest release)
+**BETA. Same code as 1.8.12-gui-alpha.5, promoted to beta and published as the Latest release on GitHub
+(replacing 1.8.12-beta.1 as the default download). Owner live Windows acceptance is still open
+(docs/14 section 12.4).**
+- Release zip layout: `START-HERE-GUI.bat` at the top, everything else (including the console launchers
+  `START-HERE-OFFLINE.bat` / `START-HERE-ONLINE.bat`) in `files\`.
+
+## [1.8.12-gui-alpha.5] - 2026-11-10 - GUI alpha: header button (ALPHA)
+**ALPHA. Same engine and safety behaviour as 1.8.12-gui-alpha.4; one header button removed, hover text added.
+Owner live Windows acceptance still required (docs/14 section 12.4).**
+- The header keeps only "Open RIT-SCC folder" (top right); its duplicate "Open run folder" button is
+  gone (the one with the results, next to Open report, stays). Hovering "Open RIT-SCC folder" now
+  explains what the folder is: one folder per run, holding the logs, snapshots, findings, the report
+  and anything removed (moved, never deleted); the offline and online halves share one run folder.
+
+## [1.8.12-gui-alpha.4] - 2026-11-10 - GUI alpha: screen scaling and footer (ALPHA)
+**ALPHA. Same engine and safety behaviour as 1.8.12-gui-alpha.3; window display changes only. Owner live
+Windows acceptance still required (docs/14 section 12.4).**
+- The window is now per-monitor DPI aware (sharp text at 125% / 150% and on mixed-scale monitors; it
+  was bitmap-stretched before), opens no larger than the screen's work area, and switches to a compact
+  layout on small screens (narrower step list below 1000 wide; shorter console and tighter header below
+  660 high), so a 1366x768 laptop at 150% shows the cards, the action buttons and the console.
+  Text formatting is chosen for the monitor's scale. Details: docs/14 section 12.8.
+- Footer: "Brought to you by Rubinit.net in conjunction with pupontech.com" with links to
+  https://rubinit.net and https://pupontech.com (open only when clicked).
+- `Test-GuiWindow.ps1`: 13 new checks (small and full-size windows, DPI mode, text mode, footer links).
+
+## [1.8.12-gui-alpha.3] - 2026-11-10 - GUI alpha: package layout, only START-HERE-GUI.bat at the top (ALPHA)
+**ALPHA. Same code as 1.8.12-gui-alpha.2; only the zip layout changed. Owner live Windows acceptance
+still required (docs/14 section 12.4).**
+- The release zip now holds ONE file at the top, `START-HERE-GUI.bat`; everything else (scripts, the
+  console launchers, `gui\`, `tools\`, docs, VERSION, BUILD-INFO.txt, SHA256SUMS.txt) is in `files\`
+  in the repository's own relative layout. The top launcher (source `packaging\START-HERE-GUI.bat`)
+  only starts `files\START-HERE-GUI.bat`; it uses the START-HERE-OFFLINE.bat hand-over pattern (no
+  `( )` block), so a folder such as "screenconnect-cleanup (1)" works, and it stops with a clear
+  message when `files\` was not extracted. The repository layout is unchanged.
+- `make-deploy-bundle.sh` and `tests\verify_deploy_zip.py` follow the new layout (the verifier also
+  requires that nothing but the launcher sits at the top and compares it byte for byte with
+  `packaging\START-HERE-GUI.bat`); `tests\test_power_options_repair_package.py` updated; new
+  `tests\gui\Test-GuiPackageLayout.ps1` (runs the top launcher in folders with spaces and parentheses).
+
+## [1.8.12-gui-alpha.2] - 2026-11-10 - GUI alpha: REMOVE-gate safety fix, restyle (ALPHA)
+**ALPHA. Replaces 1.8.12-gui-alpha.1, which must not be used (the typed REMOVE was not enforced).
+Owner live Windows acceptance still required (docs/14 section 12.4).**
+- New header button "Open RIT-SCC folder" (opens C:\RIT-SCC, where every run folder lives; disabled
+  until that folder exists, never created by the window).
+- **Safety fix: the typed-REMOVE confirmation did not gate the Remove button in 1.8.12-gui-alpha.1.**
+  The dialog read `NeedsWord` from a hashtable's `PSObject.Properties`, which never lists hashtable
+  keys, so in a real run the Remove button was enabled before `REMOVE` was typed (both the ScreenConnect
+  removal and the persistence cleanup confirmation). The script's own y/N still followed, but the
+  typed-word safeguard was not in force. Fixed, and now covered by `Start-CleanupGui.ps1 -SelfTest`,
+  which builds the real dialogs (not shown) and checks the button stays disabled for "remove",
+  "REMOVE " etc. and enables only on exactly `REMOVE`. The earlier tests skipped real dialogs.
+- Restyle: design tokens in `gui\MainWindow.xaml` (one light and one dark palette of semantic colours,
+  radius and spacing; nothing else in the window names a colour), shared button / card / mode-card /
+  scrollbar styles, a status dot per step, cards for each instance, themed dialogs. Dark follows the
+  Windows app-mode setting, or `-Theme Light|Dark`. No behaviour change.
+
+## [1.8.12-gui-alpha.1] - 2026-11-10 - GUI window (ALPHA, on top of 1.8.12-offline-alpha.1)
+**ALPHA. Not an upstream release. Owner live Windows acceptance required (docs/14 section 12.4). The
+removal path has been exercised only against stubs and the real review script with a stubbed remover -
+never a real removal. The console launchers are unchanged and remain the fallback.**
+- Also in this build, from the code review: test hooks only work in a window that is NOT elevated
+  (no unattended removal is possible); closing during a scan leaves the scanner open; removal, AV
+  uninstall and power repair lock the window while they run; the unknown-prompt box sends the
+  script's default when closed; a Results section (persistence findings, diff outcome, share link);
+  a failed scanner or share can be run again; steps outside the chosen mode say why.
+- New `START-HERE-GUI.bat` + `gui\`: a window over the same scripts `START-HERE.bat` runs
+  (same arguments, same order, each in its own child `powershell.exe`). The start panel toggles
+  Offline half / Online half / Detect only / Stage tools (no full run in the window: it would only
+  repeat Offline followed by Online; `START-HERE.bat` still does it). It asks the questions the
+  batch files ask: one card per ScreenConnect instance with a Remove (default) / Keep choice and
+  the relay host and port largest (no safe/suspicious labels); removal needs the typed word
+  `REMOVE` and then the script's own y/N; scanner choice, review windows, AV uninstall, power
+  repair and the Online half's "continue that run?" are dialogs. Closing any dialog sends the
+  refusing answer. Call-for-call identical to `START-HERE*.bat` (`tests\gui\Test-GuiCallParity.ps1`);
+  design and spike results: `docs/14-gui-architecture.md`.
+- `Invoke-GUIScanner.ps1` (2 prompts) and `Persistence.Removal.psm1` (2 prompts): when stdin is
+  redirected they now also print the `Read-Host` prompt text, which Windows PowerShell 5.1 omits
+  (`if ([Console]::IsInputRedirected) { Write-Host '<text>' -NoNewline }`). Interactive output and
+  the engine tests' `Read-Host` mocks are unchanged.
+- `Invoke-ReviewAndRemove.ps1`: `-KeepIdentifier a,b` now works through `powershell -File`
+  (it arrived as the single string `a,b` and matched nothing, so the run stopped with exit 2
+  and removed nothing). A value that matches no identifier as a whole is split on commas;
+  every part must still match. `Test-KeepSelection.ps1` +5 cases.
+- Zip: `START-HERE-GUI.bat` and the four `gui\` files are bundled and verified;
+  `tests\ci\Test-HouseRules.ps1` also checks `.xaml`; five GUI tests added to `windows-ci.yml`.
+
+## [1.8.12-offline-alpha.1] - 2026-11-10 - alpha testing build
+**ALPHA. Same code as 1.8.12-beta.1-offline.3, renamed for field testing. Not an upstream release.**
+Not yet run end to end on a real PC (real UAC, detection/removal, scanners, share,
+offline-then-online on one machine). Persistence inventory still times out at the final
+write on some PCs (upstream issue).
+
+## [1.8.12-beta.1-offline.3] - 2026-11-10 - split hardening (review findings)
+**Not an upstream release. Owner live Windows acceptance required.**
+- Security: the offline half creates its run folder already LOCKED (owner and
+  write = Administrators/SYSTEM, Users read only, no inheritance from C:\RIT-SCC,
+  which gives Authenticated Users Modify). The online half continues a run only
+  while its folder is still locked, not a junction, and findings.json sits on a
+  real path inside it; anything else is skipped with a visible reason. Before this,
+  anything running as the user could plant or edit the "finished offline run" the
+  elevated online half then shared. New `tools/RunRootSecurity.psm1`. Runs made by
+  older builds are never locked, so they can no longer be continued.
+- The online half runs the persistence check again AFTER the scanners (as the full
+  run does), into `after-scans\persistence` (the offline results are never
+  overwritten), with the 240 s / 600 s limits, opens its review windows, rebuilds the
+  report as `report-after-scans.html` and shares that. The offline `report.html`
+  is kept unchanged. The online half is now steps 1-5.
+- The keep question moved into `Invoke-ReviewAndRemove.ps1 -AskKeep`: asked only
+  when ScreenConnect instances were actually found (offline.2 asked on every
+  offline run, because findings.json always exists), after the numbered list with
+  relay host:port. Enter = remove all, as before.
+- The full run is unchanged: plain run folder, persistence once, no keep question.
+
+## [1.8.12-beta.1-offline.2] - 2026-11-10 - two launchers, own step numbers
+**Not an upstream release. Owner live Windows acceptance required.**
+- The deploy zip has only two launchers: `START-HERE-OFFLINE.bat` and
+  `START-HERE-ONLINE.bat`. `START-HERE-SELECT.bat`, `START-HERE-OFFLINE-SELECT.bat`
+  and `STAGE-TOOLS-ONLINE.bat` are removed; `START-HERE.bat` still takes `--select`
+  and `--stage`. `verify_deploy_zip.py` checks the launcher list.
+- The offline half shows only its own steps, numbered 1-7 (preflight, before
+  snapshot, detect, remove, persistence, after snapshot + diff, report); the
+  online half shows 1-4 (download scanners, virus scans, AV uninstall, share).
+  No "skipped in the offline half" lines. The full run's 1-9 text is unchanged.
+- The offline half asks `Keep any ScreenConnect? [y/N]` before removal when
+  something was detected; `y` = select mode, Enter = remove all (as before).
+
+## [1.8.12-beta.1-offline.1] - 2026-11-10 - offline / online split (testing build on top of 1.8.12-beta.1)
+**Not an upstream release. Owner live Windows acceptance required.**
+- Deploy ZIP now packages the split launchers, `OFFLINE-ONLINE-SPLIT.md`,
+  `tools/Find-OfflineRun.ps1` and `tools/Write-PhaseMarker.ps1` (bundler, ZIP
+  verifier and package fixture updated).
+- Launcher guards for the split are written so an unset flag means the full run:
+  `if "!SCC_DO_X!"=="0"` instead of `if not ... =="1"`, and the argument loop
+  has no `if defined SCC_ARGS` wrapper. No change in a real run; it keeps the
+  upstream fixtures (Test-LauncherElevationBound, test_persistence_workflow) that
+  replay only part of the launcher working unmodified.
+- `START-HERE.bat` takes `--offline`, `--online` and `--stage` (no argument = the
+  full run, call-for-call identical to 1.8.12-beta.1 in the stub test). New
+  launchers `START-HERE-OFFLINE.bat`, `START-HERE-ONLINE.bat` and
+  `STAGE-TOOLS-ONLINE.bat` pass them.
+- Offline half: preflight, snapshots, detection, removal, persistence review,
+  diff, local report with `Submit-ConnectWiseReport.ps1 -NoUpload`. It never runs
+  tool/scanner staging, the scanners, AV uninstall or the share, and writes
+  `phase-offline.json` when it finishes.
+- Online half: stages scanners, runs them, optional AV uninstall, then shares the
+  offline run's report (`Find-OfflineRun.ps1` picks the run; with none it does a
+  scanner-only run and shares nothing). Writes `phase-online.json`.
+- The phase flag travels as a command-line argument through the UAC relaunch
+  (`-ArgumentList ('--elevation-attempted ' + $env:SCC_PHASE_ARG)`); the loop
+  guard now reads a parsed flag instead of only the first argument.
+- Fix: the run-folder creation line piped `New-Item` to `Out-Null` with a
+  caret-escaped pipe inside double quotes (the caret reaches PowerShell
+  literally, so `New-Item` failed and the folder only appeared as a side effect
+  of preflight). Now a `:new_run_root` routine without a pipe.
+- New: select mode. `START-HERE-SELECT.bat` / `START-HERE-OFFLINE-SELECT.bat` (flag
+  `--select`, which also survives the UAC relaunch) make Step 5 ask which detected
+  ScreenConnect instances to KEEP as legitimate before the single remove prompt.
+  `Invoke-ReviewAndRemove.ps1` gains `-SelectKeep` and `-KeepIdentifier`; kept instances
+  are left out of `plan.json` (decision `PARTIAL_REMOVE`, the engine already supported
+  it), recorded in `kept-instances.json`, and labelled KEPT in the report
+  (`New-InvestigationReport.ps1 -KeptInstances`). The default remove-all behavior of
+  the other launchers is unchanged. `tests/Test-KeepSelection.ps1` (35 checks) runs the
+  real review script and report; a dry run of the real `remove-screenconnect.ps1`
+  confirmed it processes only the non-kept instances.
+- Fix (first real-PC test): `preflight.ps1` hard-failed on the missing Sysinternals
+  tool pack, which the offline half never downloads. New `-SkipToolPack` switch,
+  passed by the offline half only; the full run still requires the pack.
+- Fix (second real-PC test): the persistence inventory's final write timed out at the
+  default 60 s section limit (result Incomplete, exit 1). The offline half now passes
+  `-InventorySectionTimeoutSeconds 240 -InventoryTotalTimeoutSeconds 600`; the full run
+  keeps the defaults. Cause of the slowness not confirmed (the write is one large
+  ConvertTo-Json); if it still times out, the serializer needs fixing, not the limit.
+- New: `tools/Write-PhaseMarker.ps1`, `tools/Find-OfflineRun.ps1`,
+  `tests/Test-PhaseSplit.ps1` (79 checks, stubbed, no admin, no network),
+  `OFFLINE-ONLINE-SPLIT.md`.
+- Not covered: the real UAC relaunch with the phase flag, a run with the network
+  actually disabled, the upstream `tests/ci/*` contract tests and
+  `make-deploy-bundle.sh` (neither was in this folder).
+
+## [1.8.12-beta.1] - 2026-10-23
+**BETA - optional power-options repair; owner live Windows acceptance required.**
+- Based on v1.8.11; retains recent-restore-point handling, attended Malwarebytes
+  fallback, post-AV persistence workflow and launcher path fixes. No WPF/GUI
+  implementation or unrelated detection/report-sharing WIP is included.
+- Default-No guided repair and CLI `-RepairPowerOptions` restore named power/menu
+  restrictions, existing Start visibility flags, default power schemes,
+  hibernation, AC/DC button/lid Sleep defaults and additive shutdown rights.
+- Back up affected settings before changes. Reset local Group Policy only with
+  separate consent and verified backup. Refuse server editions and refuse managed
+  or unknown-management devices unless separately authorized.
+- Local HTML report records repair evidence and incomplete outcomes with escaped
+  content. This is command-result evidence, not independent restoration proof;
+  enforcing policy or persistence may reapply restrictions.
+- Require a current-run repair result and successful report launch before a
+  separate default-No reboot offer. Explicit yes invokes CMD `shutdown /r /t 0 /f`;
+  forced app closure can lose unsaved work. No automatic reboot.
+- Limit Explorer refresh to the current session. Reject existing junctions and
+  symlinks in backup/result path chains; concurrent hostile path swaps and
+  hard-link attacks are not certified by these checks.
+- Synthetic core, consent, report/XSS, path, runner and packaging regressions;
+  Windows CI covers PowerShell 5.1 and 7 on Windows 2022/2025. Actual repair,
+  registry/powercfg/LSA/GPO effects, Explorer UX and restart remain owner-only.
+
+## [1.8.11] - 2026-10-21
+- The official Malwarebytes download fallback now requires typing `DONE` after
+  installation, then again after the attended scan is finished and its window
+  is closed. A short-lived installer/bootstrapper or GUI handoff can no longer
+  advance the pipeline automatically. Missing input or cancellation is never
+  reported as a completed scan. Winget behavior is unchanged.
+- Continue cleanup when Windows throttles a new restore point and the readable
+  restore-point list confirms an existing point less than 24 hours old. Both
+  guided preflight and the direct runner log `SKIPPED (throttled)` with the
+  existing sequence/time; neither claims a new point was created.
+- Missing, stale, unknown-time, invalid-sequence and future-dated points still
+  block cleanup, as do actual enable/create/read failures. Registry export and
+  removal approval gates are unchanged. No checkpoint-frequency policy changes.
+
+## [1.8.10] - 2026-10-19
+**TESTING CANDIDATE - the pre-cleanup restore point now enables System Restore
+first, and is verified before it is trusted.**
+- New shared helper `SystemRestore.psm1` (packaged, used by BOTH `preflight.ps1`
+  Stage 0 and `sc-cleanup.ps1` Stage 0): resolves the OS system drive dynamically
+  (never assumes `C:`), runs `Enable-ComputerRestore -Drive <system>
+  -ErrorAction Stop` before `Checkpoint-Computer`, then reads the restore-point
+  list back and reports `Created` only when a NEW sequence number appeared.
+  Enablement is ensured idempotently because an empty restore-point list is not
+  proof that System Restore is off, and no Group Policy, quota/retention or
+  service settings are touched.
+- Windows throttles checkpoints inside the restore-point frequency window
+  (default 24 h) and `Checkpoint-Computer` then returns WITHOUT throwing - only a
+  warning. That case is now recorded as `Restore point: SKIPPED (throttled)` with
+  the newest existing point named, never as `Restore point: Created`, and it fails
+  the `RestorePointFailed` gate closed for destructive Stage 4 unless `-np`.
+  Enable failures, missing cmdlets (`EnableUnavailable` /
+  `CheckpointUnavailable`), creation errors and an unresolvable system drive are
+  reported with their own status instead of a generic message.
+- Host guards are explicit and run BEFORE any restore API call: Windows Server
+  SKU (`UnsupportedServer`), an unelevated session (`NotElevated`), and a System
+  Restore policy that disables it (`PolicyBlocked` - read only, never written or
+  overridden). An unreadable restore-point list is not treated as empty, and a
+  point that appears but does not carry this run's description is not adopted as
+  the rollback point.
+- Unchanged by design: `-np` / `-SkipRestore` semantics, the registry-export gate,
+  and "a failed restore point blocks destructive removal".
+- New regression `tests/test_auto_enable_restore_point.ps1` drives the real
+  module and the real Stage 0 code of both entry points with in-process cmdlet
+  fakes (`reg.exe` stubbed); wired into both CI editions and the extracted-package
+  test loop. `Test-SafetyRegressionContracts.ps1` gains source contracts (no
+  direct `Checkpoint-Computer` in either caller, enable-before-checkpoint,
+  fresh-point verification, no policy/quota/service edits, no hardcoded `C:`).
+  `verify_deploy_zip.py` now requires `SystemRestore.psm1` in the bundle.
+
 ## [1.8.9] - 2026-10-11
 **TESTING CANDIDATE - launcher fix for paths containing parentheses.**
 - `START-HERE.bat` now survives a folder name containing `(` or `)` - e.g.

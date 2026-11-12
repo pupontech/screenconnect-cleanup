@@ -169,6 +169,14 @@ jobs:
         shell: pwsh
         run: ./tests/ci/Test-SafetyRegressionContracts.ps1
 
+      - name: Restore point enablement + verification regression (Windows PowerShell 5.1)
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/test_auto_enable_restore_point.ps1
+
+      - name: Restore point enablement + verification regression (pwsh)
+        shell: pwsh
+        run: ./tests/test_auto_enable_restore_point.ps1
+
       - name: Report rendering regression (Windows PowerShell 5.1)
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/test_report_scanner_section.ps1
@@ -277,6 +285,22 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
+      - name: Power-options repair contracts (Windows PowerShell 5.1, no live changes)
+        shell: powershell
+        run: |
+          foreach ($test in @('core', 'entry', 'workflow', 'report', 'runner', 'windows', 'paths')) {
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "./tests/test_power_options_repair_$test.ps1"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Power-options repair contracts (pwsh, no live changes)
+        shell: pwsh
+        run: |
+          foreach ($test in @('core', 'entry', 'workflow', 'report', 'runner', 'windows', 'paths')) {
+            pwsh -NoProfile -File "./tests/test_power_options_repair_$test.ps1"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
       - name: Build allowlisted testing ZIP from the tested checkout
         shell: bash
         env:
@@ -293,9 +317,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $extract = Join-Path $env:RUNNER_TEMP ('scc-package-' + [guid]::NewGuid().ToString('N'))
           Expand-Archive -LiteralPath $zip -DestinationPath $extract
-          $package = Join-Path $extract 'screenconnect-cleanup'
+          # Since 1.8.12-gui-alpha.3 the zip holds START-HERE-GUI.bat at the top and every script in files\.
+          $package = Join-Path (Join-Path $extract 'screenconnect-cleanup') 'files'
           New-Item -ItemType Directory -Path (Join-Path $package 'tests') | Out-Null
-          foreach ($test in @('test_persistence_inventory.ps1', 'test_persistence_removal.ps1', 'test_persistence_report.ps1', 'test_persistence_workflow.ps1', 'test_persistence_output_safety.ps1', 'test_persistence_native_fileinfo.ps1', 'test_persistence_watchdog.ps1', 'test_persistence_review.ps1', 'test_persistence_progress_throughput.ps1', 'test_persistence_overlapping_roots.ps1', 'test_persistence_review_safety.ps1', 'test_after_snapshot_failure_reporting.ps1', 'test_report_av_error_escaping.ps1', 'test_snapshot_section_shapes.ps1', 'test_audit_fixes.ps1', 'test_bootstrap_session.ps1', 'test_resume_materials_trust.ps1')) {
+          foreach ($test in @('test_persistence_inventory.ps1', 'test_persistence_removal.ps1', 'test_persistence_report.ps1', 'test_persistence_workflow.ps1', 'test_persistence_output_safety.ps1', 'test_persistence_native_fileinfo.ps1', 'test_persistence_watchdog.ps1', 'test_persistence_review.ps1', 'test_persistence_progress_throughput.ps1', 'test_persistence_overlapping_roots.ps1', 'test_persistence_review_safety.ps1', 'test_after_snapshot_failure_reporting.ps1', 'test_report_av_error_escaping.ps1', 'test_snapshot_section_shapes.ps1', 'test_audit_fixes.ps1', 'test_bootstrap_session.ps1', 'test_resume_materials_trust.ps1', 'test_auto_enable_restore_point.ps1', 'test_power_options_repair_core.ps1', 'test_power_options_repair_entry.ps1', 'test_power_options_repair_report.ps1', 'test_power_options_repair_runner.ps1', 'test_power_options_repair_windows.ps1', 'test_power_options_repair_paths.ps1', 'test_power_options_repair_workflow.ps1')) {
             $copied = Join-Path (Join-Path $package 'tests') $test
             Copy-Item -LiteralPath (Join-Path 'tests' $test) -Destination $copied
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File $copied
@@ -330,6 +355,38 @@ jobs:
             ${{ runner.temp }}/scc-verified-package/screenconnect-cleanup-v*.zip
             ${{ runner.temp }}/scc-verified-package/screenconnect-cleanup-v*.zip.sha256
           if-no-files-found: error
+
+      # GUI front end (docs/14-gui-architecture.md). Windows PowerShell 5.1 only: WPF and the 5.1
+      # redirected-stdin behaviour are what these prove. The live-window test
+      # (tests/gui/Test-GuiWindow.ps1) needs an interactive desktop and is run by hand, like
+      # tests/Test-PhaseSplit.ps1.
+      - name: GUI - artifact readers
+        shell: powershell
+        run: ./tests/gui/Test-GuiArtifactReaders.ps1
+
+      - name: GUI - prompt contract against the engine
+        shell: powershell
+        run: ./tests/gui/Test-GuiPromptContract.ps1
+
+      - name: GUI - prompt handling with real child processes
+        shell: powershell
+        run: ./tests/gui/Test-GuiPromptHandling.ps1
+
+      - name: GUI - questions the window asks (Ask mechanism)
+        shell: powershell
+        run: ./tests/gui/Test-GuiAsk.ps1
+
+      - name: GUI - package layout (top launcher in folders with parentheses)
+        shell: powershell
+        run: ./tests/gui/Test-GuiPackageLayout.ps1
+
+      - name: GUI - launcher
+        shell: powershell
+        run: ./tests/gui/Test-GuiLauncher.ps1
+
+      - name: GUI - call parity with START-HERE.bat (acceptance)
+        shell: powershell
+        run: ./tests/gui/Test-GuiCallParity.ps1
 
       - name: Relay and bulk-export unit tests
         shell: pwsh

@@ -1,0 +1,235 @@
+{
+  "SchemaVersion": 1,
+  "Note": "The single list of steps the GUI can run. Mirrors START-HERE.bat call for call (same scripts, same arguments, same order). Gui.Core.psm1 expands the tokens; tests/gui/Test-GuiCallParity.ps1 proves the result matches the batch file. Never put engine logic here.",
+  "ModesNote": "Window = offered on the window's start panel. Full is kept for the parity test only: in the window it would just repeat Offline then Online (owner, 2026-11-10). Detect is the one mode with no launcher: a strict prefix of the offline half's calls plus its report, and it removes nothing.",
+  "Modes": {
+    "Full":    { "Phase": "ALL",     "Launcher": "START-HERE.bat",         "RunRoot": "new",          "Window": false, "Label": "Full run" },
+    "Offline": { "Phase": "OFFLINE", "Launcher": "START-HERE-OFFLINE.bat", "RunRoot": "new-locked",   "Window": true,  "Label": "Offline half (no internet needed)" },
+    "Online":  { "Phase": "ONLINE",  "Launcher": "START-HERE-ONLINE.bat",  "RunRoot": "prior-or-new", "Window": true,  "Label": "Online half (needs internet)" },
+    "Detect":  { "Phase": "DETECT",  "Launcher": "(GUI only: steps 2, 3, 4 and the report of the offline half; removes nothing)", "RunRoot": "new", "Window": true, "Label": "Detect only (nothing is changed)" },
+    "Stage":   { "Phase": "STAGE",   "Launcher": "START-HERE.bat --stage", "RunRoot": "none",         "Window": true,  "Label": "Stage tools only (needs internet)" }
+  },
+  "Steps": [
+    {
+      "Id": "1", "Title": "Tool pack and scanner staging", "Group": "Tools",
+      "Phases": ["ALL", "ONLINE", "STAGE"],
+      "Calls": [
+        { "Script": "tools\\Get-ToolPack.ps1", "Args": ["-Quiet"], "OnMissing": "WarnSkip", "OnNonZero": "Ignore" },
+        { "Script": "tools\\Get-ToolPack.ps1", "Args": ["-Verify"], "OnMissing": "WarnSkip", "OnNonZero": "Ignore" },
+        { "Script": "tools\\Get-AVTools.ps1", "Args": ["-ToolDir", "{ToolRoot}tools\\AV"], "OnMissing": "WarnSkip", "OnNonZero": "Ignore" }
+      ]
+    },
+    {
+      "Id": "2", "Title": "Preflight", "Group": "Check",
+      "Phases": ["ALL", "OFFLINE", "DETECT"],
+      "Calls": [
+        { "Script": "preflight.ps1", "Args": ["-WorkingRoot", "{RunRoot}", "{@PreflightArgs}"],
+          "OnNonZero": "Stop", "StopMessage": "Preflight failed. No detection or removal will run." }
+      ]
+    },
+    {
+      "Id": "3", "Title": "Before snapshot", "Group": "Check",
+      "Phases": ["ALL", "OFFLINE", "DETECT"],
+      "Calls": [
+        { "Script": "collect-snapshot.ps1", "Args": ["-Label", "before", "-OutFile", "{RunRoot}\\snapshot_before.json", "-Quiet"],
+          "OnNonZero": "Stop", "RequireOutput": "{RunRoot}\\snapshot_before.json",
+          "StopMessage": "Before-snapshot failed or was not written. No removal will run." }
+      ]
+    },
+    {
+      "Id": "4", "Title": "Remote-access detection", "Group": "Check",
+      "Phases": ["ALL", "OFFLINE", "DETECT"],
+      "Calls": [
+        { "Script": "detect-remote-access.ps1",
+          "Args": ["-All", "-NoPause", "-NoZip", "-NoReportShare", "-OutRoot", "{RunRoot}\\detect", "-TranscriptCopyDir", "{RunRoot}"],
+          "OnNonZero": "Stop", "After": "FindFindings",
+          "StopMessage": "Detection failed. No removal will run and no historical findings will be used." }
+      ]
+    },
+    {
+      "Id": "5", "Title": "Review and remove ScreenConnect", "Group": "Remove", "Destructive": true,
+      "Phases": ["ALL", "OFFLINE"],
+      "Calls": [
+        { "Script": "Invoke-ReviewAndRemove.ps1", "Args": ["-FindingsJson", "{FindingsJson}", "-WorkDir", "{RunRoot}", "{@KeepArgs}"],
+          "Ask": "KeepSelection",
+          "When": ["Has:FindingsJson"], "SkipText": "No current-run findings - removal is skipped.",
+          "CheckMissingFirst": true, "OnMissing": "Stop", "MissingMessage": "Invoke-ReviewAndRemove.ps1 missing - cannot remove.",
+          "OnNonZero": "WarnPipe", "Prompts": ["LowDisk", "RemoveConfirm"] }
+      ]
+    },
+    {
+      "Id": "6a", "Title": "Scanner: KVRT", "Group": "Scanners",
+      "Phases": ["ALL", "ONLINE"],
+      "Calls": [
+        { "Script": "Invoke-GUIScanner.ps1", "Args": ["-Scanner", "KVRT"],
+          "Ask": "Scanners", "When": ["Answer:ScanKvrt"], "SkipText": "Skipped by the technician.",
+          "Needs": ["Exists:{ToolRoot}tools\\AV\\KVRT.exe"], "NeedsText": "tools\\AV\\KVRT.exe not staged - run step 1 first.",
+          "OnNonZero": "Warn", "Retry": true }
+      ]
+    },
+    {
+      "Id": "6b", "Title": "Scanner: ESET Online Scanner", "Group": "Scanners",
+      "Phases": ["ALL", "ONLINE"],
+      "Calls": [
+        { "Script": "Invoke-GUIScanner.ps1", "Args": ["-Scanner", "ESET"],
+          "Ask": "Scanners", "When": ["Answer:ScanEset"], "SkipText": "Skipped by the technician.",
+          "Needs": ["Exists:{ToolRoot}tools\\AV\\esetonlinescanner.exe"], "NeedsText": "tools\\AV\\esetonlinescanner.exe not staged - run step 1 first.",
+          "OnNonZero": "Warn", "Retry": true }
+      ]
+    },
+    {
+      "Id": "6c", "Title": "Scanner: Malwarebytes", "Group": "Scanners",
+      "Phases": ["ALL", "ONLINE"],
+      "Calls": [
+        { "Script": "Invoke-GUIScanner.ps1", "Args": ["-Scanner", "Malwarebytes", "-ResultPath", "{RunRoot}\\logs\\scanner-Malwarebytes-result.json"],
+          "Ask": "Scanners", "When": ["Answer:ScanMalwarebytes"], "SkipText": "Skipped by the technician.",
+          "Before": "EnsureLogsDir", "OnNonZero": "Warn", "Retry": true, "Prompts": ["MbInstallDone", "MbScanDone"] }
+      ]
+    },
+    {
+      "Id": "6d", "Title": "Persistence inventory and review", "Group": "Persistence",
+      "Phases": ["ALL", "OFFLINE", "ONLINE"],
+      "Note": "Online half: the check runs again AFTER the scanners into {RunRoot}\\after-scans; the offline results are never overwritten.",
+      "Calls": [
+        { "Script": "Invoke-PersistenceScan.ps1", "Args": ["-WorkDir", "{PersistWorkDir}", "-PreflightRoot", "{RunRoot}", "{@PersistArgs}"],
+          "OnNonZero": "WarnPipe", "NonZeroText": "Persistence scan/review incomplete - evidence will still be reported.",
+          "Prompts": ["PersistIndices", "PersistRemove"] }
+      ]
+    },
+    {
+      "Id": "6e", "Title": "Open review windows (no changes made)", "Group": "Persistence",
+      "Phases": ["ALL", "OFFLINE", "ONLINE"],
+      "Calls": [
+        { "Script": "Show-PersistenceReview.ps1", "Args": ["-WorkDir", "{PersistWorkDir}"],
+          "Ask": "OpenReview", "When": ["Answer:OpenReview"], "SkipText": "Skipped by the technician.", "OnNonZero": "Warn",
+          "NonZeroText": "Some review windows could not be opened." }
+      ]
+    },
+    {
+      "Id": "7", "Title": "Uninstall third-party antivirus", "Group": "Scanners", "Destructive": true,
+      "Phases": ["ALL", "ONLINE"],
+      "Calls": [
+        { "Script": "Invoke-AVUninstaller.ps1", "Args": ["-LogDir", "{RunRoot}\\logs"],
+          "Ask": "AvUninstall", "When": ["Answer:Avu"], "SkipText": "Skipped.", "OnNonZero": "Warn" }
+      ]
+    },
+    {
+      "Id": "8a", "Title": "Power-options repair (optional)", "Group": "Verify", "Destructive": true,
+      "Phases": ["ALL", "OFFLINE"],
+      "Calls": [
+        { "Script": "Repair-PowerOptions.ps1",
+          "Args": ["-Apply", "-Confirm:$false", "-WorkDir", "{RunRoot}", "-ResultPath", "{RunRoot}\\power-options-repair.json", "{@GpoArgs}"],
+          "Ask": "PowerRepair", "When": ["Answer:PowerRepair"], "SkipText": "Not requested.",
+          "After": "MarkPowerRepair", "OnNonZero": "WarnPipe", "NonZeroText": "Power-options repair failed - review power-options-repair.json." }
+      ]
+    },
+    {
+      "Id": "8b", "Title": "After snapshot", "Group": "Verify",
+      "Phases": ["ALL", "OFFLINE"],
+      "Calls": [
+        { "Script": "collect-snapshot.ps1", "Args": ["-Label", "after", "-OutFile", "{RunRoot}\\snapshot_after.json", "-Quiet"],
+          "OnNonZero": "Warn", "NonZeroText": "After-snapshot failed." }
+      ]
+    },
+    {
+      "Id": "8c", "Title": "Snapshot diff", "Group": "Verify",
+      "Phases": ["ALL", "OFFLINE"],
+      "Calls": [
+        { "Script": "diff-snapshots.ps1",
+          "Args": ["-BeforeFile", "{RunRoot}\\snapshot_before.json", "-AfterFile", "{RunRoot}\\snapshot_after.json", "-OutFile", "{RunRoot}\\snapshot_diff.json"],
+          "When": ["Exists:{RunRoot}\\snapshot_before.json", "Exists:{RunRoot}\\snapshot_after.json"],
+          "SkipText": "The before or after snapshot is missing, so there is nothing to diff.",
+          "OnNonZero": "Diff" }
+      ]
+    },
+    {
+      "Id": "9a", "Title": "Investigation report", "Group": "Report",
+      "Phases": ["ALL", "OFFLINE", "DETECT"],
+      "Calls": [
+        { "Script": "New-InvestigationReport.ps1",
+          "Args": ["-FindingsJson", "{FindingsJson}", "{@KeptArg}", "{@ManifestArgs}",
+                   "-PersistenceInventory", "{RunRoot}\\persistence\\inventory.json",
+                   "-PersistenceRemoval", "{RunRoot}\\persistence\\removal.json",
+                   "-PersistenceResult", "{RunRoot}\\persistence\\result.json",
+                   "-PowerOptionsRepair", "{RunRoot}/power-options-repair.json",
+                   "-OutputPath", "{RunRoot}/report.html"],
+          "When": ["Has:FindingsJson", "Exists:{FindingsJson}"], "SkipText": "No current-run findings.json available - the report is skipped.",
+          "After": "MarkReport", "OnNonZero": "WarnPipe", "NonZeroText": "Report generation failed." }
+      ]
+    },
+    {
+      "Id": "9b", "Title": "Package and share the report", "Group": "Report",
+      "Phases": ["ALL", "OFFLINE"],
+      "Calls": [
+        { "Script": "Submit-ConnectWiseReport.ps1",
+          "Args": ["-FindingsJson", "{FindingsJson}", "-WorkDir", "{RunRoot}", "-ReportHtml", "{RunRoot}/report.html",
+                   "-PersistenceInventory", "{RunRoot}\\persistence\\inventory.json",
+                   "-PersistenceRemoval", "{RunRoot}\\persistence\\removal.json",
+                   "-PersistenceResult", "{RunRoot}\\persistence\\result.json", "{@SubmitArgs}"],
+          "When": ["Has:FindingsJson", "Exists:{FindingsJson}", "Exists:{RunRoot}/report.html"], "SkipText": "There is no report to share.",
+          "OnMissing": "WarnPipeSkip", "MissingMessage": "Submit-ConnectWiseReport.ps1 missing - local report was kept but not shared.",
+          "OnNonZero": "WarnPipe", "Retry": true, "NonZeroText": "Report share failed - local evidence remains available." }
+      ]
+    },
+    {
+      "Id": "9c", "Title": "Open the report and leave a copy on the Desktop", "Group": "Report",
+      "Phases": ["ALL", "OFFLINE", "DETECT"],
+      "Calls": [
+        { "Builtin": "OpenReportAndDesktopCopy", "When": ["Exists:{RunRoot}/report.html"], "SkipText": "No report was produced.",
+          "OnNonZero": "WarnPipe", "NonZeroText": "Could not copy report.html to the current user's Desktop." }
+      ]
+    },
+    {
+      "Id": "9r", "Title": "Rebuild the report with the after-scans persistence check", "Group": "Report",
+      "Phases": ["ONLINE"],
+      "Calls": [
+        { "Script": "New-InvestigationReport.ps1",
+          "Args": ["-FindingsJson", "{FindingsJson}", "{@AfterScansReportArgs}",
+                   "-PersistenceInventory", "{RunRoot}\\after-scans\\persistence\\inventory.json",
+                   "-PersistenceRemoval", "{RunRoot}\\after-scans\\persistence\\removal.json",
+                   "-PersistenceResult", "{RunRoot}\\after-scans\\persistence\\result.json",
+                   "-PowerOptionsRepair", "{RunRoot}\\power-options-repair.json",
+                   "-OutputPath", "{RunRoot}\\report-after-scans.html"],
+          "When": ["Not:ScannerOnly", "Has:FindingsJson", "Exists:{RunRoot}\\after-scans\\persistence\\result.json"],
+          "SkipText": "No after-scans persistence result: the offline report is shared as it is.",
+          "OnNonZero": "Ignore", "After": "MarkAfterScansReport" }
+      ]
+    },
+    {
+      "Id": "9o", "Title": "Share the report", "Group": "Report",
+      "Phases": ["ONLINE"],
+      "Calls": [
+        { "Script": "Submit-ConnectWiseReport.ps1",
+          "Args": ["-FindingsJson", "{FindingsJson}", "-WorkDir", "{RunRoot}", "{@ReportArg}",
+                   "-PersistenceInventory", "{SharePDir}\\inventory.json",
+                   "-PersistenceRemoval", "{SharePDir}\\removal.json",
+                   "-PersistenceResult", "{SharePDir}\\result.json"],
+          "When": ["Not:ScannerOnly", "Has:FindingsJson"],
+          "SkipText": "Nothing to share: scanner-only run, or the offline-half run has no findings.json.",
+          "OnMissing": "WarnPipeSkip", "MissingMessage": "Submit-ConnectWiseReport.ps1 missing - the report was not shared.",
+          "OnNonZero": "WarnPipe", "Retry": true, "NonZeroText": "Report share failed - the local report and evidence remain on this PC.",
+          "After": "MarkShared" }
+      ]
+    },
+    {
+      "Id": "9q", "Title": "Refresh the Desktop copy of the report", "Group": "Report",
+      "Phases": ["ONLINE"],
+      "Calls": [
+        { "Builtin": "DesktopCopyRefresh", "When": ["Flag:Shared", "Exists:{ShareReport}"], "SkipText": "The report was not shared, so the Desktop copy is unchanged.",
+          "OnNonZero": "Warn", "NonZeroText": "Could not refresh the Desktop copy of report.html - the run folder has the updated one." }
+      ]
+    },
+    {
+      "Id": "M", "Title": "Record the phase marker", "Group": "Report",
+      "Phases": ["OFFLINE", "ONLINE"],
+      "Calls": [
+        { "Script": "tools\\Write-PhaseMarker.ps1", "Phases": ["OFFLINE"],
+          "Args": ["-RunRoot", "{RunRoot}", "-Phase", "offline", "-FindingsJson", "{FindingsJson}", "-ExitCode", "{PipeRc}"],
+          "OnNonZero": "Warn", "NonZeroText": "Could not record the offline-half marker - the online half will not find this run by itself." },
+        { "Script": "tools\\Write-PhaseMarker.ps1", "Phases": ["ONLINE"], "When": ["Not:ScannerOnly"],
+          "Args": ["-RunRoot", "{RunRoot}", "-Phase", "online", "-FindingsJson", "{FindingsJson}", "-ExitCode", "{PipeRc}"],
+          "SkipText": "Scanner-only run: no marker.", "OnNonZero": "Warn" }
+      ]
+    }
+  ]
+}

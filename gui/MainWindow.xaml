@@ -1,0 +1,465 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Name="Win" Title="ScreenConnect Cleanup" Width="1120" Height="760" MinWidth="920" MinHeight="640"
+        WindowStartupLocation="CenterScreen" FontFamily="Segoe UI" FontSize="13"
+        UseLayoutRounding="True" SnapsToDevicePixels="True"
+        Background="{DynamicResource Brush.Background}" Foreground="{DynamicResource Brush.Foreground}">
+  <Window.Resources>
+    <!-- ===================================================================================
+         Design tokens. Every colour in this window (and in the parts the script builds in
+         code) comes from these keys; nothing else names a colour. Light is the default; the
+         "Theme.Dark" dictionary holds the same keys and replaces them at start-up when Windows
+         is set to dark apps (or -Theme Dark). Use them only through DynamicResource.
+         Semantic, not literal: Success / Warning / Danger / Info describe a step's state, never
+         a verdict about a relay host.
+         =================================================================================== -->
+    <SolidColorBrush x:Key="Brush.Background" Color="#F3F5F8"/>
+    <SolidColorBrush x:Key="Brush.Surface" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Brush.SurfaceSunken" Color="#EEF1F5"/>
+    <SolidColorBrush x:Key="Brush.SurfaceHover" Color="#E8ECF1"/>
+    <SolidColorBrush x:Key="Brush.Foreground" Color="#17202A"/>
+    <SolidColorBrush x:Key="Brush.Muted" Color="#566271"/>
+    <SolidColorBrush x:Key="Brush.Subtle" Color="#8A95A1"/>
+    <SolidColorBrush x:Key="Brush.Border" Color="#DCE2E9"/>
+    <SolidColorBrush x:Key="Brush.BorderStrong" Color="#C2CBD5"/>
+    <SolidColorBrush x:Key="Brush.Primary" Color="#2457C5"/>
+    <SolidColorBrush x:Key="Brush.PrimaryHover" Color="#1C469F"/>
+    <SolidColorBrush x:Key="Brush.PrimaryForeground" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Brush.PrimarySoft" Color="#EDF2FC"/>
+    <SolidColorBrush x:Key="Brush.Ring" Color="#2457C5"/>
+    <SolidColorBrush x:Key="Brush.DangerSolid" Color="#BF3328"/>
+    <SolidColorBrush x:Key="Brush.DangerSolidHover" Color="#9E281F"/>
+    <SolidColorBrush x:Key="Brush.DangerForeground" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Brush.SuccessFg" Color="#1E6B3A"/>
+    <SolidColorBrush x:Key="Brush.SuccessBg" Color="#E7F5EC"/>
+    <SolidColorBrush x:Key="Brush.SuccessBorder" Color="#8AC69F"/>
+    <SolidColorBrush x:Key="Brush.WarningFg" Color="#865700"/>
+    <SolidColorBrush x:Key="Brush.WarningBg" Color="#FFF4DE"/>
+    <SolidColorBrush x:Key="Brush.WarningBorder" Color="#E3B55B"/>
+    <SolidColorBrush x:Key="Brush.DangerFg" Color="#A3241B"/>
+    <SolidColorBrush x:Key="Brush.DangerBg" Color="#FCEAE8"/>
+    <SolidColorBrush x:Key="Brush.DangerBorder" Color="#E39790"/>
+    <SolidColorBrush x:Key="Brush.InfoFg" Color="#1C4E9E"/>
+    <SolidColorBrush x:Key="Brush.InfoBg" Color="#EAF1FC"/>
+    <SolidColorBrush x:Key="Brush.InfoBorder" Color="#9CBAE9"/>
+    <SolidColorBrush x:Key="Brush.ConsoleBg" Color="#0E151D"/>
+    <SolidColorBrush x:Key="Brush.ConsoleFg" Color="#D2DBE5"/>
+    <SolidColorBrush x:Key="Brush.ConsoleMuted" Color="#7F8C99"/>
+
+    <ResourceDictionary x:Key="Theme.Dark">
+      <SolidColorBrush x:Key="Brush.Background" Color="#0F141A"/>
+      <SolidColorBrush x:Key="Brush.Surface" Color="#171E27"/>
+      <SolidColorBrush x:Key="Brush.SurfaceSunken" Color="#131920"/>
+      <SolidColorBrush x:Key="Brush.SurfaceHover" Color="#202935"/>
+      <SolidColorBrush x:Key="Brush.Foreground" Color="#E5EAF0"/>
+      <SolidColorBrush x:Key="Brush.Muted" Color="#A2ADB9"/>
+      <SolidColorBrush x:Key="Brush.Subtle" Color="#6B7682"/>
+      <SolidColorBrush x:Key="Brush.Border" Color="#29323D"/>
+      <SolidColorBrush x:Key="Brush.BorderStrong" Color="#3A4451"/>
+      <SolidColorBrush x:Key="Brush.Primary" Color="#5D8EEF"/>
+      <SolidColorBrush x:Key="Brush.PrimaryHover" Color="#7CA4F3"/>
+      <SolidColorBrush x:Key="Brush.PrimaryForeground" Color="#0B1220"/>
+      <SolidColorBrush x:Key="Brush.PrimarySoft" Color="#17253C"/>
+      <SolidColorBrush x:Key="Brush.Ring" Color="#7CA4F3"/>
+      <SolidColorBrush x:Key="Brush.DangerSolid" Color="#D6463B"/>
+      <SolidColorBrush x:Key="Brush.DangerSolidHover" Color="#E36259"/>
+      <SolidColorBrush x:Key="Brush.DangerForeground" Color="#FFFFFF"/>
+      <SolidColorBrush x:Key="Brush.SuccessFg" Color="#6FCB95"/>
+      <SolidColorBrush x:Key="Brush.SuccessBg" Color="#12261A"/>
+      <SolidColorBrush x:Key="Brush.SuccessBorder" Color="#2D6A45"/>
+      <SolidColorBrush x:Key="Brush.WarningFg" Color="#F0C26A"/>
+      <SolidColorBrush x:Key="Brush.WarningBg" Color="#2A2211"/>
+      <SolidColorBrush x:Key="Brush.WarningBorder" Color="#6A521F"/>
+      <SolidColorBrush x:Key="Brush.DangerFg" Color="#F08A80"/>
+      <SolidColorBrush x:Key="Brush.DangerBg" Color="#2D1513"/>
+      <SolidColorBrush x:Key="Brush.DangerBorder" Color="#78342E"/>
+      <SolidColorBrush x:Key="Brush.InfoFg" Color="#8FB3F5"/>
+      <SolidColorBrush x:Key="Brush.InfoBg" Color="#152238"/>
+      <SolidColorBrush x:Key="Brush.InfoBorder" Color="#334F7E"/>
+      <SolidColorBrush x:Key="Brush.ConsoleBg" Color="#0A0F14"/>
+      <SolidColorBrush x:Key="Brush.ConsoleFg" Color="#D2DBE5"/>
+      <SolidColorBrush x:Key="Brush.ConsoleMuted" Color="#6F7C89"/>
+      <SolidColorBrush x:Key="{x:Static SystemColors.ControlBrushKey}" Color="#0A0F14"/>
+    </ResourceDictionary>
+
+    <!-- Radius and spacing tokens -->
+    <CornerRadius x:Key="Radius.Control">6</CornerRadius>
+    <CornerRadius x:Key="Radius.Card">10</CornerRadius>
+    <Thickness x:Key="Space.Card">16,14,16,14</Thickness>
+
+    <!-- ===================================================================================
+         Components
+         =================================================================================== -->
+    <Style x:Key="Card" TargetType="Border">
+      <Setter Property="Background" Value="{DynamicResource Brush.Surface}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="{StaticResource Radius.Card}"/>
+      <Setter Property="Padding" Value="{StaticResource Space.Card}"/>
+    </Style>
+
+    <Style x:Key="Text.Heading" TargetType="TextBlock">
+      <Setter Property="FontSize" Value="16"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Foreground" Value="{DynamicResource Brush.Foreground}"/>
+    </Style>
+    <Style x:Key="Text.Muted" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Brush.Muted}"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+    <Style x:Key="Text.Overline" TargetType="TextBlock">
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Foreground" Value="{DynamicResource Brush.Subtle}"/>
+    </Style>
+
+    <!-- Buttons: one template, variants differ only in their tokens. -->
+    <Style x:Key="Button.Base" TargetType="Button">
+      <Setter Property="Foreground" Value="{DynamicResource Brush.Foreground}"/>
+      <Setter Property="Background" Value="{DynamicResource Brush.Surface}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderStrong}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="14,7"/>
+      <Setter Property="Margin" Value="0,0,8,0"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Grid>
+              <Border Name="FocusRing" CornerRadius="8" Margin="-3" BorderThickness="2" BorderBrush="{DynamicResource Brush.Ring}" Visibility="Collapsed"/>
+              <Border Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                      BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{StaticResource Radius.Control}"
+                      Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True"/>
+              </Border>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="FocusRing" Property="Visibility" Value="Visible"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Bd" Property="Opacity" Value="0.85"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="Bd" Property="Opacity" Value="0.45"/>
+                <Setter Property="Cursor" Value="Arrow"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+      <Style.Triggers>
+        <Trigger Property="IsMouseOver" Value="True">
+          <Setter Property="Background" Value="{DynamicResource Brush.SurfaceHover}"/>
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+    <Style x:Key="Button.Secondary" TargetType="Button" BasedOn="{StaticResource Button.Base}"/>
+    <Style x:Key="Button.Primary" TargetType="Button" BasedOn="{StaticResource Button.Base}">
+      <Setter Property="Background" Value="{DynamicResource Brush.Primary}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource Brush.Primary}"/>
+      <Setter Property="Foreground" Value="{DynamicResource Brush.PrimaryForeground}"/>
+      <Setter Property="Padding" Value="20,9"/>
+      <Style.Triggers>
+        <Trigger Property="IsMouseOver" Value="True">
+          <Setter Property="Background" Value="{DynamicResource Brush.PrimaryHover}"/>
+          <Setter Property="BorderBrush" Value="{DynamicResource Brush.PrimaryHover}"/>
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+    <Style x:Key="Button.Danger" TargetType="Button" BasedOn="{StaticResource Button.Base}">
+      <Setter Property="Background" Value="{DynamicResource Brush.DangerSolid}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource Brush.DangerSolid}"/>
+      <Setter Property="Foreground" Value="{DynamicResource Brush.DangerForeground}"/>
+      <Style.Triggers>
+        <Trigger Property="IsMouseOver" Value="True">
+          <Setter Property="Background" Value="{DynamicResource Brush.DangerSolidHover}"/>
+          <Setter Property="BorderBrush" Value="{DynamicResource Brush.DangerSolidHover}"/>
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+    <Style x:Key="Button.Ghost" TargetType="Button" BasedOn="{StaticResource Button.Base}">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderBrush" Value="Transparent"/>
+      <Setter Property="Foreground" Value="{DynamicResource Brush.Muted}"/>
+      <Setter Property="Padding" Value="10,5"/>
+      <Setter Property="Margin" Value="0"/>
+    </Style>
+
+    <!-- A mode is a whole selectable card: title + description, a radio dot, a clear selected state. -->
+    <Style x:Key="ModeCard" TargetType="RadioButton">
+      <Setter Property="Margin" Value="0,0,0,10"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Foreground" Value="{DynamicResource Brush.Foreground}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="RadioButton">
+            <Border Name="Card" Background="{DynamicResource Brush.Surface}" BorderBrush="{DynamicResource Brush.Border}"
+                    BorderThickness="1" CornerRadius="{StaticResource Radius.Card}" Padding="16,13">
+              <DockPanel>
+                <Grid DockPanel.Dock="Left" Width="18" Height="18" Margin="0,1,14,0" VerticalAlignment="Top">
+                  <Ellipse Name="Ring" Stroke="{DynamicResource Brush.BorderStrong}" StrokeThickness="1.5" Fill="{DynamicResource Brush.Surface}"/>
+                  <Ellipse Name="Dot" Width="8" Height="8" Fill="{DynamicResource Brush.Primary}" Visibility="Collapsed"/>
+                </Grid>
+                <ContentPresenter/>
+              </DockPanel>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Card" Property="BorderBrush" Value="{DynamicResource Brush.BorderStrong}"/>
+              </Trigger>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="Card" Property="BorderBrush" Value="{DynamicResource Brush.Primary}"/>
+                <Setter TargetName="Card" Property="Background" Value="{DynamicResource Brush.PrimarySoft}"/>
+                <Setter TargetName="Ring" Property="Stroke" Value="{DynamicResource Brush.Primary}"/>
+                <Setter TargetName="Dot" Property="Visibility" Value="Visible"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="Card" Property="BorderThickness" Value="2"/>
+                <Setter TargetName="Card" Property="BorderBrush" Value="{DynamicResource Brush.Ring}"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style TargetType="ProgressBar">
+      <Setter Property="Height" Value="4"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Background" Value="{DynamicResource Brush.SurfaceSunken}"/>
+      <Setter Property="Foreground" Value="{DynamicResource Brush.Primary}"/>
+    </Style>
+    <Style TargetType="ScrollViewer">
+      <Setter Property="Background" Value="Transparent"/>
+    </Style>
+    <!-- The square where two scrollbars meet takes this system brush; only the console shows both. -->
+    <SolidColorBrush x:Key="{x:Static SystemColors.ControlBrushKey}" Color="#0E151D"/>
+
+    <!-- Thin, rounded scrollbars in the token colours (the Windows default stays light in dark mode). -->
+    <Style x:Key="ScrollThumb" TargetType="Thumb">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Thumb">
+            <Border Name="T" CornerRadius="4" Margin="2" Background="{DynamicResource Brush.BorderStrong}"/>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="T" Property="Background" Value="{DynamicResource Brush.Subtle}"/>
+              </Trigger>
+              <Trigger Property="IsDragging" Value="True">
+                <Setter TargetName="T" Property="Background" Value="{DynamicResource Brush.Muted}"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style TargetType="ScrollBar">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Width" Value="10"/>
+      <Setter Property="MinWidth" Value="10"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ScrollBar">
+            <Track Name="PART_Track" IsDirectionReversed="True">
+              <Track.Thumb>
+                <Thumb Style="{StaticResource ScrollThumb}"/>
+              </Track.Thumb>
+            </Track>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+      <Style.Triggers>
+        <Trigger Property="Orientation" Value="Horizontal">
+          <Setter Property="Width" Value="Auto"/>
+          <Setter Property="MinWidth" Value="0"/>
+          <Setter Property="Height" Value="10"/>
+          <Setter Property="MinHeight" Value="10"/>
+          <Setter Property="Template">
+            <Setter.Value>
+              <ControlTemplate TargetType="ScrollBar">
+                <Track Name="PART_Track">
+                  <Track.Thumb>
+                    <Thumb Style="{StaticResource ScrollThumb}"/>
+                  </Track.Thumb>
+                </Track>
+              </ControlTemplate>
+            </Setter.Value>
+          </Setter>
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+  </Window.Resources>
+
+  <Grid x:Name="RootGrid" Margin="16,16,16,8">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="10"/>
+      <!-- The console row and the step-list column are named: the script narrows them on small or
+           heavily scaled screens (compact layout). -->
+      <RowDefinition x:Name="RowConsole" Height="170" MinHeight="70"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <!-- header -->
+    <Border x:Name="HeaderCard" Grid.Row="0" Style="{StaticResource Card}" Margin="0,0,0,12" Padding="18,12">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <StackPanel Grid.Column="0">
+          <TextBlock x:Name="TitleText" FontSize="19" FontWeight="SemiBold" Text="ScreenConnect Cleanup"/>
+          <TextBlock x:Name="InfoText" Style="{StaticResource Text.Muted}" Margin="0,3,0,0" Text=""/>
+          <TextBlock x:Name="RunText" Style="{StaticResource Text.Muted}" Margin="0,2,0,0" Text="Run folder: none yet" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+        </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button x:Name="BtnOpenRitRoot" Style="{StaticResource Button.Secondary}" Margin="0" Content="Open RIT-SCC folder" IsEnabled="False"
+                  ToolTip="Every run's folder lives here (C:\RIT-SCC)" ToolTipService.ShowOnDisabled="True" ToolTipService.ShowDuration="20000"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- middle: stepper | panel -->
+    <Grid Grid.Row="1">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition x:Name="ColStepper" Width="268"/>
+        <ColumnDefinition Width="14"/>
+        <ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+
+      <Border Grid.Column="0" Style="{StaticResource Card}" Padding="10,12">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Style="{StaticResource Text.Overline}" Margin="6,0,0,8" Text="STEPS"/>
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="StepperHost"/>
+          </ScrollViewer>
+        </DockPanel>
+      </Border>
+
+      <Grid Grid.Column="2">
+        <!-- start panel: the offline / online toggle -->
+        <ScrollViewer x:Name="StartPanel" VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="2,2,6,2">
+            <TextBlock Style="{StaticResource Text.Heading}" FontSize="18" Text="Which part do you want to run?"/>
+            <TextBlock Style="{StaticResource Text.Muted}" Margin="0,6,0,14"
+                       Text="This window runs the same steps as START-HERE.bat, one at a time, and asks you the same questions. Removal always needs your own confirmation."/>
+
+            <RadioButton x:Name="RbOffline" GroupName="Mode" IsChecked="True" Style="{StaticResource ModeCard}">
+              <StackPanel>
+                <TextBlock FontSize="14" FontWeight="SemiBold" Text="Offline - cleanup, no internet needed"/>
+                <TextBlock Style="{StaticResource Text.Muted}" Margin="0,3,0,0"
+                           Text="Preflight, before snapshot, detection, removal (you choose what to keep, then confirm), persistence review, after snapshot and diff, local report. Downloads and uploads nothing."/>
+              </StackPanel>
+            </RadioButton>
+            <RadioButton x:Name="RbOnline" GroupName="Mode" Style="{StaticResource ModeCard}">
+              <StackPanel>
+                <TextBlock FontSize="14" FontWeight="SemiBold" Text="Online - scanners and sharing (needs internet)"/>
+                <TextBlock Style="{StaticResource Text.Muted}" Margin="0,3,0,0"
+                           Text="Downloads the scanners, runs KVRT, ESET and Malwarebytes, checks persistence again, optional antivirus uninstall, shares the report. Continues the offline run for this PC when there is one."/>
+              </StackPanel>
+            </RadioButton>
+            <RadioButton x:Name="RbDetect" GroupName="Mode" Style="{StaticResource ModeCard}">
+              <StackPanel>
+                <TextBlock FontSize="14" FontWeight="SemiBold" Text="Detect only - nothing is changed"/>
+                <TextBlock Style="{StaticResource Text.Muted}" Margin="0,3,0,0"
+                           Text="Preflight, before snapshot, detection and the report. Nothing is removed, quarantined or uninstalled."/>
+              </StackPanel>
+            </RadioButton>
+            <RadioButton x:Name="RbStage" GroupName="Mode" Style="{StaticResource ModeCard}">
+              <StackPanel>
+                <TextBlock FontSize="14" FontWeight="SemiBold" Text="Stage tools only - download for later (needs internet)"/>
+                <TextBlock Style="{StaticResource Text.Muted}" Margin="0,3,0,0"
+                           Text="Downloads the tool pack and the scanners into this folder, so the offline half can run on a PC with no connection. No run folder is created."/>
+              </StackPanel>
+            </RadioButton>
+
+            <Button x:Name="BtnStart" Style="{StaticResource Button.Primary}" Margin="0,6,0,0" Content="Start" HorizontalAlignment="Left" MinWidth="120"/>
+            <TextBlock x:Name="PriorRunsText" Style="{StaticResource Text.Muted}" FontSize="12" Margin="0,16,0,0" Text=""/>
+          </StackPanel>
+        </ScrollViewer>
+
+        <!-- run panel -->
+        <Grid x:Name="RunPanel" Visibility="Collapsed">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <Border x:Name="StatusCard" Grid.Row="0" Style="{StaticResource Card}" Padding="16,12">
+            <StackPanel>
+              <TextBlock x:Name="StatusTitle" Style="{StaticResource Text.Heading}" Text=""/>
+              <TextBlock x:Name="StatusDetail" Margin="0,3,0,8" Text="">
+                <TextBlock.Style>
+                  <Style TargetType="TextBlock" BasedOn="{StaticResource Text.Muted}">
+                    <Style.Triggers>
+                      <!-- An empty status line takes no room (matters on short screens). -->
+                      <Trigger Property="Text" Value="">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                      </Trigger>
+                    </Style.Triggers>
+                  </Style>
+                </TextBlock.Style>
+              </TextBlock>
+              <ProgressBar x:Name="Busy" IsIndeterminate="False" Minimum="0" Maximum="1" Value="0"/>
+            </StackPanel>
+          </Border>
+          <Border x:Name="Banner" Grid.Row="1" Margin="0,10,0,0" Padding="14,10" BorderThickness="1" CornerRadius="{StaticResource Radius.Card}"
+                  BorderBrush="{DynamicResource Brush.Border}" Background="{DynamicResource Brush.SurfaceSunken}" Visibility="Collapsed">
+            <TextBlock x:Name="BannerText" TextWrapping="Wrap" Text=""/>
+          </Border>
+          <Border x:Name="ReviewBar" Grid.Row="2" Margin="0,10,0,0" Style="{StaticResource Card}" Padding="14,10"
+                  BorderBrush="{DynamicResource Brush.Primary}" Background="{DynamicResource Brush.PrimarySoft}" Visibility="Collapsed">
+            <DockPanel>
+              <Button x:Name="BtnReviewContinue" DockPanel.Dock="Right" Style="{StaticResource Button.Primary}" Content="Continue" Margin="12,0,0,0"/>
+              <TextBlock x:Name="ReviewSummary" TextWrapping="Wrap" VerticalAlignment="Center" FontWeight="SemiBold" Text=""/>
+            </DockPanel>
+          </Border>
+          <ScrollViewer Grid.Row="3" Margin="0,10,0,0" VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="CardsHost" Margin="0,0,6,0"/>
+          </ScrollViewer>
+          <WrapPanel Grid.Row="4" Margin="0,10,0,0">
+            <Button x:Name="BtnOpenReport" Style="{StaticResource Button.Secondary}" Content="Open report" IsEnabled="False"/>
+            <Button x:Name="BtnOpenRun" Style="{StaticResource Button.Secondary}" Content="Open run folder" IsEnabled="False"/>
+            <Button x:Name="BtnRestart" Style="{StaticResource Button.Secondary}" Content="Restart this PC..." Visibility="Collapsed"/>
+            <Button x:Name="BtnNewRun" Style="{StaticResource Button.Secondary}" Content="Start over" Visibility="Collapsed"/>
+          </WrapPanel>
+        </Grid>
+      </Grid>
+    </Grid>
+
+    <GridSplitter Grid.Row="2" HorizontalAlignment="Stretch" VerticalAlignment="Center" Height="4" Background="Transparent" Cursor="SizeNS"/>
+
+    <!-- console -->
+    <Border Grid.Row="3" Background="{DynamicResource Brush.ConsoleBg}" CornerRadius="{StaticResource Radius.Card}" Padding="12,8,12,10">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <DockPanel Grid.Row="0" Margin="2,0,0,6">
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+            <Button x:Name="BtnCopy" Style="{StaticResource Button.Ghost}" Foreground="{DynamicResource Brush.ConsoleMuted}" Content="Copy"/>
+            <Button x:Name="BtnOpenLog" Style="{StaticResource Button.Ghost}" Foreground="{DynamicResource Brush.ConsoleMuted}" Content="Open log" IsEnabled="False"/>
+          </StackPanel>
+          <TextBlock FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Brush.ConsoleMuted}" VerticalAlignment="Center" Text="CONSOLE OUTPUT (LIVE)"/>
+        </DockPanel>
+        <TextBox x:Name="ConsoleBox" Grid.Row="1" IsReadOnly="True" FontFamily="Consolas" FontSize="12"
+                 Background="Transparent" Foreground="{DynamicResource Brush.ConsoleFg}" BorderThickness="0" Padding="0"
+                 CaretBrush="{DynamicResource Brush.ConsoleFg}" SelectionBrush="{DynamicResource Brush.Primary}"
+                 TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
+      </Grid>
+    </Border>
+
+    <!-- footer -->
+    <TextBlock Grid.Row="4" HorizontalAlignment="Center" Margin="0,8,0,0" FontSize="11.5" Foreground="{DynamicResource Brush.Subtle}">
+      <Run Text="Brought to you by "/><Hyperlink x:Name="LinkRubinIt" NavigateUri="https://rubinit.net" Foreground="{DynamicResource Brush.Primary}">Rubinit.net</Hyperlink><Run Text=" in conjunction with "/><Hyperlink x:Name="LinkPupontech" NavigateUri="https://pupontech.com" Foreground="{DynamicResource Brush.Primary}">pupontech.com</Hyperlink>
+    </TextBlock>
+  </Grid>
+</Window>
