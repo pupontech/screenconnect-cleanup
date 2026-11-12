@@ -6,27 +6,7 @@ calls home to** (the only reliable way to tell the scammer's copy from the custo
 the ones you choose, checks what else was left behind to start up with Windows, runs the AV scanners,
 and writes a report.
 
-> **Beta.** The window (`START-HERE-GUI.bat`) is the main way to run it since `v1.8.12-gui-beta.1`.
-> It runs the same scripts as the console launchers, which remain available. A full removal through
-> the window has not yet been run on a real infected PC; see [What is not verified yet](#what-is-not-verified-yet).
-> The project was written with AI assistance; read what it is about to do before you approve it.
-
 ---
-
-## Get it
-
-**Download:** the latest release zip from
-[Releases](https://github.com/pupontech/screenconnect-cleanup/releases/latest), check it against the
-`.sha256` next to it, and **extract the whole zip**. You get:
-
-```
-screenconnect-cleanup\
-  START-HERE-GUI.bat     <- double-click this
-  files\                 <- everything else (do not separate it from the launcher)
-```
-
-**Or one line in PowerShell** (downloads the latest release to `Desktop\ScreenConnect-Cleanup\<version>\`,
-checks its SHA-256 and opens the window):
 
 ```powershell
 irm https://raw.githubusercontent.com/pupontech/screenconnect-cleanup/main/install-latest.ps1 | iex
@@ -144,31 +124,3 @@ Everything in the window is also available without it, in `files\`:
 
 Use them if the window will not open on a PC. How the two halves hand over and how they differ from
 the full run: [OFFLINE-ONLINE-SPLIT.md](OFFLINE-ONLINE-SPLIT.md).
-
----
-
-## What is not verified yet
-
-The window is tested on Windows 11 with stub scripts in place of the destructive parts; the scanner
-downloads and the report upload were also run for real. **Not yet done on a real PC:** a full removal of a real
-ScreenConnect through the window, Windows 10, a PC with the UTF-8 system locale, a real 125% / 150%
-scaled laptop, UAC turned off. The list and how to test it:
-[docs/14-gui-architecture.md, section 12.4](docs/14-gui-architecture.md).
-
-If something goes wrong, send the run folder from `C:\RIT-SCC` (or just its `logs\` and `detect\raw\`).
-
----
-
-## More
-
-| Document | For |
-|---|---|
-| [DEPLOY.md](DEPLOY.md) | What is in the package, requirements, building a release |
-| [OFFLINE-ONLINE-SPLIT.md](OFFLINE-ONLINE-SPLIT.md) | The two halves in detail, keeping instances in the console |
-| [docs/14-gui-architecture.md](docs/14-gui-architecture.md) | How the window drives the scripts, its tests |
-| [docs/12-post-av-persistence.md](docs/12-post-av-persistence.md) | The startup-item (persistence) review |
-| [docs/06-safety-model.md](docs/06-safety-model.md) | Why removal is gated the way it is |
-| [CHANGELOG.md](CHANGELOG.md) | Every release |
-
-**Developers:** PowerShell 5.1, pure ASCII, no BOM in every script (`tests/ci/Test-HouseRules.ps1`).
-GUI tests are in `tests/gui/`; the window must never gain removal logic of its own.
