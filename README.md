@@ -87,21 +87,6 @@ RustDesk...), or a name you do not recognise. Compare with the flagged list. Sta
 remove are removed only when you select them and type `REMOVE`; services and the rest you deal with
 by hand.
 
-### What you are asked, and what happens if you close the box
-
-| Question | Default |
-|---|---|
-| Keep or remove each ScreenConnect instance | Remove, then typed `REMOVE` |
-| Remove flagged startup items (scheduled tasks, Run keys, startup files) | nothing selected; typed `REMOVE` |
-| Open the review windows (evidence folders, Services, Task Scheduler) | No (but say Yes, see above) |
-| Repair power options | asks |
-| Which scanners to run (Online) | asks |
-| Uninstall other antivirus products (Online) | No |
-
-**Closing any question box always means no.** While a removal, AV uninstall or power repair is
-running, the window cannot be closed. Closing the window during a scan stops the step but leaves the
-scanner open.
-
 ---
 
 ## What you get
