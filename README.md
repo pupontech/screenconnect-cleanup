@@ -1,10 +1,14 @@
 # ScreenConnect Cleanup
 
-A Windows technician tool for PCs where someone got remote access they should not have, usually
-after a tech-support scam. It finds every ScreenConnect instance, shows **which relay server each one
-calls home to** (the only reliable way to tell the scammer's copy from the customer's own IT), removes
-the ones you choose, checks what else was left behind to start up with Windows, runs the AV scanners,
-and writes a report.
+A Windows technician tool for PCs where a scammer got remote access through ScreenConnect. It usually
+gets there from an **invite email the user clicked** (a fake invoice, meeting or "document shared with
+you"), which installs ScreenConnect connected to the scammer's server.
+
+**Antivirus will not catch it.** ScreenConnect is a legitimate, signed program that IT companies use
+every day, so no AV treats it as a virus. This tool finds every ScreenConnect instance, shows **which
+relay server each one calls home to** (the only reliable way to tell the scammer's copy from the
+customer's own IT), removes the ones you choose, checks what else was left behind to start up with
+Windows, runs the AV scanners for any other malware, and writes a report.
 
 ---
 
@@ -51,12 +55,37 @@ matters: a host you do not recognise is the scammer's.
 
    ![Removal confirmation: lists REMOVE and KEEP per instance, needs REMOVE typed](docs/images/gui-confirm-remove.png)
 
-3. Read the report. It opens by itself and a copy is left on the Desktop.
-4. **Reconnect** and run **Online**. Say yes to continuing the offline run; run the scanners you want.
+3. When asked to open the review windows, say **Yes** and go through them (see below).
+4. Read the report. It opens by itself and a copy is left on the Desktop.
+5. **Reconnect** and run **Online**. Say yes to continuing the offline run; run the scanners you want.
    The sanitized report is shared at the end and the link appears in the window and in the report.
 
 A PC that must stay offline: run only **Offline**. Everything stays in `C:\RIT-SCC\<PC>-<id>\` and
 nothing is shared.
+
+### The review windows: go through them
+
+Removing ScreenConnect is not always the end of it. Once a scammer is on a PC they often leave a way
+back in: a scheduled task, a service, a Run key or a file in a startup folder that reinstalls the
+remote tool or runs something else at every boot. The tool scans for these, but its matches are
+guesses, and the most dangerous kinds (**services, WMI subscriptions, hidden tasks, Winlogon
+settings**) are only reported, never removed automatically, because removing the wrong one can break
+Windows. That part needs a person.
+
+So near the end of the Offline run the tool offers to open, side by side:
+
+- **Services** and **Task Scheduler**
+- the scheduled-task folder on disk and every **startup folder** it looked at
+- the run's evidence folder (with the exported task definitions) and the quarantine folder
+
+It also prints a list of everything it flagged: what it is, the command it runs, why it was flagged,
+where to find it, and whether it is review-only. Opening the windows changes nothing.
+
+**What to look for:** anything installed or created around the time of the incident, anything that
+runs from a user's `AppData` or `Temp` folder, another remote-access tool (AnyDesk, TeamViewer,
+RustDesk...), or a name you do not recognise. Compare with the flagged list. Startup items the tool can
+remove are removed only when you select them and type `REMOVE`; services and the rest you deal with
+by hand.
 
 ### What you are asked, and what happens if you close the box
 
@@ -64,7 +93,7 @@ nothing is shared.
 |---|---|
 | Keep or remove each ScreenConnect instance | Remove, then typed `REMOVE` |
 | Remove flagged startup items (scheduled tasks, Run keys, startup files) | nothing selected; typed `REMOVE` |
-| Open the review windows (evidence folders, Services, Task Scheduler) | No |
+| Open the review windows (evidence folders, Services, Task Scheduler) | No (but say Yes, see above) |
 | Repair power options | asks |
 | Which scanners to run (Online) | asks |
 | Uninstall other antivirus products (Online) | No |
@@ -98,8 +127,8 @@ Detect only never upload anything.
 
 ## Why relay host, and what it does not do
 
-ScreenConnect is legitimate signed software: signature, publisher and hash are the same whether it
-belongs to the customer's IT or to the scammer, and no antivirus will flag it. What differs is the
+Signature, publisher and file hash are the same whether ScreenConnect belongs to the customer's IT or
+to the scammer. What differs is the
 **relay server** each instance is configured to call, so the tool reads that from every instance and
 puts it first.
 
