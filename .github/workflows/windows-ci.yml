@@ -317,7 +317,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $extract = Join-Path $env:RUNNER_TEMP ('scc-package-' + [guid]::NewGuid().ToString('N'))
           Expand-Archive -LiteralPath $zip -DestinationPath $extract
-          $package = Join-Path $extract 'screenconnect-cleanup'
+          # Since 1.8.12-gui-alpha.3 the zip holds START-HERE-GUI.bat at the top and every script in files\.
+          $package = Join-Path (Join-Path $extract 'screenconnect-cleanup') 'files'
           New-Item -ItemType Directory -Path (Join-Path $package 'tests') | Out-Null
           foreach ($test in @('test_persistence_inventory.ps1', 'test_persistence_removal.ps1', 'test_persistence_report.ps1', 'test_persistence_workflow.ps1', 'test_persistence_output_safety.ps1', 'test_persistence_native_fileinfo.ps1', 'test_persistence_watchdog.ps1', 'test_persistence_review.ps1', 'test_persistence_progress_throughput.ps1', 'test_persistence_overlapping_roots.ps1', 'test_persistence_review_safety.ps1', 'test_after_snapshot_failure_reporting.ps1', 'test_report_av_error_escaping.ps1', 'test_snapshot_section_shapes.ps1', 'test_audit_fixes.ps1', 'test_bootstrap_session.ps1', 'test_resume_materials_trust.ps1', 'test_auto_enable_restore_point.ps1', 'test_power_options_repair_core.ps1', 'test_power_options_repair_entry.ps1', 'test_power_options_repair_report.ps1', 'test_power_options_repair_runner.ps1', 'test_power_options_repair_windows.ps1', 'test_power_options_repair_paths.ps1', 'test_power_options_repair_workflow.ps1')) {
             $copied = Join-Path (Join-Path $package 'tests') $test
