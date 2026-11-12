@@ -318,6 +318,8 @@ if ($true) {
     if (-not $outcomeRows) { $outcomeRows = '<tr><td colspan="5">No removal outcomes recorded (not run, missing, or no actions).</td></tr>' }
     $errorItems = ''
     foreach ($err in (Get-Items (Get-Prop $inventoryData 'Errors'))) { $errorItems += "<li>Inventory: $(Fmt $err)</li>`n" }
+    # Schema 2: coverage notes from the review-only AutoHotkey/UAC indicator scans.
+    foreach ($note in (Get-Items (Get-Prop $inventoryData 'Warnings'))) { $errorItems += "<li>Indicator scan note: $(Fmt $note)</li>`n" }
     foreach ($err in (Get-Items (Get-Prop $removalData 'Errors'))) { $errorItems += "<li>Removal: $(Fmt $err)</li>`n" }
     foreach ($err in (Get-Items (Get-Prop $resultData 'Errors'))) { $errorItems += "<li>Stage: $(Fmt $err)</li>`n" }
     foreach ($err in $persistenceLoadErrors) { $errorItems += "<li>$(Fmt $err)</li>`n" }

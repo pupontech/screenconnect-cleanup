@@ -137,6 +137,32 @@ not collected. Offline user hives are not mounted from their original
 `NTUSER.DAT`; unavailable profile evidence remains a reported coverage gap.
 Bounded script inventories are not exhaustive forensic disk imaging.
 
+## Tampering indicators: AutoHotkey and UAC (schema 2, 1.8.13-ahk-removal-testing.1)
+
+Four extra inventory sections, all **review only**. None of their finding kinds
+(`UacPolicy`, `UacBypassHijack`, `AutoHotkey`, `AutoHotkeyAutostart`,
+`ScreenConnectOutsideInstall`) is accepted by `Persistence.Removal.psm1`.
+
+| Section | Reads | Flags |
+|---|---|---|
+| `UacPolicy` | `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System` | `EnableLUA=0`, `ConsentPromptBehaviorAdmin=0`, `PromptOnSecureDesktop=0`, `LocalAccountTokenFilterPolicy=1` |
+| `UacBypassKeys` | each loaded user hive | `ms-settings`, `mscfile`, `exefile`, `Folder`, `Launcher.SystemSettings` `shell\open\command` keys; `Environment\windir` / `systemroot` |
+| `UserWritableBinaries` | bounded walk of user-writable folders | AutoHotkey interpreters, `.ahk`/`.ah2`, compiled AutoHotkey EXEs, ScreenConnect binaries outside Program Files |
+| `AutoHotkeyAutostart` | rows already collected (Run keys, startup, tasks, services) | anything that starts AutoHotkey or a flagged compiled AutoHotkey file |
+
+Limits and known gaps:
+- The walk is capped at 20 s and 3000 candidate files, and EXEs over 2 MB are not
+  byte-scanned. Roots are walked highest-value first (Downloads, Desktop, Temp,
+  Public, Windows\Temp; then Roaming, ProgramData; then `Local\Programs`; the top of
+  `AppData\Local` last), each with a fair share of the remaining time. A live probe
+  on a developer PC found ~53,000 folders directly under `AppData\Local`, which is why
+  only its top level is walked. Deeper trees are a known gap.
+- Coverage gaps mark the section `Incomplete` and are listed in `inventory.json`
+  `Warnings` (schema 2), not `Errors`: a lead scan never flips the stage status.
+- UAC values may be set on purpose by Group Policy or an RMM tool; confirm before
+  changing anything. The tool never changes them and never exercises a bypass.
+- AutoHotkey is a legitimate tool. A hit is a lead, not a verdict.
+
 ## Owner test checklist
 
 Extract the entire versioned ZIP into a new folder; do not overlay an older

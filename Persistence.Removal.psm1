@@ -134,7 +134,7 @@ function Invoke-SccPersistenceReview {
     else {
         $findings=@($Inventory.Findings)
         $expectedRunId=Split-Path -Leaf (Split-Path -Parent $OutDir)
-        if ([int]$Inventory.SchemaVersion -ne 1 -or -not [string]::Equals([string]$Inventory.RunId,$expectedRunId,[StringComparison]::OrdinalIgnoreCase)) { $fatal=$true; [void]$errors.Add('Inventory run identity does not match the current persistence output directory.') }
+        if ([int]$Inventory.SchemaVersion -ne 2 -or -not [string]::Equals([string]$Inventory.RunId,$expectedRunId,[StringComparison]::OrdinalIgnoreCase)) { $fatal=$true; [void]$errors.Add('Inventory run identity does not match the current persistence output directory.') }
         if([string]$Inventory.Status -cnotin @('Complete','Incomplete')){$fatal=$true;[void]$errors.Add('Unsupported or malformed inventory cannot authorize cleanup.')}
     }
     $ids=@{}

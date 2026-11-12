@@ -109,7 +109,7 @@ try {
         $public=Get-SccPersistenceInventory -OutDir $out
         if($public.Status -ne 'Incomplete' -or $public.RunId -ne 'public-run'){throw 'public inventory lost incomplete coverage or run identity'}
         $saved=[IO.File]::ReadAllText((Join-Path $out 'inventory.json')) | ConvertFrom-Json
-        if($saved.SchemaVersion -ne 1 -or $saved.Findings -isnot [array] -or $saved.Errors -isnot [array]){throw 'public inventory JSON did not preserve array/schema shapes'}
+        if($saved.SchemaVersion -ne 2 -or $saved.Warnings -isnot [array] -or $saved.Findings -isnot [array] -or $saved.Errors -isnot [array]){throw 'public inventory JSON did not preserve array/schema shapes'}
         if(@($saved.Findings | Where-Object Kind -eq 'HiddenTask').Count -ne 1){throw 'hidden task review-only finding did not reach public inventory'}
         if(@($saved.Findings | Where-Object Kind -eq 'ScheduledTask').Count -ne 1){throw 'task helper findings did not reach public inventory'}
         if(@($saved.Findings | Where-Object Kind -eq 'StartupFile').Count -ne 1){throw 'startup helper findings did not reach public inventory'}

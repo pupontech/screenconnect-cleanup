@@ -12,7 +12,7 @@ function New-Row([string]$Kind,[string]$Target,$Details,[bool]$ReviewOnly=$false
     return [pscustomobject]@{Id=$id;Kind=$Kind;Target=$Target;Command='fixture command';Reason='synthetic test';ReviewOnly=$ReviewOnly;Details=$Details}
 }
 function New-Inventory($Rows) {
-    return [pscustomobject]@{SchemaVersion=1;Status='Complete';RunId=(Split-Path -Leaf $root);Findings=@($Rows);Sections=[pscustomobject]@{
+    return [pscustomobject]@{SchemaVersion=2;Status='Complete';RunId=(Split-Path -Leaf $root);Findings=@($Rows);Sections=[pscustomobject]@{
         ScheduledTasks=[pscustomobject]@{Status='Complete';Errors=@()}
         TaskXml=[pscustomobject]@{Status='Complete';Errors=@()}
         RunKeys=[pscustomobject]@{Status='Complete';Errors=@()}

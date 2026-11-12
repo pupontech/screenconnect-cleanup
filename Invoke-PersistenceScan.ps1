@@ -196,11 +196,22 @@ if ($WhatIf) {
                 if($sectionState -and $sectionState -ne 'Complete'){Write-Host ('[Persistence] Section '+$sectionName+': '+$sectionState)}
             }
         }
+        # Schema 2: coverage notes from the review-only indicator scans (AutoHotkey,
+        # UAC). Shown, recorded in inventory.json, never fatal to the stage.
+        $warningProperty=$inventoryObject.PSObject.Properties['Warnings']
+        if($warningProperty) {
+            $shownWarnings=0
+            foreach($entry in @($warningProperty.Value)) {
+                if($null -eq $entry){continue}
+                if($shownWarnings -ge 8){Write-Host '[Persistence] ... further indicator notes are in inventory.json';break}
+                Write-Host ('[Persistence] Note: '+[string]$entry);$shownWarnings++
+            }
+        }
     } catch {
         $inventoryStatus='Incomplete'; $overallStatus='Incomplete'
         [void]$ErrorList.Add('Inventory collection failed: '+$_.Exception.Message)
         Write-Host ('[Persistence] Collection failed: '+$_.Exception.Message)
-        try { Write-JsonArtifact -Path $inventoryPath -Object ([pscustomobject]@{SchemaVersion=1;Status='Incomplete';Errors=@($ErrorList);Findings=@();Sections=[pscustomobject]@{}}) }
+        try { Write-JsonArtifact -Path $inventoryPath -Object ([pscustomobject]@{SchemaVersion=2;Status='Incomplete';Errors=@($ErrorList);Warnings=@();Findings=@();Sections=[pscustomobject]@{}}) }
         catch { [void]$ErrorList.Add('Could not persist inventory failure record: '+$_.Exception.Message) }
     }
     if ($SkipRemoval) {

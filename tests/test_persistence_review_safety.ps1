@@ -9,7 +9,7 @@ $null=New-Item -ItemType Directory -Path $temp
 try {
     $run=Join-Path $temp 'run';$persist=Join-Path $run 'persistence'
     $null=New-Item -ItemType Directory -Path $persist -Force
-    $inventory=@{SchemaVersion=1;RunId='run';Status='Complete';Errors=@();Findings=@();Sections=@{StartupFiles=@{Items=@()};RemoteToolServices=@{Items=@()}}}
+    $inventory=@{SchemaVersion=2;RunId='run';Status='Complete';Errors=@();Findings=@();Sections=@{StartupFiles=@{Items=@()};RemoteToolServices=@{Items=@()}}}
     [IO.File]::WriteAllText((Join-Path $persist 'inventory.json'),($inventory | ConvertTo-Json -Depth 8))
     $sentinel=Join-Path $temp 'outside-sentinel.txt'
     [IO.File]::WriteAllText($sentinel,'KEEP OUTSIDE BYTES')

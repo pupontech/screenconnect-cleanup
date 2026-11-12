@@ -2,6 +2,12 @@ Set-StrictMode -Version 2
 $script:InventoryMaxFiles = 2500
 $script:InventoryMaxSeconds = 30
 $script:InventoryMaxHashBytes = 20MB
+# Tampering indicators (AutoHotkey, UAC). Detect-and-report only: every finding
+# from these collectors is ReviewOnly and none is a removable kind.
+$script:IndicatorMaxFiles = 3000
+$script:IndicatorMaxSeconds = 20
+$script:IndicatorMaxScanBytes = 2MB
+$script:UacPolicyPath = 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
 $script:RegistryRoots = @(
     'Registry::HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Run',
     'Registry::HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\RunOnce',
@@ -303,6 +309,231 @@ function Get-SccEventRecords {
     try {Get-WinEvent -FilterHashtable $Filter -MaxEvents $Maximum -ErrorAction Stop}
     catch {if($_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*'){throw}}
 }
+function New-SccIndicatorFinding {
+    param([string]$Kind,[string]$Target,[string]$Command,[string]$Reason,$Details)
+    # Always review-only. Persistence.Removal only accepts ScheduledTask, RunKey and
+    # StartupFile, so these kinds can never become removal candidates.
+    [pscustomobject]@{Id=(Get-SccStableId $Kind $Target);Kind=$Kind;Target=$Target;Command=$Command;Reason=$Reason;ReviewOnly=$true;Details=$Details}
+}
+function Get-SccUacPolicyEvidence {
+    # Read-only. Records each UAC policy value (null = not set = Windows default) and
+    # flags only the weakened states. Never tests or triggers a bypass.
+    param([scriptblock]$ValueReader=$null)
+    $items=New-Object System.Collections.ArrayList; $findings=New-Object System.Collections.ArrayList; $errors=New-Object System.Collections.ArrayList
+    $rules=@(
+        @{Name='EnableLUA';Default=1;Weak=0;Reason='UAC is turned off (EnableLUA=0): every admin process runs fully elevated with no prompt.'}
+        @{Name='ConsentPromptBehaviorAdmin';Default=5;Weak=0;Reason='Administrators elevate with no prompt at all (ConsentPromptBehaviorAdmin=0).'}
+        @{Name='PromptOnSecureDesktop';Default=1;Weak=0;Reason='UAC prompt is not shown on the secure desktop (PromptOnSecureDesktop=0); other programs can interact with it.'}
+        @{Name='LocalAccountTokenFilterPolicy';Default=0;Weak=1;Reason='Remote logons by local admins get a full admin token (LocalAccountTokenFilterPolicy=1); remote UAC restrictions are off.'}
+        @{Name='ConsentPromptBehaviorUser';Default=3;Weak=$null;Reason=''}
+        @{Name='FilterAdministratorToken';Default=0;Weak=$null;Reason=''}
+    )
+    $values=$null
+    try {
+        if($ValueReader){$values=& $ValueReader $script:UacPolicyPath}
+        elseif(Test-Path -LiteralPath $script:UacPolicyPath){
+            $key=Get-Item -LiteralPath $script:UacPolicyPath -ErrorAction Stop
+            $values=@{};foreach($n in @($key.GetValueNames())){$values[[string]$n]=$key.GetValue($n)}
+        }
+    } catch {[void]$errors.Add('UAC policy key: '+$_.Exception.Message)}
+    if($null -eq $values){$values=@{}}
+    foreach($rule in $rules) {
+        $raw=$null; if($values.ContainsKey($rule.Name)){$raw=$values[$rule.Name]}
+        $number=$null; if($null -ne $raw){$parsed=0;if([int]::TryParse([string]$raw,[ref]$parsed)){$number=$parsed}}
+        $effective=if($null -ne $number){$number}else{$rule.Default}
+        $weak=($null -ne $rule.Weak -and $effective -eq $rule.Weak)
+        [void]$items.Add([pscustomobject]@{Name=$rule.Name;Value=$(if($null -ne $raw){[string]$raw}else{$null});WindowsDefault=$rule.Default;Effective=$effective;Weakened=[bool]$weak})
+        if($weak) {
+            $target='HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System|'+$rule.Name
+            [void]$findings.Add((New-SccIndicatorFinding -Kind 'UacPolicy' -Target $target -Command ($rule.Name+'='+$effective) -Reason ($rule.Reason+' May be set on purpose by Group Policy or an RMM tool; confirm before changing. Review only.') -Details ([pscustomobject]@{ValueName=$rule.Name;Value=$effective;WindowsDefault=$rule.Default})))
+        }
+    }
+    [pscustomobject]@{Items=@($items.ToArray());Findings=@($findings.ToArray());Errors=@($errors.ToArray())}
+}
+function Get-SccUacBypassEvidence {
+    # Per loaded user hive: keys and values abused by well-known auto-elevate UAC
+    # bypasses (fodhelper/computerdefaults, eventvwr, sdclt, SilentCleanup). None of
+    # them exists in normal use. Read-only; unloaded profiles are coverage gaps.
+    param([object[]]$Profiles,[scriptblock]$KeyReader=$null)
+    $items=New-Object System.Collections.ArrayList; $findings=New-Object System.Collections.ArrayList; $errors=New-Object System.Collections.ArrayList
+    $hijackKeys=@(
+        @{Sub='Software\Classes\ms-settings\shell\open\command';Why='fodhelper.exe / computerdefaults.exe auto-elevate bypass'}
+        @{Sub='Software\Classes\ms-settings\CurVer';Why='ms-settings redirection used by the fodhelper bypass'}
+        @{Sub='Software\Classes\mscfile\shell\open\command';Why='eventvwr.exe auto-elevate bypass'}
+        @{Sub='Software\Classes\exefile\shell\open\command';Why='per-user override of how every .exe is opened'}
+        @{Sub='Software\Classes\Folder\shell\open\command';Why='sdclt.exe auto-elevate bypass'}
+        @{Sub='Software\Classes\Launcher.SystemSettings\shell\open\command';Why='Settings-app launcher hijack used by UAC bypasses'}
+    )
+    $envNames=@('windir','systemroot')
+    $roots=New-Object System.Collections.ArrayList
+    foreach($p in @($Profiles)){if($p -and $p.Loaded){[void]$roots.Add([pscustomobject]@{Root=[string]$p.Root;User=[string]$p.Name;SID=[string]$p.Sid})}}
+    if($roots.Count -eq 0){[void]$roots.Add([pscustomobject]@{Root='Registry::HKEY_CURRENT_USER';User=$env:USERNAME;SID=$null})}
+    foreach($r in $roots) {
+        foreach($h in $hijackKeys) {
+            $path=$r.Root+'\'+$h.Sub
+            try {
+                $values=if($KeyReader){& $KeyReader $path}elseif(Test-Path -LiteralPath $path){$k=Get-Item -LiteralPath $path -ErrorAction Stop;$v=@{};foreach($n in @($k.GetValueNames())){$v[[string]$n]=[string]$k.GetValue($n,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)};$v}else{$null}
+                if($null -eq $values){continue}
+                $default=if($values.ContainsKey('')){[string]$values['']}else{''}
+                $delegate=$values.ContainsKey('DelegateExecute')
+                $command=if($default){$default}else{'(key present, no default command)'}
+                if($delegate){$command+=' [DelegateExecute set]'}
+                [void]$items.Add([pscustomobject]@{RegistryPath=$path;ValueName='';Value=$command;User=$r.User;SID=$r.SID})
+                [void]$findings.Add((New-SccIndicatorFinding -Kind 'UacBypassHijack' -Target $path -Command $command -Reason ('Known UAC-bypass hijack key exists ('+$h.Why+'). Not present in normal use. Review only; nothing is removed.') -Details ([pscustomobject]@{RegistryPath=$path;User=$r.User;SID=$r.SID;DefaultValue=$default;DelegateExecute=[bool]$delegate})))
+            } catch {[void]$errors.Add(('UAC bypass key {0}: {1}' -f $path,$_.Exception.Message))}
+        }
+        $envPath=$r.Root+'\Environment'
+        try {
+            $values=if($KeyReader){& $KeyReader $envPath}elseif(Test-Path -LiteralPath $envPath){$k=Get-Item -LiteralPath $envPath -ErrorAction Stop;$v=@{};foreach($n in @($k.GetValueNames())){$v[[string]$n]=[string]$k.GetValue($n,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)};$v}else{$null}
+            if($null -ne $values) {
+                foreach($name in @($values.Keys)) {
+                    if($envNames -notcontains ([string]$name).ToLowerInvariant()){continue}
+                    $target=$envPath+'|'+$name
+                    [void]$items.Add([pscustomobject]@{RegistryPath=$envPath;ValueName=[string]$name;Value=[string]$values[$name];User=$r.User;SID=$r.SID})
+                    [void]$findings.Add((New-SccIndicatorFinding -Kind 'UacBypassHijack' -Target $target -Command ([string]$name+'='+[string]$values[$name]) -Reason 'Per-user override of a system path variable (SilentCleanup scheduled-task UAC bypass). Not present in normal use. Review only.' -Details ([pscustomobject]@{RegistryPath=$envPath;ValueName=[string]$name;Value=[string]$values[$name];User=$r.User;SID=$r.SID})))
+                }
+            }
+        } catch {[void]$errors.Add(('UAC bypass environment {0}: {1}' -f $envPath,$_.Exception.Message))}
+    }
+    [pscustomobject]@{Items=@($items.ToArray());Findings=@($findings.ToArray());Errors=@($errors.ToArray())}
+}
+function Get-SccUserWritableRoots {
+    param([object[]]$Profiles)
+    $roots=New-Object System.Collections.ArrayList
+    foreach($p in @($Profiles)) {
+        if(-not $p -or -not $p.ProfilePath){continue}
+        # Targeted, shallow roots: where droppers and portable tools land. A full
+        # AppData\Local walk measured ~55k folders / 73 s on a live PC, so only its
+        # top level, Temp and Programs are walked. Deeper trees are a known gap.
+        foreach($spec in @(@('Downloads',2,1),@('Desktop',2,1),@('AppData\Local\Temp',3,1),@('AppData\Roaming',3,2),@('AppData\Local\Programs',2,3),@('AppData\Local',1,4))){[void]$roots.Add([pscustomobject]@{Path=(Join-Path $p.ProfilePath $spec[0]);MaxDepth=$spec[1];Priority=$spec[2]})}
+    }
+    if($env:PUBLIC){[void]$roots.Add([pscustomobject]@{Path=$env:PUBLIC;MaxDepth=3;Priority=1})}
+    if($env:SystemRoot){[void]$roots.Add([pscustomobject]@{Path=(Join-Path $env:SystemRoot 'Temp');MaxDepth=2;Priority=1})}
+    if($env:ProgramData){[void]$roots.Add([pscustomobject]@{Path=$env:ProgramData;MaxDepth=2;Priority=2})}
+    # Highest-value roots first; the broad AppData\Local top level goes last so a
+    # very large profile cannot starve Downloads/Desktop/Temp of the time budget.
+    @($roots | Where-Object {$_.Path -and (Test-Path -LiteralPath $_.Path)} | Sort-Object -Property Priority)
+}
+function Test-SccBytesContain {
+    param([string]$Latin1Text,[string]$Marker)
+    if($Latin1Text.IndexOf($Marker,[StringComparison]::Ordinal) -ge 0){return $true}
+    $wide=[Text.Encoding]::GetEncoding(28591).GetString([Text.Encoding]::Unicode.GetBytes($Marker))
+    return ($Latin1Text.IndexOf($wide,[StringComparison]::Ordinal) -ge 0)
+}
+function Get-SccUserWritableBinaryEvidence {
+    # One bounded walk of user-writable folders. Flags AutoHotkey interpreters,
+    # .ahk/.ah2 scripts and compiled AutoHotkey executables, plus ScreenConnect
+    # binaries living outside an install folder. Only hits are kept, so the
+    # inventory JSON stays small. Reads files; never opens or runs them.
+    param([object[]]$Roots,[int]$MaxFiles=$script:IndicatorMaxFiles,[int]$MaxSeconds=$script:IndicatorMaxSeconds,[scriptblock]$DirectoryReader=$null,[scriptblock]$VersionReader=$null,[scriptblock]$ContentReader=$null)
+    $clock=[Diagnostics.Stopwatch]::StartNew();$items=New-Object System.Collections.ArrayList;$findings=New-Object System.Collections.ArrayList;$errors=New-Object System.Collections.ArrayList
+    $truncated=$false;$examined=0
+    $pathComparer=if($env:OS -eq 'Windows_NT'){[StringComparer]::OrdinalIgnoreCase}else{[StringComparer]::Ordinal}
+    $visited=New-Object 'System.Collections.Generic.HashSet[string]' ($pathComparer)
+    $noise='(?i)\\(node_modules|\.git|Python\d+|site-packages|WindowsApps|Packages|npm-cache|pip|chocolatey|Package Cache|Edge\\User Data|Chrome\\User Data|Mozilla\\Firefox|Windows Defender|Microsoft\\Teams|Microsoft\\OneDrive|Microsoft\\Edge|Google\\Chrome|CrashDumps|D3DSCache|NVIDIA|Steam|JetBrains|Windows Kits|Malwarebytes)($|\\)'
+    $scLocation='(?i)\\Program Files( \(x86\))?\\ScreenConnect Client'
+    $rootList=@($Roots);$truncatedRoots=New-Object System.Collections.ArrayList
+    for($ri=0;$ri -lt $rootList.Count;$ri++) {
+        $root=$rootList[$ri]
+        $remaining=$MaxSeconds-$clock.Elapsed.TotalSeconds
+        if($remaining -le 0 -or $examined -ge $MaxFiles){$truncated=$true;for($rj=$ri;$rj -lt $rootList.Count;$rj++){[void]$truncatedRoots.Add([string]$rootList[$rj].Path)};break}
+        # Fair share: each root gets the remaining budget divided by the roots
+        # still to walk, so one huge folder is cut and named, not the whole scan.
+        $rootDeadline=$clock.Elapsed.TotalSeconds+[Math]::Max(1.0,$remaining/($rootList.Count-$ri))
+        $rootCut=$false;$capHit=$false
+        $stack=New-Object System.Collections.Stack;$stack.Push([pscustomobject]@{Path=[string]$root.Path;Depth=0})
+        while($stack.Count -gt 0) {
+            if($examined -ge $MaxFiles){$capHit=$true;break}
+            if($clock.Elapsed.TotalSeconds -ge $rootDeadline){$rootCut=$true;break}
+            $frame=$stack.Pop();$directory=[string]$frame.Path
+            $directoryKey=[IO.Path]::GetFullPath($directory).TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)
+            if(-not $visited.Add($directoryKey)){continue}
+            # Native enumeration, filtered by the OS: Get-ChildItem over deep AppData
+            # trees spent the whole time budget on folder listing in a live probe.
+            try {
+                if($DirectoryReader){$children=@(& $DirectoryReader $directory)}
+                else {
+                    $info=New-Object IO.DirectoryInfo($directory)
+                    $children=@($info.GetDirectories())+@($info.GetFiles('*.exe'))+@($info.GetFiles('*.ahk'))+@($info.GetFiles('*.ah2'))
+                }
+            } catch {[void]$errors.Add(('Directory access {0}: {1}' -f $directory,$_.Exception.Message));continue}
+            foreach($entry in $children) {
+                if($examined -ge $MaxFiles){$capHit=$true;break}
+                if($clock.Elapsed.TotalSeconds -ge $rootDeadline){$rootCut=$true;break}
+                if($entry -is [IO.DirectoryInfo]) {
+                    if($frame.Depth -ge [int]$root.MaxDepth -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $entry.FullName -match $noise){continue}
+                    $stack.Push([pscustomobject]@{Path=$entry.FullName;Depth=($frame.Depth+1)});continue
+                }
+                $ext=([string]$entry.Extension).ToLowerInvariant()
+                if($ext -notin @('.exe','.ahk','.ah2')){continue}
+                if(($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){continue}
+                $examined++
+                $path=[string]$entry.FullName
+                $evidence=New-Object System.Collections.ArrayList
+                $kind=$null;$product=$null;$company=$null
+                if($ext -ne '.exe') {
+                    $kind='AutoHotkey';[void]$evidence.Add('AutoHotkey script file ('+$ext+')')
+                } else {
+                    try {
+                        $vi=if($VersionReader){& $VersionReader $path}else{[Diagnostics.FileVersionInfo]::GetVersionInfo($path)}
+                        if($vi){$product=[string](Get-SccPropertyValue $vi 'ProductName');$company=[string](Get-SccPropertyValue $vi 'CompanyName');$description=[string](Get-SccPropertyValue $vi 'FileDescription')}else{$description=''}
+                    } catch {$description='';[void]$errors.Add(('Version info {0}: {1}' -f $path,$_.Exception.Message))}
+                    if($entry.Name -match '(?i)^AutoHotkey'){[void]$evidence.Add('AutoHotkey interpreter file name')}
+                    if(($product+' '+$description) -match '(?i)AutoHotkey'){[void]$evidence.Add('Version info names AutoHotkey')}
+                    if($entry.Length -le $script:IndicatorMaxScanBytes) {
+                        try {
+                            $bytes=if($ContentReader){& $ContentReader $path}else{[IO.File]::ReadAllBytes($path)}
+                            $text=[Text.Encoding]::GetEncoding(28591).GetString([byte[]]$bytes)
+                            if(Test-SccBytesContain $text '>AUTOHOTKEY SCRIPT<'){[void]$evidence.Add('Compiled AutoHotkey script resource (>AUTOHOTKEY SCRIPT<)')}
+                            elseif($evidence.Count -eq 0 -and (Test-SccBytesContain $text 'AutoHotkeyGUI')){[void]$evidence.Add('AutoHotkey runtime window class string (possible compiled script; weaker signal)')}
+                        } catch {[void]$errors.Add(('File read {0}: {1}' -f $path,$_.Exception.Message))}
+                    }
+                    if($evidence.Count){$kind='AutoHotkey'}
+                    elseif((($product+' '+$company+' '+$description) -match '(?i)ScreenConnect|ConnectWise Control') -and $path -notmatch $scLocation) {
+                        $kind='ScreenConnectOutsideInstall';[void]$evidence.Add('ScreenConnect binary outside a Program Files install folder')
+                    }
+                }
+                if(-not $kind){continue}
+                $hash=$null
+                if($entry.Length -le $script:InventoryMaxHashBytes){try{$hash=(Get-FileHash -LiteralPath $path -Algorithm SHA256 -ErrorAction Stop).Hash}catch{[void]$errors.Add(('File hash {0}: {1}' -f $path,$_.Exception.Message))}}
+                $evidenceText=@($evidence.ToArray()) -join '; '
+                $row=[pscustomobject]@{Kind=$kind;Path=$path;Length=$entry.Length;CreatedUtc=$entry.CreationTimeUtc;ModifiedUtc=$entry.LastWriteTimeUtc;SHA256=$hash;ProductName=$product;CompanyName=$company;Evidence=$evidenceText}
+                [void]$items.Add($row)
+                $reason=if($kind -eq 'AutoHotkey'){'AutoHotkey is often used to drop or relaunch remote-access tools, but it is also a legitimate tool. Review only; nothing is removed.'}else{'Portable, renamed or leftover ScreenConnect binary in a user-writable folder. Review only; nothing is removed.'}
+                [void]$findings.Add((New-SccIndicatorFinding -Kind $kind -Target $path -Command $evidenceText -Reason $reason -Details $row))
+            }
+            if($capHit -or $rootCut){break}
+        }
+        if($rootCut -or ($capHit -and $stack.Count -gt 0)){[void]$truncatedRoots.Add([string]$root.Path);$truncated=$true}
+        if($examined -ge $MaxFiles){$truncated=$true;for($rj=$ri+1;$rj -lt $rootList.Count;$rj++){[void]$truncatedRoots.Add([string]$rootList[$rj].Path)};break}
+    }
+    [pscustomobject]@{Items=@($items.ToArray());Findings=@($findings.ToArray());Errors=@($errors.ToArray());Truncated=$truncated;Limits=[pscustomobject]@{MaxFiles=$MaxFiles;MaxSeconds=$MaxSeconds;MaxScanBytes=$script:IndicatorMaxScanBytes;Examined=$examined;TruncatedRoots=@($truncatedRoots.ToArray())}}
+}
+function Get-SccAutoHotkeyAutostartEvidence {
+    # Cross-references rows the inventory already collected. No second registry or
+    # task pass. A hit means AutoHotkey (or a compiled AutoHotkey file found by the
+    # walk) starts automatically.
+    param([object[]]$RunKeys=@(),[object[]]$StartupFiles=@(),[object[]]$Tasks=@(),[object[]]$Services=@(),[string[]]$KnownPaths=@())
+    $items=New-Object System.Collections.ArrayList; $findings=New-Object System.Collections.ArrayList
+    $pattern='(?i)autohotkey|\.ahk\b|\.ah2\b'
+    $known=@($KnownPaths | Where-Object {$_})
+    $candidates=New-Object System.Collections.ArrayList
+    foreach($r in @($RunKeys)){[void]$candidates.Add(@('RunKey',([string](Get-SccPropertyValue $r 'RegistryPath')+'|'+[string](Get-SccPropertyValue $r 'ValueName')),[string](Get-SccPropertyValue $r 'OriginalValue')))}
+    foreach($s in @($StartupFiles)){[void]$candidates.Add(@('StartupFile',[string](Get-SccPropertyValue $s 'FilePath'),([string](Get-SccPropertyValue $s 'FilePath')+' -> '+[string](Get-SccPropertyValue $s 'ResolvedTarget'))))}
+    foreach($t in @($Tasks)){[void]$candidates.Add(@('ScheduledTask',([string](Get-SccPropertyValue $t 'TaskPath')+[string](Get-SccPropertyValue $t 'TaskName')),[string](Get-SccPropertyValue $t 'Command')))}
+    foreach($v in @($Services)){[void]$candidates.Add(@('Service',[string](Get-SccPropertyValue $v 'Name'),[string](Get-SccPropertyValue $v 'PathName')))}
+    foreach($c in $candidates) {
+        $source=$c[0];$identity=$c[1];$command=$c[2]
+        if(-not $command){continue}
+        $hit=($command -match $pattern)
+        if(-not $hit){foreach($k in $known){if($command.IndexOf($k,[StringComparison]::OrdinalIgnoreCase) -ge 0){$hit=$true;break}}}
+        if(-not $hit){continue}
+        $target=$source+'|'+$identity
+        [void]$items.Add([pscustomobject]@{Source=$source;Identity=$identity;Command=$command})
+        [void]$findings.Add((New-SccIndicatorFinding -Kind 'AutoHotkeyAutostart' -Target $target -Command $command -Reason ('AutoHotkey starts automatically from a '+$source+'. Legitimate for some users; review who set it up. Review only.') -Details ([pscustomobject]@{Source=$source;Identity=$identity;Command=$command})))
+    }
+    [pscustomobject]@{Items=@($items.ToArray());Findings=@($findings.ToArray());Errors=@()}
+}
 function Get-SccPersistenceInventory {
     [CmdletBinding()]
     param([Parameter(Mandatory=$true)][string]$OutDir)
@@ -310,7 +541,7 @@ function Get-SccPersistenceInventory {
     $inventoryFile=Join-Path $OutDir 'inventory.json'
     if(Test-Path -LiteralPath $inventoryFile){throw 'Existing persistence inventory is not overwritten; use a fresh run.'}
     $null=New-Item -ItemType Directory -Force -Path $OutDir
-    $started=[Diagnostics.Stopwatch]::StartNew();$errors=New-Object System.Collections.ArrayList;$sections=[ordered]@{};$findings=New-Object System.Collections.ArrayList
+    $started=[Diagnostics.Stopwatch]::StartNew();$errors=New-Object System.Collections.ArrayList;$warnings=New-Object System.Collections.ArrayList;$sections=[ordered]@{};$findings=New-Object System.Collections.ArrayList
     $xmlDir=Join-Path $OutDir 'task_xml';Assert-SccInventoryPath $xmlDir;$null=New-Item -ItemType Directory -Force -Path $xmlDir
     Write-Host 'SCC_PERSISTENCE_SECTION|ScheduledTasks'
     $task=Get-SccTaskEvidence -XmlDirectory $xmlDir
@@ -370,6 +601,37 @@ function Get-SccPersistenceInventory {
         foreach($e in $evidence.Errors){[void]$errors.Add($e)}
         Write-Host ('SCC_PERSISTENCE_DONE|'+$name)
     }
+    # ---- Tampering indicators (schema 2). Review-only findings. Coverage gaps here
+    # (cap reached, access denied) mark the SECTION incomplete and are recorded in
+    # Warnings, not Errors: a lighter lead scan must never flip the whole
+    # persistence stage to Incomplete. The section's own Status still says so.
+    $indicatorProfiles=@((Get-SccProfileRoots).Profiles)
+    Write-Host 'SCC_PERSISTENCE_SECTION|UacPolicy'
+    $uac=Get-SccUacPolicyEvidence
+    Write-Host 'SCC_PERSISTENCE_DONE|UacPolicy'
+    $sections.UacPolicy=New-SccSection -Items $uac.Items -Errors $uac.Errors
+    foreach($f in $uac.Findings){[void]$findings.Add($f)};foreach($e in $uac.Errors){[void]$warnings.Add($e)}
+    Write-Host 'SCC_PERSISTENCE_SECTION|UacBypassKeys'
+    $bypass=Get-SccUacBypassEvidence -Profiles $indicatorProfiles
+    Write-Host 'SCC_PERSISTENCE_DONE|UacBypassKeys'
+    $sections.UacBypassKeys=New-SccSection -Items $bypass.Items -Errors $bypass.Errors
+    foreach($f in $bypass.Findings){[void]$findings.Add($f)};foreach($e in $bypass.Errors){[void]$warnings.Add($e)}
+    Write-Host 'SCC_PERSISTENCE_SECTION|UserWritableBinaries'
+    $binaries=Get-SccUserWritableBinaryEvidence -Roots (Get-SccUserWritableRoots -Profiles $indicatorProfiles)
+    Write-Host 'SCC_PERSISTENCE_DONE|UserWritableBinaries'
+    $sections.UserWritableBinaries=New-SccSection -Status $(if($binaries.Truncated -or $binaries.Errors.Count){'Incomplete'}else{'Complete'}) -Items $binaries.Items -Errors $binaries.Errors -Limits $binaries.Limits
+    foreach($f in $binaries.Findings){[void]$findings.Add($f)};foreach($e in $binaries.Errors){[void]$warnings.Add($e)}
+    if($binaries.Truncated){
+        $cutRoots=@();$limitsObject=$binaries.Limits;if($limitsObject){$cutProperty=$limitsObject.PSObject.Properties['TruncatedRoots'];if($cutProperty){$cutRoots=@($cutProperty.Value)}}
+        [void]$warnings.Add('UserWritableBinaries: bounded file/time cap reached; AutoHotkey scan truncated'+$(if($cutRoots.Count){' (not fully walked: '+(@($cutRoots) -join '; ')+')'}else{''}))
+    }
+    Write-Host 'SCC_PERSISTENCE_SECTION|AutoHotkeyAutostart'
+    $serviceRows=@();$serviceProperty=$sections['Services'];if($serviceProperty){$serviceRows=@($serviceProperty.Items)}
+    $ahkPaths=@($binaries.Items | Where-Object {[string](Get-SccPropertyValue $_ 'Kind') -eq 'AutoHotkey' -and [string](Get-SccPropertyValue $_ 'Path') -match '(?i)\.exe$'} | ForEach-Object {[string](Get-SccPropertyValue $_ 'Path')})
+    $autostart=Get-SccAutoHotkeyAutostartEvidence -RunKeys $registry.Items -StartupFiles $startup.Items -Tasks $task.Items -Services $serviceRows -KnownPaths $ahkPaths
+    Write-Host 'SCC_PERSISTENCE_DONE|AutoHotkeyAutostart'
+    $sections.AutoHotkeyAutostart=New-SccSection -Items $autostart.Items -Errors $autostart.Errors
+    foreach($f in $autostart.Findings){[void]$findings.Add($f)}
     $roots=@($env:ProgramData,$env:ProgramFiles,${env:ProgramFiles(x86)})
     if($env:SystemDrive){$roots+=(Join-Path $env:SystemDrive 'Users')}
     if($env:SystemRoot){$roots+=(Join-Path $env:SystemRoot 'Temp')}
@@ -383,7 +645,7 @@ function Get-SccPersistenceInventory {
     if($started.Elapsed.TotalSeconds -ge $script:InventoryMaxSeconds){[void]$errors.Add('Overall collection exceeded configured time budget; later sections may be partial')}
     $status=if($errors.Count){'Incomplete'}else{'Complete'}
     $runId=Split-Path (Split-Path $OutDir -Parent) -Leaf
-    $result=[pscustomobject]@{SchemaVersion=1;RunId=$runId;ComputerName=$env:COMPUTERNAME;GeneratedUtc=[DateTime]::UtcNow.ToString('o');Status=$status;Errors=@($errors.ToArray());Sections=[pscustomobject]$sections;Findings=@($findings.ToArray());Counts=[pscustomobject]@{Findings=$findings.Count;ScriptFiles=$scripts.Items.Count}}
+    $result=[pscustomobject]@{SchemaVersion=2;RunId=$runId;ComputerName=$env:COMPUTERNAME;GeneratedUtc=[DateTime]::UtcNow.ToString('o');Status=$status;Errors=@($errors.ToArray());Warnings=@($warnings.ToArray());Sections=[pscustomobject]$sections;Findings=@($findings.ToArray());Counts=[pscustomobject]@{Findings=$findings.Count;ScriptFiles=$scripts.Items.Count}}
     Write-Host 'SCC_PERSISTENCE_SECTION|WriteInventory'
     $json=ConvertTo-Json -InputObject $result -Depth 12
     Write-SccInventoryFile -Path $inventoryFile -Text $json

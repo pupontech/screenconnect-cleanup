@@ -3,6 +3,37 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [1.8.13-ahk-removal-testing.1] - 2026-11-12 - AutoHotkey + UAC tampering indicators (TESTING ONLY)
+**TESTING ONLY. Detect-and-report: nothing new is ever removed. Owner live Windows testing is open
+(docs/09 section 7f).**
+- New review-only persistence sections (`Persistence.Inventory.psm1`, run inside the existing
+  Step 6d inventory; no new step, GUI unchanged):
+  - `UacPolicy` - reads `HKLM\...\Policies\System` and flags `EnableLUA=0`,
+    `ConsentPromptBehaviorAdmin=0`, `PromptOnSecureDesktop=0`, `LocalAccountTokenFilterPolicy=1`.
+    Missing values read as the Windows default. Never tests or triggers a bypass.
+  - `UacBypassKeys` - per loaded user hive: the fodhelper/computerdefaults (`ms-settings`),
+    eventvwr (`mscfile`), sdclt (`Folder`), `exefile` and `Launcher.SystemSettings` command-key
+    hijacks, and `Environment\windir` / `systemroot` overrides (SilentCleanup).
+  - `UserWritableBinaries` - one bounded walk (20 s, 3000 files) of Downloads, Desktop, Temp,
+    Roaming, `Local\Programs`, the top of `AppData\Local`, Public, ProgramData and Windows\Temp.
+    Flags AutoHotkey interpreters (name/version info), `.ahk`/`.ah2` scripts, compiled AutoHotkey
+    EXEs of 2 MB or less (`>AUTOHOTKEY SCRIPT<` resource marker; the `AutoHotkeyGUI` class string
+    is reported as a weaker signal) and ScreenConnect binaries outside a Program Files install folder.
+    Only hits are stored. Each root gets a fair share of the time budget; roots not fully walked
+    are named in `Warnings`.
+  - `AutoHotkeyAutostart` - cross-references the Run keys, startup files, tasks and services
+    already collected for AutoHotkey or a flagged compiled AutoHotkey file.
+- New finding kinds `UacPolicy`, `UacBypassHijack`, `AutoHotkey`, `AutoHotkeyAutostart` and
+  `ScreenConnectOutsideInstall` are always `ReviewOnly`; `Persistence.Removal.psm1` never offers them.
+  They appear in the Step 6e review list (with the file's folder opened) and in the report.
+- **inventory.json schema 2**: adds `Warnings`. Indicator-scan coverage gaps mark their own section
+  `Incomplete` and go to `Warnings`, so they never flip the persistence stage to Incomplete.
+  Persistence removal now requires schema 2 (a schema 1 inventory is refused).
+- Tests: `tests/test_tamper_indicators.ps1` (45 checks, injected registry readers and synthetic
+  files; no live value is changed), wired into Windows CI for 5.1, pwsh and the packaged zip.
+- Not verified yet: live runs on client PCs, AutoHotkey v2 compiled-file detection (the v1 resource
+  marker is the strong signal), timing on slow Windows 10 hardware.
+
 ## [Unreleased] - README rewrite, one-liner installer fix
 - **Fix: the `irm ... | iex` one-liner failed on the GUI releases** ("Bundle missing VERSION"):
   `install-latest.ps1` expected VERSION and START-HERE.bat at the top of the zip, which since

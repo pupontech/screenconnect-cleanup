@@ -86,6 +86,11 @@ foreach($item in (Get-List (Get-Value $sections 'StartupFiles') 'Items')) {
     $filePath=[string](Get-Value $item 'FilePath')
     if($filePath){ Add-Folder -Path (Split-Path -Parent $filePath) -Label ('Startup folder (' + [string](Get-Value $item 'UserName') + ')') }
 }
+# Folders holding AutoHotkey or out-of-place ScreenConnect files (review only).
+foreach($item in (Get-List (Get-Value $sections 'UserWritableBinaries') 'Items')) {
+    $filePath=[string](Get-Value $item 'Path')
+    if($filePath){ Add-Folder -Path (Split-Path -Parent $filePath) -Label ('Flagged ' + [string](Get-Value $item 'Kind') + ' file location') }
+}
 
 $consoles=@(
     [pscustomobject]@{Kind='Console';Label='Services (check startup type + running state)';File='services.msc';Arguments=''},
@@ -97,7 +102,7 @@ $checklist=New-Object System.Collections.ArrayList
 foreach($finding in $findings) {
     $kind=[string](Get-Value $finding 'Kind')
     $reviewOnly=[bool](Get-Value $finding 'ReviewOnly')
-    if($kind -notin @('ScheduledTask','RunKey','StartupFile','HiddenTask')){continue}
+    if($kind -notin @('ScheduledTask','RunKey','StartupFile','HiddenTask','UacPolicy','UacBypassHijack','AutoHotkey','AutoHotkeyAutostart','ScreenConnectOutsideInstall')){continue}
     [void]$checklist.Add([pscustomobject]@{
         Kind=$kind
         Target=[string](Get-Value $finding 'Target')
@@ -109,6 +114,11 @@ foreach($finding in $findings) {
             'RunKey'        {'Registry Run/RunOnce value - review in regedit at the printed path'}
             'StartupFile'   {'Startup folder (opened) - inspect the exact file listed'}
             'HiddenTask'    {'Task Scheduler - compare with the on-disk task files folder'}
+            'UacPolicy'     {'regedit: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System (check Group Policy/RMM before changing)'}
+            'UacBypassHijack' {'regedit: the exact user key printed above (does not exist in normal use)'}
+            'AutoHotkey'    {'Explorer: the exact file printed above (folder opened below)'}
+            'AutoHotkeyAutostart' {'The Run key, startup file, task or service printed above'}
+            'ScreenConnectOutsideInstall' {'Explorer: the exact file printed above (folder opened below)'}
         })
     })
 }

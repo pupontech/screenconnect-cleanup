@@ -336,6 +336,28 @@ MOVES them (never deletes) to `<LogDir>\av-uninstall-quarantine`.
     throwaway VM), the run must report `EnableUnavailable` and fail closed; it must
     never fall through to a checkpoint-only attempt.
 
+## 7f. AutoHotkey + UAC tampering indicators [NEW 1.8.13-ahk-removal-testing.1]
+
+7f.1 Automated coverage (both editions, no live registry change):
+    `tests/test_tamper_indicators.ps1` - 45 checks with injected registry readers
+    and synthetic files in a temp folder.
+
+7f.2 Owner live checks (disposable VM; revert every change afterwards):
+    [ ] Set `ConsentPromptBehaviorAdmin=0` under HKLM Policies\System; run Detect
+        only; Step 6e lists a `UacPolicy` finding; set it back to 5.
+    [ ] Create `HKCU\Software\Classes\ms-settings\shell\open\command` with default
+        value `notepad.exe` (do NOT launch fodhelper); run; a `UacBypassHijack`
+        finding appears; delete the key.
+    [ ] Copy a portable AutoHotkey EXE and a compiled `.ahk` (renamed, e.g.
+        `invoice.exe`) into `%APPDATA%\test\`, plus a Run key pointing at it; run;
+        expect `AutoHotkey` findings for both files plus `AutoHotkeyAutostart`, and
+        the folder opens in Step 6e. Nothing is removed by the indicator sections.
+    [ ] Repeat with an AutoHotkey v2 compiled file; record whether it is caught and
+        by which evidence (v2 detection is unverified).
+    [ ] On the slow Windows 10 PC from the field report, time Step 6d: it must stay
+        inside the 60 s section / 300 s total limits; note any `Warnings` lines.
+    [ ] `report.html` shows the new findings and any "Indicator scan note" lines.
+
 ## 8. Release gate summary
 
 A release is blocked if ANY of the following fails on Windows PowerShell 5.1:
