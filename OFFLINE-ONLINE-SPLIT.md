@@ -11,7 +11,8 @@ internet?**
 | `START-HERE-OFFLINE.bat` | 1 - cleanup (steps 1-7) | **No. Nothing is downloaded or uploaded.** | preflight, before snapshot, detection, ScreenConnect removal (one typed confirmation), persistence review, optional power-options repair, after snapshot + diff, local report + package |
 | `START-HERE-ONLINE.bat` | 2 - scan + share (steps 1-5) | **Yes** | stages KVRT / ESET (and the tool pack), runs the attended scanners (KVRT, ESET, Malwarebytes), optional AV uninstall, shares the sanitized report |
 
-Only these two launchers ship in the deploy zip. Each self-elevates once (UAC).
+These are the console launchers, in the zip's `files\` folder; the window (`START-HERE-GUI.bat`, at
+the top of the zip) runs the same two halves. Each self-elevates once (UAC).
 Each half numbers only its own steps: the offline screen shows 1-7, the online
 screen 1-5, and neither lists the other half's steps as "skipped".
 `START-HERE.bat` is the engine both call; run on its own (no flag) it is still

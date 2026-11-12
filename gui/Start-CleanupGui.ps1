@@ -905,18 +905,7 @@ function Complete-Run {
     Update-Stepper
     Update-HeaderButtons
     if ($ResultPath) { Write-ResultFile }
-    if ($ResultPath -and $RenderPng) {
-        # Test hook: render THIS window's own visual tree to a PNG (never a screen capture).
-        try {
-            $win.UpdateLayout()
-            $rs = [Math]::Max(1.0, $RenderScale)
-            $rtb = New-Object System.Windows.Media.Imaging.RenderTargetBitmap ([int]($win.ActualWidth * $rs)), ([int]($win.ActualHeight * $rs)), (96 * $rs), (96 * $rs), ([System.Windows.Media.PixelFormats]::Pbgra32)
-            $rtb.Render($win)
-            $enc = New-Object System.Windows.Media.Imaging.PngBitmapEncoder
-            $enc.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($rtb))
-            $fs = [IO.File]::Create($RenderPng); $enc.Save($fs); $fs.Close()
-        } catch { }
-    }
+    if ($ResultPath -and $RenderPng) { Save-WindowPng }
     if ($script:AutoStart) {
         if ($HoldSeconds -gt 0) {
             # Test hook: keep the finished window up long enough to look at.
@@ -1289,11 +1278,28 @@ foreach ($link in $ui.LinkRubinIt, $ui.LinkPupontech) {
         })
 }
 
+function Save-WindowPng {
+    # Test hook: render THIS window's own visual tree to a PNG (never a screen capture).
+    try {
+        $win.UpdateLayout()
+        $rs = [Math]::Max(1.0, $RenderScale)
+        $rtb = New-Object System.Windows.Media.Imaging.RenderTargetBitmap ([int]($win.ActualWidth * $rs)), ([int]($win.ActualHeight * $rs)), (96 * $rs), (96 * $rs), ([System.Windows.Media.PixelFormats]::Pbgra32)
+        $rtb.Render($win)
+        $enc = New-Object System.Windows.Media.Imaging.PngBitmapEncoder
+        $enc.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($rtb))
+        $fs = [IO.File]::Create($RenderPng); $enc.Save($fs); $fs.Close()
+    } catch { }
+}
+
 $win.add_Loaded({
         Update-TextMode
         Update-CompactLayout
         $timer.Start()
         if ($script:AutoStart) { Start-Run $startMode }
+        elseif ($ResultPath -and $RenderPng) {
+            # Test hook (non-elevated only, like every hook): render the start screen once laid out, then close.
+            [void]$win.Dispatcher.BeginInvoke([System.Windows.Threading.DispatcherPriority]::ContextIdle, [Action]{ Save-WindowPng; $win.Close() })
+        }
     })
 
 $exit = 0

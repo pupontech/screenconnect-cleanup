@@ -3,6 +3,19 @@
 Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
+## [Unreleased] - README rewrite, one-liner installer fix
+- **Fix: the `irm ... | iex` one-liner failed on the GUI releases** ("Bundle missing VERSION"):
+  `install-latest.ps1` expected VERSION and START-HERE.bat at the top of the zip, which since
+  1.8.12-gui-alpha.3 holds only START-HERE-GUI.bat plus `files\`. It now recognises both layouts and
+  launches START-HERE-GUI.bat for the new one (START-HERE.bat for older releases). Tested against the
+  live v1.8.12-gui-beta.1 release (download, SHA-256 check, extract, same-version re-run).
+  The one-liner reads the script from `main`, so the fix reaches users once it is on `main`.
+- README rewritten around the window: getting it, the four choices, the usual job, the questions and
+  their defaults, what a run leaves behind, sharing, console launchers, what is not verified yet.
+  Three screenshots in `docs/images/` (rendered from the window itself, sample data).
+- `Start-CleanupGui.ps1`: the `-RenderPng` test hook can also render the start screen (non-elevated
+  only, like every hook). DEPLOY.md and OFFLINE-ONLINE-SPLIT.md no longer call the window a preview.
+
 ## [1.8.12-gui-beta.1] - 2026-11-10 - GUI beta (Latest release)
 **BETA. Same code as 1.8.12-gui-alpha.5, promoted to beta and published as the Latest release on GitHub
 (replacing 1.8.12-beta.1 as the default download). Owner live Windows acceptance is still open

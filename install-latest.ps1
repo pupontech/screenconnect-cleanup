@@ -2,17 +2,18 @@
   install-latest.ps1 - one-liner bootstrap for screenconnect-cleanup.
 
   Downloads the latest GitHub release zip of pupontech/screenconnect-cleanup,
-  extracts it to your Desktop\ScreenConnect-Cleanup\<version>\ and launches the
-  guided runner (START-HERE.bat). Designed to run from a copy-paste one-liner:
+  extracts it to your Desktop\ScreenConnect-Cleanup\<version>\ and launches it:
+  START-HERE-GUI.bat (the window) for releases laid out with a files\ folder,
+  START-HERE.bat (the console runner) for older releases. Designed to run from a copy-paste one-liner:
 
       irm https://raw.githubusercontent.com/pupontech/screenconnect-cleanup/main/install-latest.ps1 | iex
 
   What it does / does not do:
     - It only: queries the GitHub API for the latest release, downloads the
       deploy zip asset, expands it into a versioned folder on your Desktop,
-      and starts START-HERE.bat (the same file you would double-click after a
+      and starts the launcher (the same file you would double-click after a
       manual download). Nothing outside that folder is touched, and nothing
-      from the zip runs except the guided runner itself.
+      from the zip runs except that launcher.
     - No admin rights are needed to install. The guided runner elevates
       itself via UAC only when a step actually needs it (preflight/removal).
     - The zip is NOT hash-verified: you are trusting the release assets at
@@ -23,7 +24,7 @@
 
   Parameters (useful when running the script directly, not via iex):
     -Destination <path>   install base folder (default: Desktop\ScreenConnect-Cleanup)
-    -NoLaunch             do not start START-HERE.bat after installing
+    -NoLaunch             do not start the launcher after installing
     -Force                overwrite/re-extract an existing <version> subfolder
                           (without it, a same-version re-run detects the
                           existing install and just launches it)
@@ -45,6 +46,19 @@ $ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 $Repo = 'pupontech/screenconnect-cleanup'
+
+# Two release layouts exist. From 1.8.12-gui-alpha.3 on, the zip holds only
+# START-HERE-GUI.bat at the top and everything else (VERSION included) in
+# files\. Older releases hold VERSION and START-HERE.bat at the top.
+function Get-SccBundle {
+    param([string]$Dir)
+    $gui = Join-Path $Dir 'START-HERE-GUI.bat'
+    $filesVer = Join-Path (Join-Path $Dir 'files') 'VERSION'
+    if ((Test-Path -LiteralPath $gui) -and (Test-Path -LiteralPath $filesVer)) {
+        return [pscustomobject]@{ VersionFile = $filesVer; Launcher = $gui }
+    }
+    return [pscustomobject]@{ VersionFile = (Join-Path $Dir 'VERSION'); Launcher = (Join-Path $Dir 'START-HERE.bat') }
+}
 
 if (-not $Destination) {
     $desktop = [Environment]::GetFolderPath('Desktop')
@@ -70,8 +84,9 @@ Write-Host ("  release:    " + $release.tag_name + "  (" + $asset.size + " bytes
 $runDir = Join-Path $Destination $release.tag_name
 if (-not $Force -and (Test-Path -LiteralPath $runDir)) {
     $existingVer = $null
-    $existingVerFile = Join-Path $runDir 'VERSION'
-    $existingBat = Join-Path $runDir 'START-HERE.bat'
+    $existingBundle = Get-SccBundle $runDir
+    $existingVerFile = $existingBundle.VersionFile
+    $existingBat = $existingBundle.Launcher
     try {
         if (Test-Path -LiteralPath $existingVerFile) {
             $existingVer = (Get-Content -LiteralPath $existingVerFile -Raw -ErrorAction Stop).Trim()
@@ -81,9 +96,9 @@ if (-not $Force -and (Test-Path -LiteralPath $runDir)) {
         Write-Host ("  already installed and up to date: " + $runDir) -ForegroundColor Green
         Write-Host "  (pass -Force to re-extract a fresh copy)" -ForegroundColor DarkGray
         if ($NoLaunch) {
-            Write-Host ("  -NoLaunch given; run START-HERE.bat from: " + $runDir)
+            Write-Host ("  -NoLaunch given; run " + (Split-Path -Leaf $existingBat) + " from: " + $runDir)
         } else {
-            Write-Host "  launching START-HERE.bat ..."
+            Write-Host ("  launching " + (Split-Path -Leaf $existingBat) + " ...")
             Start-Process -FilePath $existingBat -WorkingDirectory $runDir
         }
         Write-Host "== done ==" -ForegroundColor Cyan
@@ -124,7 +139,7 @@ $null = New-Item -ItemType Directory -Path $runDir -Force
 Expand-Archive -Path $zip -DestinationPath $runDir -Force -ErrorAction Stop
 
 # The zip nests everything under one 'screenconnect-cleanup' folder; lift the
-# contents up so START-HERE.bat lives directly in the versioned folder.
+# contents up so the launcher lives directly in the versioned folder.
 $inner = Join-Path $runDir 'screenconnect-cleanup'
 if (Test-Path -LiteralPath $inner) {
     Get-ChildItem -LiteralPath $inner -Force | Move-Item -Destination $runDir -Force
@@ -132,21 +147,22 @@ if (Test-Path -LiteralPath $inner) {
 }
 
 # 5. Sanity: the bundle must be self-identifying and complete.
-$verFile = Join-Path $runDir 'VERSION'
+$bundle = Get-SccBundle $runDir
+$verFile = $bundle.VersionFile
 if (-not (Test-Path -LiteralPath $verFile)) { throw ("Bundle missing VERSION - install incomplete at " + $runDir) }
 $ver = (Get-Content -LiteralPath $verFile -Raw).Trim()
-$bat = Join-Path $runDir 'START-HERE.bat'
-if (-not (Test-Path -LiteralPath $bat)) { throw ("Bundle missing START-HERE.bat - install incomplete at " + $runDir) }
+$bat = $bundle.Launcher
+if (-not (Test-Path -LiteralPath $bat)) { throw ("Bundle missing " + (Split-Path -Leaf $bat) + " - install incomplete at " + $runDir) }
 
 Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
 
 Write-Host ("  installed:  v" + $ver + " -> " + $runDir) -ForegroundColor Green
 
-# 6. Launch the guided runner (unless told not to).
+# 6. Launch it (unless told not to).
 if ($NoLaunch) {
-    Write-Host ("  -NoLaunch given; run START-HERE.bat from: " + $runDir)
+    Write-Host ("  -NoLaunch given; run " + (Split-Path -Leaf $bat) + " from: " + $runDir)
 } else {
-    Write-Host "  launching START-HERE.bat ..."
+    Write-Host ("  launching " + (Split-Path -Leaf $bat) + " ...")
     Start-Process -FilePath $bat -WorkingDirectory $runDir
 }
 Write-Host "== done ==" -ForegroundColor Cyan

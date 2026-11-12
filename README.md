@@ -1,461 +1,174 @@
-# ScreenConnect Cleanup Tool
+# ScreenConnect Cleanup
 
-## Post-AV persistence prototype - TESTING ONLY
+A Windows technician tool for PCs where someone got remote access they should not have, usually
+after a tech-support scam. It finds every ScreenConnect instance, shows **which relay server each one
+calls home to** (the only reliable way to tell the scammer's copy from the customer's own IT), removes
+the ones you choose, checks what else was left behind to start up with Windows, runs the AV scanners,
+and writes a report.
 
-The guided runner now includes a mandatory persistence investigation immediately
-after its attended antivirus stage (Step 6d). The direct pipeline does the same
-after Stage 5, even when `-sa` skips antivirus scanners. Declining an AV scanner
-does not skip this investigation. `-WhatIf` remains a no-execution preview.
-
-Step 6e then offers to open the review surface for a technician: the evidence,
-task-XML, quarantine, on-disk task and observed startup folders, plus Services
-and Task Scheduler, together with a printed list of what was flagged and where
-to look for it. That step only opens windows - it changes nothing and never
-approves cleanup.
-
-Findings and collection gaps appear in the local HTML report. Selected suspicious
-scheduled tasks, Run/RunOnce values and startup-folder files can be removed only
-after a separate selection and typed `REMOVE` approval, successful rollback
-prerequisites, a backup, and fresh target revalidation. `-sr` disables this
-cleanup without disabling the scan; the lab-only `-ExecuteRemoval` flag does not
-approve persistence cleanup. Heuristic matches are not malware verdicts.
-
-Services, WMI subscriptions, hidden-task discrepancies and sensitive system
-startup settings remain investigation-only. Original-user offline registry hives
-are not mounted for this prototype. Raw script samples and PowerShell histories
-are not copied. The existing sanitized share contains only persistence status and
-aggregate counts, not commands, file paths, task XML or raw evidence.
-
-Download the release marked **TESTING ONLY** (the newest `v1.8.x` prerelease),
-extract the whole ZIP,
-and read [the persistence testing guide](docs/12-post-av-persistence.md) before
-running `START-HERE.bat`. This extends the existing guided cleanup runner, not
-the separate DetectOnly WPF GUI. Owner live Windows acceptance remains required.
-
-> **Completely vibe coded.** This entire project - every script, the docs, the CI -
-> was created through AI-assisted ("vibe-coded") development across multiple agent
-> sessions. It has been parser-checked, ASCII/no-BOM checked, and Linux/pwsh
-> verified where possible. This worktree does **not** contain an artifact-backed live
-> ScreenConnect fixture or destructive Windows run; any owner-reported Windows notes
-> in `docs/` must be treated as reported evidence, not independently verified here.
-> Read the caveats below and `docs/` before you trust any of it on a client machine.
-
-Windows technician tool for investigating and cleaning up **unauthorized remote-access
-software** on client machines — typically after a tech-support scam, where the client
-was talked into letting someone remote in.
-
-Shaped like the [Tron script](https://github.com/bmrf/tron): a staged orchestrator that
-drives existing tools rather than reimplementing them. Roughly **90% orchestration,
-10% original code** — the original code being the ScreenConnect module, because no
-existing tool answers the question that actually matters.
-
-> **Status: 10 primary stages plus mandatory persistence substage 5b** (Stages 0–9), including a Stage 4 removal
-> module (`remove-screenconnect.ps1`). Removal is **not read-only**: given an approved
-> plan and `-Execute`, it stops services, runs vendor uninstallers, moves files to
-> quarantine, and removes service/persistence registrations. It is dry-run by default
-> and gated behind a technician review in `sc-cleanup.ps1`; the **guided runner
-> (`START-HERE.bat` Step 5) requires a typed confirmation for all detected
-> ScreenConnect instances** before removal. **On live Windows, nothing beyond the dry-run has
-> been validated** — see [Status](#status) and the caveats.
+> **Beta.** The window (`START-HERE-GUI.bat`) is the main way to run it since `v1.8.12-gui-beta.1`.
+> It runs the same scripts as the console launchers, which remain available. A full removal through
+> the window has not yet been run on a real infected PC; see [What is not verified yet](#what-is-not-verified-yet).
+> The project was written with AI assistance; read what it is about to do before you approve it.
 
 ---
 
-## Quick start — one-liner
+## Get it
 
-Install (or update to) the latest release and launch the guided runner from a
-**single PowerShell command** (Windows PowerShell 5.1+, no admin needed to
-install):
+**Download:** the latest release zip from
+[Releases](https://github.com/pupontech/screenconnect-cleanup/releases/latest), check it against the
+`.sha256` next to it, and **extract the whole zip**. You get:
+
+```
+screenconnect-cleanup\
+  START-HERE-GUI.bat     <- double-click this
+  files\                 <- everything else (do not separate it from the launcher)
+```
+
+**Or one line in PowerShell** (downloads the latest release to `Desktop\ScreenConnect-Cleanup\<version>\`,
+checks its SHA-256 and opens the window):
 
 ```powershell
 irm https://raw.githubusercontent.com/pupontech/screenconnect-cleanup/main/install-latest.ps1 | iex
 ```
 
-What it does:
-1. Asks GitHub for the latest release and downloads its
-   `screenconnect-cleanup-vX.Y.Z.zip`.
-2. Extracts it to `Desktop\ScreenConnect-Cleanup\<version>\` (versions coexist;
-   re-run to get the newest).
-3. Sanity-checks the bundle (VERSION + START-HERE.bat must be present) and
-   launches `START-HERE.bat` — the guided runner, which elevates itself via
-   UAC only when a step actually needs it.
+Read [`install-latest.ps1`](install-latest.ps1) first if you prefer; it only downloads, verifies,
+extracts and launches. Running it again with the same version just opens the existing copy.
 
-> **Security note.** `irm | iex` downloads and runs code. Review
-> [`install-latest.ps1`](install-latest.ps1) first — it only downloads the
-> release zip from this repo, extracts it, and launches the same
-> `START-HERE.bat` you would double-click after a manual download. When
-> GitHub publishes a sha256 digest for the release asset, the zip is checked
-> against it and a mismatch aborts; otherwise compare the sha256 in the
-> release notes yourself. Manual alternative: grab the zip from
-> [Releases](https://github.com/pupontech/screenconnect-cleanup/releases) and
-> run `START-HERE.bat` from the extracted folder.
-
-When running `install-latest.ps1` directly (not via `iex`): `-Destination
-<path>` installs elsewhere, `-NoLaunch` skips starting the runner, `-Force`
-overwrites an existing version folder. A same-version re-run (e.g. `irm | iex`
-twice) detects the existing install and launches it instead of erroring.
+**Needs:** Windows 10 or 11, an administrator account (the launcher asks once through UAC), PowerShell
+5.1 (built in). Internet only for the Online half and Stage tools.
 
 ---
 
-## Running part of it offline
+## Using the window
 
-`START-HERE.bat` (the full run) goes online in its first step and again at the
-end. For a PC with no connection, or one you want cut off from the network while
-you clean it, use the two halves instead:
+Double-click `START-HERE-GUI.bat`, approve the administrator prompt, pick what to run and press Start.
 
-- **`START-HERE-OFFLINE.bat`** - the cleanup, shown as steps 1-7: preflight,
-  snapshots, detection, removal, persistence review, diff, local report.
-  Downloads and uploads nothing. When ScreenConnect is found it asks whether any of
-  it is supposed to stay (Enter = remove all).
-- **`START-HERE-ONLINE.bat`** - the part that needs internet, shown as steps 1-5:
-  download and run the scanners (KVRT, ESET, Malwarebytes), check persistence again
-  after the scans, optional AV uninstall, share the report. It only continues an
-  offline run whose folder is still locked to administrators.
+![Start screen: choose Offline, Online, Detect only or Stage tools](docs/images/gui-start.png)
 
-`START-HERE.bat` is the engine they call; started on its own it is still the
-original full run.
-
-**Preview: `START-HERE-GUI.bat`** (in the release zip, the only file at the top; everything else is
-in the `files\` folder next to it) opens a window instead of the console, with a
-toggle between *Offline* (no internet), *Online*, *Detect only* and *Stage tools*
-(no full run: that is Offline, then Online). It runs the same scripts, in the same order, and asks the same
-questions as the launchers above; each ScreenConnect instance is a card with its
-relay host and a Remove / Keep choice (Remove by default), and removal needs you to
-type `REMOVE`. It is a front end over the same scripts, not a second
-implementation, and the batch launchers remain the fallback. Not yet accepted on a
-real PC: [docs/14-gui-architecture.md](docs/14-gui-architecture.md).
-
-Details, hand-over between the halves, and what is not yet verified on a real PC:
-[OFFLINE-ONLINE-SPLIT.md](OFFLINE-ONLINE-SPLIT.md).
-
----
-
-## The problem this solves
-
-Finding ScreenConnect on a PC is trivial — it installs a named service in a named
-directory. The hard question is:
-
-> **Is this instance ours, the client's own IT's, or the scammer's?**
-
-Signature, publisher, product name and file hash are **identical** across all three,
-because it is the same signed commercial software. None of them can answer it.
-
-What *can* answer it is the **instance identity** — the relay server the client is
-configured to call home to, carried in the client's launch parameters:
-
-```
-Instance: a1b2c3d4e5f6a7b8
-  RELAY HOST    : support.example.com      <-- the decision key
-  Relay port    : 8041
-  Session type  : Access (unattended)      <-- Access is far more serious than Support
-  Server key    : fingerprint a3f9c1...    <-- corroborates the host
-  Custom props  : "Acme IT", "Site-3"      <-- often names the operator outright
-  Installed     : 2026-08-14 14:22         <-- inside the incident window?
-```
-
-Two further consequences worth stating plainly:
-
-- **No malware scanner will flag ScreenConnect.** It is legitimate signed software, so
-  the commodity scanners walk straight past it. KVRT, ESET Online Scanner, and
-  Malwarebytes are here for the *commodity malware that came along with it*, which is a
-  separate job. Neither half substitutes for the other.
-- **Removing the agent is not the same as remediating the incident.** If someone had an
-  interactive session, the exposure is credentials, browser session cookies, saved
-  passwords, mail rules, and new accounts. The report ends with a credential-reset
-  checklist for exactly this reason.
-
----
-
-## Status
-
-| Stage | What it does | State |
+| Choice | Internet | What it does |
 |---|---|---|
-| 0 — Preflight | admin check, restore point, working dir, tool pack | **built** (Linux-verified; Win-only paths unverified) |
-| 1 — Snapshot (before) | services, tasks, autoruns, processes, connections, + retro artifacts (Prefetch/ShimCache/BAM-DAM/UserAssist/SRUM/Amcache) | **built** (Linux-verified; Win-only content unverified) |
-|| **2 — Detection** | **ScreenConnect instance identity + other RAT presence** | **PoC works** (owner-reported real-machine check; artifact not present in this worktree) |
-|| 3 — Technician review | approval gate - nothing is removed without it | **built** (interactive y/n prompt in `sc-cleanup.ps1` and the guided runner; lab-only `-ExecuteRemoval` is the separate automatic path) |
-| 4 — Remove / quarantine | stop, uninstall, quarantine, clean persistence | **built, dry-run default** (never run on live Windows; skipped by default via `-sr`) |
-| 5 — Scanners | KVRT, ESET Online Scanner (GUI, attended); Malwarebytes installed via winget (`winget install -e --id Malwarebytes.Malwarebytes --accept-package-agreements --accept-source-agreements`) | **built** (`Get-AVTools.ps1` downloads KVRT + ESET from official vendor URLs; `Invoke-GUIScanner` launches visible attended GUIs and runs the Malwarebytes winget install; on install failure it checks the official endpoint, DNS/proxy/hosts evidence, and Techloq/other filter indicators, then writes a result artifact, alerts the technician, and returns exit 6; AdwCleaner/Defender remain removed; real exec unverified). After each completed scan, `Get-ScannerFindings.ps1` parses the scanner's own output for the report: KVRT plain-text reports under `C:\KVRT_Data\Reports` (launched with `-accepteula -dontencrypt -details`; `-silent`/`-processlevel` never passed), ESET's `%LOCALAPPDATA%\Temp\log.txt`, and Malwarebytes XML reports. |
-| 5b — Post-AV persistence | tasks, autoruns, startup files and contextual evidence; explicit selected cleanup | **testing prototype** (mandatory even with `-sa`; `-sr` collects without cleanup; details and coverage gaps in report) |
-| 6 — Uninstall installed AV | open each detected third-party AV uninstaller (attended GUI) + sweep leftovers into quarantine | **built** (Invoke-AVUninstaller; Windows Defender excluded; leftover sweep v1.7.5 moves remaining shortcuts/folders to av-uninstall-quarantine, never deletes; results in report) |
-| 7 — Procmon (targeted) | "something reinstalled it — what?" | **built** (v1.7.21: bounded live capture via `-procmon`, `.pml` to `logs\Procmon\`; boot-logging/PMF filters open) |
-| 8 — Snapshot (after) + diff | prove it is gone, catch resurrections | **built** (Linux-verified) |
-| 9 — Report | HTML + JSON + tech summary | **built** (XSS + empty-case verified; includes AV-uninstall section and per-scanner scan findings with a clean/not-parseable verdict when no findings are parseable) |
-| — Top-level runner | `sc-cleanup.ps1` ties the primary stages and persistence substage together | **built** (fixture-tested; owner live acceptance pending) |
+| **Offline** | not needed | The cleanup: preflight, before snapshot, detection, removal of the ScreenConnect you choose, persistence review, optional power-options repair, after snapshot + diff, local report. Downloads and uploads nothing. |
+| **Online** | needed | Downloads and runs KVRT, ESET Online Scanner and Malwarebytes, checks startup items again after the scans, optional AV uninstall, shares the report. Continues this PC's last Offline run if there is one. |
+| **Detect only** | not needed | Preflight, snapshot, detection and the report. Changes nothing. Use it to look before you decide. |
+| **Stage tools** | needed | Downloads the scanners into the tool folder for later. Changes nothing on the PC. |
 
-Deliberate build order: **every non-destructive stage ships before any destructive one.**
-Removal comes last, on top of machinery already proven in the field.
+The left column shows every step and its state (done, skipped and why, failed). The console at the
+bottom shows the scripts' own output live. **Open log** opens the full log; **Open RIT-SCC folder**
+(top right) opens `C:\RIT-SCC`, where every run is kept.
 
-> **Agent-build status (2026-08-23 integration pass).** Every script parses
-> clean (0 errors), is pure ASCII, and has no BOM. Functional verification was
-> run on Linux/pwsh where possible; Windows-only code paths are proven only for
-> *error handling*, not for *correct Windows content*. The single item that
-> needs a **Windows VM / live lab** — and is explicitly **out of scope for
-> agents** — is **M0: live ScreenConnect install validation** of the relay-key
-> map. See `docs/07-roadmap-open-questions.md` and `docs/08-work-log.md`.
+When it finishes you see each ScreenConnect instance as a card. The relay host is the line that
+matters: a host you do not recognise is the scammer's.
 
----
+![Finished run: one card per ScreenConnect instance, relay host first](docs/images/gui-results.png)
 
-## Usage
+### The usual job
 
-Detection is read-only. Removal is dry-run by default and acts **only** when the
-technician confirms a removal plan (or a lab-only flag is passed — see below).
-Nothing is deleted; files are moved to quarantine.
+1. **Take the PC off the network** (unplug the cable, turn Wi-Fi off) if a session might still be live.
+2. Run **Offline**. For each ScreenConnect instance choose **Remove** (the default) or **Keep** (for
+   example the customer's own support agent). Type `REMOVE` to confirm; the button stays disabled
+   until you do.
 
-Double-click `Run-DetectRemoteAccess.bat` (right-click *Run as administrator* for the
-full picture), or from a shell:
+   ![Removal confirmation: lists REMOVE and KEEP per instance, needs REMOVE typed](docs/images/gui-confirm-remove.png)
 
-```
-powershell -NoProfile -ExecutionPolicy Bypass -File .\detect-remote-access.ps1
-```
+3. Read the report. It opens by itself and a copy is left on the Desktop.
+4. **Reconnect** and run **Online**. Say yes to continuing the offline run; run the scanners you want.
+   The sanitized report is shared at the end and the link appears in the window and in the report.
 
-### Options
+A PC that must stay offline: run only **Offline**. Everything stays in `C:\RIT-SCC\<PC>-<id>\` and
+nothing is shared.
 
-| Flag | Effect |
+### What you are asked, and what happens if you close the box
+
+| Question | Default |
 |---|---|
-| `-ListTargets` | show what it can look for, and what is currently on/off |
-| `-Target screenconnect,anydesk` | scan only these |
-| `-All` | scan every known target, ignoring the on/off flags |
-| `-SelfTest` | run the parser against synthetic samples and exit |
-| `-OutRoot <path>` | where results go (default: Desktop\RemoteAccessScan) |
-| `-NoZip` | skip zipping the output folder to the Desktop |
-| `-NoPause` | do not wait for Enter (unattended runs) |
-| `-TranscriptCopyDir <path>` | also copy the console transcript into this folder (as `detect-remote-access.log`); guided runs pass the `C:\RIT-SCC` run root, default is this run's results folder |
+| Keep or remove each ScreenConnect instance | Remove, then typed `REMOVE` |
+| Remove flagged startup items (scheduled tasks, Run keys, startup files) | nothing selected; typed `REMOVE` |
+| Open the review windows (evidence folders, Services, Task Scheduler) | No |
+| Repair power options | asks |
+| Which scanners to run (Online) | asks |
+| Uninstall other antivirus products (Online) | No |
 
-### What you get
-
-```
-RemoteAccessScan\<HOST>_<timestamp>\
-  findings.json     structured results (feeds the report generator)
-  SUMMARY.txt       the console output, saved
-  detect-remote-access.log
-                    copy of the console transcript (the timestamped original
-                    stays on the Desktop)
-  raw\              verbatim evidence - config files, service/process/program dumps,
-                    service-install (7045) events
-```
-
-Plus a zip of the whole folder on the Desktop, matching the convention the
-`remote-diagnostics` log pullers already use.
-
-A copy of the console transcript (`detect-remote-access.log`) is kept in the
-results folder as well - the timestamped original on the Desktop is always
-preserved. When a caller passes `-TranscriptCopyDir` (the guided runner and
-`sc-cleanup.ps1` pass the `C:\RIT-SCC` run root), the copy lands there instead,
-so the run folder holds the detection log next to the report.
-
-### Automatic sanitized report sharing (MicroBin only)
-
-Guided runs (`START-HERE.bat`), the top-level runner (`sc-cleanup.ps1`), and a
-standalone detection run all share the sanitized report to the configured
-MicroBin server after the report exists; there is no other share path. The
-share is automatic: `START-HERE.bat` does not ask a per-run opt-in question.
-
-The share destination is the MicroBin server base URL in `microbin-url.txt`
-next to the tool (first nonblank line). The deploy bundle ships it configured
-to `https://reports.aygross.xyz`. When a caller passes `-MicroBinUrl` it wins;
-`sc-cleanup.ps1` and `detect-remote-access.ps1` accept `-MicroBinUrl` and
-`-MicroBinUploaderPasswordFile` directly. With no URL configured anywhere, no
-network request is made and the local package remains available.
-
-The local run folder keeps a sanitized `connectwise-report.zip` archive
-(report JSON + technician TXT + package manifest) and `report.html`. The
-MicroBin paste is the sanitized report JSON, created with `privacy=readonly`
-and a bounded one-week expiration - not the raw evidence, and never a
-ConnectWise submission. The paste contains ScreenConnect thumbprints,
-relay/domain details, session metadata, suspicious file names/hashes,
-connection indicators, parse issues, the operator-recorded incident context
-(authorization + delivery), and each instance's best observed installation
-date with its basis. It omits raw config contents, raw evidence, parameter
-blobs, account names, credentials, and private keys; user-profile paths are
-normalized. Review the local package and use the official ConnectWise Trust
-Center workflow when you are ready to send a batch - this tool never submits
-to ConnectWise automatically.
-
-Guided runs (`START-HERE.bat`) no longer ask incident authorization or delivery
-questions. The report uses context already present in the findings, or marks
-missing context `Not available`; it never assumes an email invite scam.
-Explicit `-IncidentAuthorization` and `-IncidentDelivery` values remain
-available when invoking the uploader directly.
-
-The upload and paste-link annotation finish before the report is opened or
-copied to the Desktop, so both HTML copies include the successful share link.
-
-On a successful share the uploader puts the returned paste URL in a highlighted
-"Sanitized paste (MicroBin)" banner at the top of `report.html`. The guided
-runner passes `-ReportHtml`; direct uploads also discover `report.html` in the
-selected `-WorkDir` / `-RunPath` when that flag is omitted. No other run or
-Desktop file is guessed. Repeated uploads replace the previous banner (including
-older footer links) instead of leaving stale URLs. The URL is HTML-escaped
-before it is written, so a crafted
-server `Location` header can never close an attribute or inject markup. A
-failed share never touches the report, and the local
-`connectwise-report.zip` always stays on disk; an invalid URL or a failed
-upload is reported as a failure and never hides the local evidence.
-
-Operator workflow in the guided runner:
-
-1. Start `START-HERE.bat`. Steps run in order; steps 1-4 and 8-9 run
-   automatically, step 5 asks ONE typed confirmation before removal, and
-   steps 6-7 are attended.
-2. There is no sharing question and no password prompt: the report step reads
-   the server base URL from `microbin-url.txt` and shares automatically. The
-   default MicroBin server is passwordless, so START-HERE never prompts for or
-   stores an uploader password.
-3. Only when your MicroBin server requires an uploader password, pre-configure
-   it before the run: point `SCC_MICROBIN_UPLOADER_PASSWORD_FILE` at a file
-   that contains it (the runner passes that path through unchanged and never
-   deletes the file), or export `SCREENCONNECT_MICROBIN_UPLOADER_PASSWORD`
-   (the uploader reads it from the environment itself).
-4. The report step prints `MICROBIN UPLOAD: <paste-url>` on success and adds
-   the paste URL to that run's `report.html` (HTML-escaped; no link is added
-   when the share fails).
-
-### Where a run's key artifacts land
-
-Every run keeps its two key artifacts in **both** places (copies only - the
-originals are never moved or deleted):
-
-- The detection console transcript (`Desktop\detect-remote-access_<stamp>.log`)
-  is also copied into the run folder as `detect-remote-access.log`
-  (`C:\RIT-SCC\<host>-<guid>\detect-remote-access.log`); a standalone
-  `Run-DetectRemoteAccess.bat` run keeps the copy in its results folder
-  instead.
-- `report.html` (generated in the run folder) is also copied to the current
-  user's Desktop so the summary is easy to find and hand off. The real Desktop
-  folder is resolved via `[Environment]::GetFolderPath('Desktop')`, so
-  OneDrive-redirected Desktops work too.
-
-A failed copy is reported loudly and never hidden: the guided runner prints a
-`[WARN]` and marks the run's exit code, `sc-cleanup.ps1` logs a stage warning,
-and `detect-remote-access.ps1` prints a `!` warning while still succeeding - the
-transcript or report itself remains available at its original location.
-
-### Choosing what to look for
-
-`targets.json` controls it. ScreenConnect is on by default; 14 other remote-access
-products are defined but off:
-
-AnyDesk, TeamViewer, UltraViewer, Supremo, RustDesk, Splashtop (incl. SOS),
-LogMeIn / GoTo, Zoho Assist, Atera, DWAgent, MeshCentral, NetSupport,
-Remote Utilities, VNC family.
-
-Flip `"enabled": true` to add one permanently, or use `-Target` / `-All` for one run.
-
-ScreenConnect gets a **deep module** (full instance identity extraction). The others are
-**presence-only** — service, process, directory and installed-program matches — which is
-enough to tell a tech "there is also an AnyDesk here, go look."
-
-`targets.json` is optional: the same defaults are embedded in the script, so a single
-copied `.ps1` works on its own on a machine that has nothing else.
+**Closing any question box always means no.** While a removal, AV uninstall or power repair is
+running, the window cannot be closed. Closing the window during a scan stops the step but leaves the
+scanner open.
 
 ---
 
-## Proof-of-concept caveat — read this before trusting the output
+## What you get
 
-The ScreenConnect launch-parameter key map (`h` = relay host, `e` = session type, and so
-on) is **assumed, not confirmed**. Validating it against a real install is the entire
-point of this PoC.
+Every run has its own folder, `C:\RIT-SCC\<PC>-<id>\` (locked to administrators, so nothing running as
+the user can tamper with it between the two halves):
 
-The script is built to fail usefully rather than silently:
+| File / folder | What it is |
+|---|---|
+| `report.html` | The investigation report (also copied to the Desktop). Instances, relay hosts, install dates, startup items found, before/after diff, scanner results, a credential-reset checklist. |
+| `report-after-scans.html` | Online half: the report rebuilt after the scanners. This is the one that is shared. |
+| `connectwise-report.zip` | Sanitized package (report JSON, technician summary, manifest) for the ConnectWise Trust Center. **Never sent automatically.** |
+| `quarantine\...`, `removal-manifest.json` | Everything removed, **moved here, never deleted**, with original path and hash. |
+| `detect\`, snapshots, `logs\` | Raw evidence, before/after snapshots and every step's log. |
 
-- It captures **raw evidence even when parsing succeeds** — service ImagePath and every
-  `.config` file verbatim, into `raw\`.
-- It finds parameter blobs with a **generic** "3 or more `key=value&` pairs" regex rather
-  than hunting for keys we assume exist, so an unexpected format is still captured.
-- Any key not in the map is preserved under **`UnknownParams`** and printed as
-  `Unmapped keys:` rather than discarded.
-- Instances where extraction fails are reported loudly under **PARSE PROBLEMS**, with the
-  raw sources attached.
-
-**If you run this on a machine with a real ScreenConnect install, send back the
-`raw\` folder and the PARSE PROBLEMS section.** That is what corrects the parser.
-
-`-SelfTest` proves the code is internally consistent with those assumptions. It does not
-prove the assumptions are right — only a live install can.
+**Sharing.** The Online half posts the sanitized report to the MicroBin server in
+`files\microbin-url.txt` (read-only, expires after one week) and puts the link at the top of the
+report. It contains relay hosts, thumbprints, file names and hashes, and install dates; it does
+**not** contain raw config, evidence, account names, credentials or keys. The Offline half and
+Detect only never upload anything.
 
 ---
 
-## Design notes
+## Why relay host, and what it does not do
 
-### Read-only detection, approval-gated removal
+ScreenConnect is legitimate signed software: signature, publisher and hash are the same whether it
+belongs to the customer's IT or to the scammer, and no antivirus will flag it. What differs is the
+**relay server** each instance is configured to call, so the tool reads that from every instance and
+puts it first.
 
-Detection and removal are deliberately separate. Stage 4 consumes an
-**approved plan file** produced by the Stage 3 review — the destructive code is not
-reachable without a technician having seen the evidence and typed a confirmation.
-There is no flag that detects and removes in one step for production use in
-`sc-cleanup.ps1`.
-
-The exceptions:
-- **`sc-cleanup.ps1 -ExecuteRemoval`** (with `RUN-REMOVAL-TEST.bat`) is **lab-only**:
-  it pre-authorizes every detected ScreenConnect instance for removal with no typed
-  confirmation, prints a prominent red banner, and is intended **only** for a
-  disposable, snapshotted VM.
-- **Guided runner (`START-HERE.bat` Steps 4 + 5)** - detection runs automatically, then Step 5 invokes the typed per-instance review and final confirmation in `Invoke-ReviewAndRemove.ps1`. It does not pass `-Yes`; pressing Enter keeps an instance by default. Quarantine-never-delete and the ScreenConnect-only policy still apply, and actions are logged to `removal-manifest.json` + `removal-report.txt`.
-
-### Quarantine, never delete
-
-Nothing gets deleted. Artifacts are moved to a quarantine folder with their original path
-and hash recorded. It costs nothing and covers the one time we are wrong.
-
-### Uninstall before surgery
-
-Always run the vendor's own uninstaller (from the registry `UninstallString`) before
-touching services or directories manually. Manual removal is the fallback, not the
-default.
-
-### Before/after diff
-
-Stage 1 runs again as Stage 7 and the two are diffed. This is what catches the failure
-mode that actually brings clients back: **something reinstalled the agent.** When the
-diff shows a resurrection, that is what Stage 6 (targeted Procmon) is for — filtered to
-the one path that came back, which turns Procmon from a gigabyte firehose into a
-one-line answer.
-
-### Not copied from Tron
-
-Tron's cleanup ordering is `clean -> debloat -> disinfect`. Ours is inverted:
-**snapshot -> detect -> remove -> scan -> verify**, with temp cleanup omitted entirely.
-Tron is optimizing a slow PC; we are investigating an incident, and its temp cleanup
-would delete the scammer's installer out of `%TEMP%` before anyone looked at it.
-
-Also not copied: batch/CMD implementation, the debloat/optimize/repair stages, registry
-"optimization", clearing event logs, and delete-without-quarantine.
+- **The scanners are for the other malware** that came along. They do not replace the ScreenConnect step.
+- **Removing the agent does not undo the access.** Passwords, browser sessions, mail rules and new
+  accounts may be compromised; the report ends with a credential-reset checklist for that reason.
+- **Other remote tools** (AnyDesk, TeamViewer, RustDesk and 11 more) are detected and listed, not
+  removed. Turn them on in `files\targets.json`.
 
 ---
 
-## Conventions
+## Console launchers
 
-- **PowerShell 5.1 compatible, pure ASCII, no BOM.** PS 5.1 reads a BOM-less non-ASCII
-  file as Windows-1252. Same rule as `provisioning/`.
-- `.bat` launchers alongside each `.ps1`, matching `remote-diagnostics/`.
-- Output zipped to the Desktop, same as the log pullers.
-- **Windows-only**, by nature — a documented exception to the repo's Windows+WSL2
-  mandate. The report generator is the portable half: it consumes `findings.json` and
-  needs no live system.
+Everything in the window is also available without it, in `files\`:
 
-### Verifying a change
+| Launcher | Same as |
+|---|---|
+| `START-HERE-OFFLINE.bat` | Offline (steps 1-7). Asks `Keep any ScreenConnect? [y/N]`, then one typed `y`. |
+| `START-HERE-ONLINE.bat` | Online (steps 1-5). |
+| `START-HERE.bat` | The original full run in one go (1-9); `--stage` = Stage tools. |
+| `Run-DetectRemoteAccess.bat` | Detection only, results to `Desktop\RemoteAccessScan\`. |
 
-Every `.ps1` here must pass both:
-
-```powershell
-$p='.\detect-remote-access.ps1'; $e=$null; $t=$null
-[System.Management.Automation.Language.Parser]::ParseFile($p,[ref]$t,[ref]$e) | Out-Null
-if ($e.Count -eq 0) { 'PARSE OK' } else { $e | ForEach-Object { $_.Message } }
-```
-
-```
-py -c "import io;b=io.open('detect-remote-access.ps1','rb').read();print(sum(1 for c in b if c>127))"
-```
-
-The second must print `0`.
+Use them if the window will not open on a PC. How the two halves hand over and how they differ from
+the full run: [OFFLINE-ONLINE-SPLIT.md](OFFLINE-ONLINE-SPLIT.md).
 
 ---
 
-## Related
+## What is not verified yet
 
-- `remote-diagnostics/` — event log pullers and network state capture. Same conventions,
-  same technician workflow; use those for crash/boot/connectivity questions.
-- `.claude/skills/windows-system-diagnostics` — reference for which command, event ID or
-  threshold to reach for on a given Windows symptom.
-- `.claude/skills/malwarebytes-troubleshooting` — relevant when the Malwarebytes
-  scanner leg will not activate.
+The window is tested on Windows 11 with stub scripts in place of the destructive parts; the scanner
+downloads and the report upload were also run for real. **Not yet done on a real PC:** a full removal of a real
+ScreenConnect through the window, Windows 10, a PC with the UTF-8 system locale, a real 125% / 150%
+scaled laptop, UAC turned off. The list and how to test it:
+[docs/14-gui-architecture.md, section 12.4](docs/14-gui-architecture.md).
+
+If something goes wrong, send the run folder from `C:\RIT-SCC` (or just its `logs\` and `detect\raw\`).
+
+---
+
+## More
+
+| Document | For |
+|---|---|
+| [DEPLOY.md](DEPLOY.md) | What is in the package, requirements, building a release |
+| [OFFLINE-ONLINE-SPLIT.md](OFFLINE-ONLINE-SPLIT.md) | The two halves in detail, keeping instances in the console |
+| [docs/14-gui-architecture.md](docs/14-gui-architecture.md) | How the window drives the scripts, its tests |
+| [docs/12-post-av-persistence.md](docs/12-post-av-persistence.md) | The startup-item (persistence) review |
+| [docs/06-safety-model.md](docs/06-safety-model.md) | Why removal is gated the way it is |
+| [CHANGELOG.md](CHANGELOG.md) | Every release |
+
+**Developers:** PowerShell 5.1, pure ASCII, no BOM in every script (`tests/ci/Test-HouseRules.ps1`).
+GUI tests are in `tests/gui/`; the window must never gain removal logic of its own.
