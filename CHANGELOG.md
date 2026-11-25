@@ -4,7 +4,7 @@ Semantic versions. The deploy zip is named `screenconnect-cleanup-v<VER>.zip`
 and carries a `VERSION` file so each build is self-identifying.
 
 ## [1.8.13-beta.3] - 2026-11-25 - Latest beta release: revoked-certificate removal fix, Continue online
-Hosted Windows CI passed. The signature handling is tested with simulated signatures; it has not yet been confirmed on a real revoked-certificate install.
+Hosted Windows CI passed. Confirmed on a real PC on 2026-11-25: the intruder's ScreenConnect that 1.8.13-beta.2 refused (signature status `UnknownError`) was removed.
 - Removal: the executable's digital signature no longer blocks removal. An intruder's ScreenConnect signed with a certificate Windows does not confirm (status `UnknownError`, for example the revoked ConnectWise certificate) was refused with "PRODUCT VERIFICATION FAILED ... signature status is not Valid" and left installed (field case 2026-11-25). Unsigned, altered, re-signed and look-alike copies are now removed too. What identifies the product is unchanged: it must sit in a ScreenConnect directory, have a ScreenConnect binary name and (when it has a service) a ScreenConnect service name, and the technician still approves by typing. Anything other than a valid ConnectWise signature is written as a SIGNATURE WARNING to the log and the removal manifest. Files are quarantined, never deleted.
 - GUI: a finished Offline run shows **Continue online** next to **Start over**. It starts the Online half, which still asks how to use the Offline results.
 - README: Defender false-positive note with the VirusTotal result; what the ScreenConnect tray icon looks like, and to stage on a separate PC and run Offline first when it is there.
